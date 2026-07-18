@@ -1,0 +1,397 @@
+#include "baca/app.h"
+
+#include <errno.h>
+#include <getopt.h>
+#include <inttypes.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+static double normalized_progress(double progress) {
+  if (!isfinite(progress) || progress < 0.0) {
+    return 0.0;
+  }
+  if (progress > 1.0) {
+    return 1.0;
+  }
+  return progress;
+}
+
+static bool save_progress(BacaApp *app, BacaError *error) {
+  baca_error_clear(error);
+  if (app->database.handle == NULL || app->document.path == NULL ||
+      app->document.format == BACA_FORMAT_UNKNOWN) {
+    return true;
+  }
+
+  char *last_read = baca_now_iso8601(error);
+  if (last_read == NULL) {
+    return false;
+  }
+  const BacaHistoryEntry entry = {
+      .filepath = app->document.path,
+      .title = app->document.metadata.title,
+      .author = app->document.metadata.creator,
+      .reading_progress = normalized_progress(app->saved_progress),
+      .last_read = last_read,
+  };
+  const bool saved =
+      baca_database_save_progress(&app->database, &entry, error);
+  free(last_read);
+  return saved;
+}
+
+static void dispose_app(BacaApp *app) {
+  if (app == NULL) {
+    return;
+  }
+  baca_layout_free(&app->layout);
+  baca_document_close(&app->document);
+  baca_database_close(&app->database);
+  baca_config_free(&app->config);
+  memset(app, 0, sizeof(*app));
+}
+
+bool baca_app_init(BacaApp *app, const char *path, bool direct_open,
+                   BacaError *error) {
+  if (app == NULL || path == NULL || path[0] == '\0') {
+    baca_error_set(error, BACA_ERROR_ARGUMENT, "missing document path");
+    return false;
+  }
+
+  baca_error_clear(error);
+  memset(app, 0, sizeof(*app));
+  app->dark_mode = true;
+  app->direct_open = direct_open;
+
+  if (!baca_config_load(&app->config, error) ||
+      !baca_database_open_default(&app->database, error) ||
+      !baca_database_migrate(&app->database, error) ||
+      !baca_document_open(&app->document, path, error)) {
+    dispose_app(app);
+    return false;
+  }
+
+  BacaHistory history = {0};
+  if (!baca_database_history(&app->database, false, &history, error)) {
+    dispose_app(app);
+    return false;
+  }
+  for (size_t index = 0; index < history.length; ++index) {
+    const BacaHistoryEntry *entry = &history.items[index];
+    if (entry->filepath != NULL &&
+        strcmp(entry->filepath, app->document.path) == 0) {
+      app->saved_progress = normalized_progress(entry->reading_progress);
+      break;
+    }
+  }
+  baca_history_free(&history);
+  return true;
+}
+
+bool baca_app_free(BacaApp *app, BacaError *error) {
+  if (app == NULL) {
+    baca_error_clear(error);
+    return true;
+  }
+  const bool saved = save_progress(app, error);
+  dispose_app(app);
+  return saved;
+}
+
+int baca_app_run(BacaApp *app, BacaError *error) {
+  if (app == NULL || app->document.path == NULL) {
+    baca_error_set(error, BACA_ERROR_ARGUMENT,
+                   "application is not initialized");
+    return EXIT_FAILURE;
+  }
+  return baca_tui_run(app, error);
+}
+
+static void print_help(FILE *stream) {
+  fprintf(stream,
+          "usage: %s [-h] [-v] [-r] [PATH | # | PATTERN ...]\n"
+          "\n"
+          "TUI ebook reader\n"
+          "\n"
+          "options:\n"
+          "  -h, --help       print help and exit\n"
+          "  -v, --version    print version and exit\n"
+          "  -r, --history    print reading history and exit\n"
+          "\n"
+          "examples:\n"
+          "  %s /path/to/ebook.epub\n"
+          "  %s 3\n"
+          "  %s count monte\n",
+          BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME);
+}
+
+static int report_error(const BacaError *error) {
+  const char *message = "operation failed";
+  if (error != NULL && error->message[0] != '\0') {
+    message = error->message;
+  }
+  fprintf(stderr, "%s: %s\n", BACA_NAME, message);
+  return EXIT_FAILURE;
+}
+
+static double history_progress(double progress) {
+  return normalized_progress(progress) * 100.0;
+}
+
+static void print_history_field(const char *value) {
+  if (value == NULL) {
+    return;
+  }
+  for (size_t index = 0U; value[index] != '\0'; ++index) {
+    const unsigned char character = (unsigned char)value[index];
+    if (character < 0x20U || character == 0x7fU) {
+      (void)putchar(' ');
+    } else if (character == 0xc2U &&
+               (unsigned char)value[index + 1U] >= 0x80U &&
+               (unsigned char)value[index + 1U] <= 0x9fU) {
+      (void)putchar(' ');
+      ++index;
+    } else {
+      (void)putchar((int)character);
+    }
+  }
+}
+
+static void format_file_size(const char *path, char output[32]) {
+  struct stat status = {0};
+  if (path == NULL || stat(path, &status) != 0) {
+    (void)snprintf(output, 32U, "?");
+    return;
+  }
+
+  const double bytes = (double)status.st_size;
+  if (bytes < 1024.0 * 1024.0) {
+    (void)snprintf(output, 32U, "%.2f kb", bytes / 1024.0);
+  } else {
+    (void)snprintf(output, 32U, "%.2f mb", bytes / (1024.0 * 1024.0));
+  }
+}
+
+static bool open_history_database(BacaDatabase *database, BacaError *error) {
+  return baca_database_open_default(database, error) &&
+         baca_database_migrate(database, error);
+}
+
+static int print_history(BacaError *error) {
+  BacaDatabase database = {0};
+  BacaHistory history = {0};
+  if (!open_history_database(&database, error) ||
+      !baca_database_history(&database, true, &history, error)) {
+    baca_history_free(&history);
+    baca_database_close(&database);
+    return report_error(error);
+  }
+
+  puts("Baca History");
+  puts("#\tLast Read\tProgress\tTitle\tAuthor\tPath\tSize");
+  for (size_t index = 0; index < history.length; ++index) {
+    const BacaHistoryEntry *entry = &history.items[index];
+    char size[32] = {0};
+    format_file_size(entry->filepath, size);
+    printf("%zu\t", index + 1U);
+    print_history_field(entry->last_read);
+    printf("\t%.2f%%\t", history_progress(entry->reading_progress));
+    print_history_field(entry->title);
+    (void)putchar('\t');
+    print_history_field(entry->author);
+    (void)putchar('\t');
+    print_history_field(entry->filepath);
+    (void)putchar('\t');
+    print_history_field(size);
+    (void)putchar('\n');
+  }
+
+  baca_history_free(&history);
+  baca_database_close(&database);
+  return EXIT_SUCCESS;
+}
+
+static bool is_decimal_string(const char *value) {
+  if (value == NULL || value[0] == '\0') {
+    return false;
+  }
+  for (const unsigned char *cursor = (const unsigned char *)value;
+       *cursor != '\0'; ++cursor) {
+    if (*cursor < (unsigned char)'0' || *cursor > (unsigned char)'9') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool parse_history_number(const char *value, size_t *number) {
+  if (!is_decimal_string(value)) {
+    return false;
+  }
+
+  errno = 0;
+  char *end = NULL;
+  const uintmax_t parsed = strtoumax(value, &end, 10);
+  if (errno == ERANGE || end == value || *end != '\0' || parsed == 0U ||
+      parsed > (uintmax_t)SIZE_MAX) {
+    return false;
+  }
+  *number = (size_t)parsed;
+  return true;
+}
+
+static char *join_pattern(char **arguments, int count, BacaError *error) {
+  BacaString pattern = {0};
+  for (int index = 0; index < count; ++index) {
+    if (index > 0 && !baca_string_append_char(&pattern, ' ', error)) {
+      baca_string_free(&pattern);
+      return NULL;
+    }
+    if (!baca_string_append(&pattern, arguments[index], error)) {
+      baca_string_free(&pattern);
+      return NULL;
+    }
+  }
+  return baca_string_take(&pattern);
+}
+
+static char *resolve_history_path(char **arguments, int count,
+                                  BacaError *error) {
+  BacaDatabase database = {0};
+  BacaHistory history = {0};
+  char *result = NULL;
+
+  if (!open_history_database(&database, error) ||
+      !baca_database_history(&database, true, &history, error)) {
+    goto cleanup;
+  }
+
+  const BacaHistoryEntry *entry = NULL;
+  if (count == 0) {
+    entry = baca_history_nth(&history, 1U);
+    if (entry == NULL) {
+      baca_error_set(error, BACA_ERROR_NOT_FOUND, "no reading history");
+    }
+  } else {
+    size_t number = 0U;
+    if (count == 1 && is_decimal_string(arguments[0])) {
+      if (!parse_history_number(arguments[0], &number)) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT,
+                       "history number must be a positive 1-based integer");
+      } else {
+        entry = baca_history_nth(&history, number);
+        if (entry == NULL) {
+          baca_error_set(error, BACA_ERROR_NOT_FOUND,
+                         "history entry #%zu not found", number);
+        }
+      }
+    } else {
+      char *pattern = join_pattern(arguments, count, error);
+      if (pattern != NULL) {
+        entry = baca_history_best_match(&history, pattern);
+        if (entry == NULL) {
+          baca_error_set(error, BACA_ERROR_NOT_FOUND,
+                         "no history entry matches '%s'", pattern);
+        }
+      }
+      free(pattern);
+    }
+  }
+
+  if (entry != NULL && entry->filepath != NULL) {
+    result = baca_strdup(entry->filepath, error);
+  }
+
+cleanup:
+  baca_history_free(&history);
+  baca_database_close(&database);
+  return result;
+}
+
+int baca_cli_main(int argc, char **argv) {
+  static const struct option options[] = {
+      {"help", no_argument, NULL, 'h'},
+      {"version", no_argument, NULL, 'v'},
+      {"history", no_argument, NULL, 'r'},
+      {NULL, 0, NULL, 0},
+  };
+
+  bool show_history = false;
+  opterr = 0;
+  optind = 0;
+  for (;;) {
+    const int option = getopt_long(argc, argv, "hvr", options, NULL);
+    if (option == -1) {
+      break;
+    }
+    switch (option) {
+    case 'h':
+      print_help(stdout);
+      return EXIT_SUCCESS;
+    case 'v':
+      printf("v%s\n", BACA_VERSION);
+      return EXIT_SUCCESS;
+    case 'r':
+      show_history = true;
+      break;
+    default:
+      fprintf(stderr, "%s: unknown option\n", BACA_NAME);
+      return EXIT_FAILURE;
+    }
+  }
+
+  BacaError error = {0};
+  if (show_history) {
+    return print_history(&error);
+  }
+
+  const int argument_count = argc - optind;
+  char **arguments = argv + optind;
+  bool direct_open = false;
+  bool history_lookup = false;
+  char *path = NULL;
+
+  if (argument_count == 1) {
+    if (!is_decimal_string(arguments[0]) && baca_file_exists(arguments[0])) {
+      path = baca_realpath(arguments[0], &error);
+      direct_open = path != NULL;
+    }
+  }
+  if (path == NULL && !baca_error_is_set(&error)) {
+    history_lookup = true;
+    path = resolve_history_path(arguments, argument_count, &error);
+  }
+  if (path == NULL) {
+    if (history_lookup && argument_count > 0 &&
+        (error.code == BACA_ERROR_NOT_FOUND ||
+         error.code == BACA_ERROR_ARGUMENT)) {
+      BacaError history_error = {0};
+      (void)print_history(&history_error);
+      (void)fflush(stdout);
+    }
+    return report_error(&error);
+  }
+
+  BacaApp app = {0};
+  if (!baca_app_init(&app, path, direct_open, &error)) {
+    free(path);
+    return report_error(&error);
+  }
+  free(path);
+
+  const int result = baca_app_run(&app, &error);
+  BacaError save_error = {0};
+  const bool saved = baca_app_free(&app, &save_error);
+  if (result != EXIT_SUCCESS && baca_error_is_set(&error)) {
+    (void)report_error(&error);
+  }
+  if (!saved) {
+    (void)report_error(&save_error);
+  }
+  if (result == EXIT_SUCCESS && !saved) {
+    return EXIT_FAILURE;
+  }
+  return result;
+}
