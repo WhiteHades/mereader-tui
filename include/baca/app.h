@@ -4,6 +4,7 @@
 #include "baca/database.h"
 #include "baca/document.h"
 #include "baca/layout.h"
+#include "baca/library.h"
 
 typedef enum BacaCommand : uint8_t {
     BACA_COMMAND_NONE = 0,
@@ -37,8 +38,24 @@ typedef struct BacaApp {
     bool direct_open;
 } BacaApp;
 
+typedef enum BacaLibraryCommand : uint8_t {
+    BACA_LIBRARY_COMMAND_NONE = 0,
+    BACA_LIBRARY_COMMAND_QUIT,
+    BACA_LIBRARY_COMMAND_OPEN,
+    BACA_LIBRARY_COMMAND_REFRESH,
+} BacaLibraryCommand;
+
+typedef struct BacaLibraryAction {
+    BacaLibraryCommand command;
+    char *path;
+    BacaLibrarySort sort;
+} BacaLibraryAction;
+
 [[nodiscard]] bool baca_app_init(BacaApp *app, const char *path, bool direct_open, BacaError *error);
 [[nodiscard]] bool baca_app_free(BacaApp *app, BacaError *error);
 [[nodiscard]] int baca_app_run(BacaApp *app, BacaError *error);
 [[nodiscard]] int baca_cli_main(int argc, char **argv);
 [[nodiscard]] int baca_tui_run(BacaApp *app, BacaError *error);
+[[nodiscard]] int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history, BacaLibrarySort sort,
+                                       const char *selected_filepath, const char *context, BacaLibraryAction *action,
+                                       BacaError *error);

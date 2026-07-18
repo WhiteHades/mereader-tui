@@ -14,6 +14,26 @@
 
 extern char **environ;
 
+static const int BACA_PLATFORM_EXIT_SIGNALS[] = {SIGINT, SIGTERM, SIGHUP};
+
+int baca_platform_block_exit_signals(sigset_t *previous);
+
+int baca_platform_block_exit_signals(sigset_t *previous) {
+    if (previous == nullptr) {
+        return EINVAL;
+    }
+    sigset_t signals;
+    if (sigemptyset(&signals) != 0) {
+        return errno;
+    }
+    for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_PLATFORM_EXIT_SIGNALS); ++index) {
+        if (sigaddset(&signals, BACA_PLATFORM_EXIT_SIGNALS[index]) != 0) {
+            return errno;
+        }
+    }
+    return pthread_sigmask(SIG_BLOCK, &signals, previous);
+}
+
 static bool baca_platform_is_executable(const char *path) {
     struct stat status;
     return access(path, X_OK) == 0 && stat(path, &status) == 0 && !S_ISDIR(status.st_mode);
@@ -127,9 +147,29 @@ static bool baca_platform_spawn_opener(const char *launcher, const char *target,
     }
 
     reaper->process = process;
+    /* The detached reaper inherits this mask before its first instruction. */
+    sigset_t previous_signal_mask;
+    status = baca_platform_block_exit_signals(&previous_signal_mask);
+    if (status != 0) {
+        (void)pthread_attr_destroy(&attributes);
+        free(reaper);
+        baca_platform_stop_unreaped(process);
+        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not block opener reaper signals: %s", strerror(status));
+        return false;
+    }
     pthread_t reaper_thread;
     status = pthread_create(&reaper_thread, &attributes, baca_platform_reap, reaper);
+    const int restore_status = pthread_sigmask(SIG_SETMASK, &previous_signal_mask, nullptr);
     (void)pthread_attr_destroy(&attributes);
+    if (restore_status != 0) {
+        if (status != 0) {
+            free(reaper);
+            baca_platform_stop_unreaped(process);
+        }
+        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not restore opener signal mask: %s",
+                       strerror(restore_status));
+        return false;
+    }
     if (status != 0) {
         free(reaper);
         baca_platform_stop_unreaped(process);

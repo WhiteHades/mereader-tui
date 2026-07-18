@@ -47,14 +47,16 @@ esac
 [ -f "$XDG_CACHE_HOME/baca/baca.db" ] || fail history
 pass history
 
-if missing_output=$("$binary" 2>&1); then
-    fail missing_selection
+if ! command -v timeout >/dev/null 2>&1; then
+    printf 'SKIP cli.library_default: timeout unavailable\n'
+else
+    library_output=$(printf q | TERM=xterm-256color timeout 10s "$binary" 2>&1) || fail library_default
+    case $library_output in
+        *"baca"*"No books yet"*) ;;
+        *) fail library_default ;;
+    esac
+    pass library_default
 fi
-case $missing_output in
-    *"baca: no reading history"*) ;;
-    *) fail missing_selection ;;
-esac
-pass missing_selection
 
 if number_output=$("$binary" 1 2>&1); then
     fail missing_history_number

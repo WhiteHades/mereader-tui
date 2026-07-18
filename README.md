@@ -10,6 +10,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 - Formats supported: Epub, Epub3, Mobi & Azw
 - Remembers last reading position
+- Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
 - Scroll animations
 - Clean & modern looks
@@ -21,7 +22,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 ## Requirements
 
 - A C23 compiler
-- `pkg-config`, ncursesw, SQLite, libxml2, libzip, PCRE2, GdkPixbuf,
+- `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, PCRE2, GdkPixbuf,
   Poppler GLib, and Cairo
 - `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
   MOBI and AZW-family books
@@ -36,22 +37,29 @@ sudo make PREFIX=/usr/local install
 ## Usage
 
 ```sh
-# to read an ebook
-baca path/to/your/ebook.epub
-
-# to read your last read ebook, just run baca without any argument
+# open the library
 baca
 
-# to see your reading history use -r as an argument
+# open an ebook directly
+baca path/to/your/ebook.epub
+
+# print reading history without opening the TUI
 baca -r
 
-# say you want to read an ebook from your reading history,
-# but you forgot the path to your ebook
-# just type any words you remember about your ebook
-# and baca will try to match it to path or title+author
-baca doc ebook.epub
+# open a 1-based history row or fuzzy-match path/title/author
+baca 3
 baca alice wonder lewis carroll
 ```
+
+### Library keys
+
+- `Enter` or `l`: open the selected book; `j`/`k` or arrows move
+- `gg`/`G`, Home/End: jump; Ctrl-f/Ctrl-b or Page keys: page
+- `/`: literal case-insensitive filter; `Esc`: cancel or clear it
+- `s`: cycle recent, title, and author sorting; `r`: refresh and remove missing books
+- `o`: open a local path; `q`: quit
+
+Quitting a reader opened from the library returns to the refreshed library.
 
 ## Opening an Image
 

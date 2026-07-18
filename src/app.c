@@ -113,7 +113,7 @@ static void print_help(FILE *stream) {
   fprintf(stream,
           "usage: %s [-h] [-v] [-r] [PATH | # | PATTERN ...]\n"
           "\n"
-          "TUI ebook reader\n"
+          "TUI ebook reader and library\n"
           "\n"
           "options:\n"
           "  -h, --help       print help and exit\n"
@@ -121,10 +121,11 @@ static void print_help(FILE *stream) {
           "  -r, --history    print reading history and exit\n"
           "\n"
           "examples:\n"
+          "  %s\n"
           "  %s /path/to/ebook.epub\n"
           "  %s 3\n"
           "  %s count monte\n",
-          BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME);
+          BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME);
 }
 
 static int report_error(const BacaError *error) {
@@ -310,6 +311,170 @@ cleanup:
   return result;
 }
 
+static int run_library_reader(const char *path, char context[512]) {
+  BacaApp app = {0};
+  BacaError error = {0};
+  if (!baca_app_init(&app, path, false, &error)) {
+    (void)snprintf(context, 512U, "cannot open: %.490s", error.message);
+    return EXIT_SUCCESS;
+  }
+
+  const int result = baca_app_run(&app, &error);
+  BacaError save_error = {0};
+  const bool saved = baca_app_free(&app, &save_error);
+  if (result >= 128) {
+    if (!saved) {
+      (void)report_error(&save_error);
+    }
+    return result;
+  }
+  if (!saved) {
+    (void)snprintf(context, 512U, "progress not saved: %.487s",
+                   save_error.message);
+  } else if (result != EXIT_SUCCESS) {
+    (void)snprintf(context, 512U, "reader failed: %.492s",
+                   error.message[0] == '\0' ? "operation failed"
+                                            : error.message);
+  } else {
+    context[0] = '\0';
+  }
+  return EXIT_SUCCESS;
+}
+
+static bool resolve_library_selection(const BacaHistory *history,
+                                      BacaLibrarySort sort,
+                                      const char *filepath,
+                                      size_t fallback_index,
+                                      const char **selected_filepath,
+                                      size_t *selected_index,
+                                      BacaError *error) {
+  BacaLibraryView view = {0};
+  if (!baca_library_view_build(&view, history, "", sort, error)) {
+    return false;
+  }
+  const size_t index =
+      baca_library_preserve_selection(&view, filepath, fallback_index);
+  if (selected_filepath != NULL) {
+    *selected_filepath =
+        view.length == 0U ? NULL : view.rows[index].entry->filepath;
+  }
+  if (selected_index != NULL) {
+    *selected_index = index;
+  }
+  baca_library_view_free(&view);
+  return true;
+}
+
+static int run_library(void) {
+  BacaConfig config = {0};
+  BacaDatabase database = {0};
+  BacaError error = {0};
+  if (!baca_config_load(&config, &error) ||
+      !baca_database_open_default(&database, &error) ||
+      !baca_database_migrate(&database, &error)) {
+    baca_database_close(&database);
+    baca_config_free(&config);
+    return report_error(&error);
+  }
+
+  BacaLibrarySort sort = BACA_LIBRARY_SORT_RECENT;
+  char *selected_filepath = NULL;
+  size_t selected_index = 0U;
+  bool preserve_index = false;
+  char context[512] = {0};
+  bool remove_missing = false;
+  int result = EXIT_SUCCESS;
+  for (;;) {
+    BacaHistory history = {0};
+    if (!baca_database_history(&database, remove_missing, &history, &error)) {
+      result = report_error(&error);
+      break;
+    }
+    remove_missing = false;
+
+    const char *tui_selected_filepath = selected_filepath;
+    if (preserve_index &&
+        !resolve_library_selection(&history, sort, selected_filepath,
+                                   selected_index, &tui_selected_filepath,
+                                   &selected_index, &error)) {
+      baca_history_free(&history);
+      result = report_error(&error);
+      break;
+    }
+
+    BacaLibraryAction action = {0};
+    result = baca_library_tui_run(&config, &history, sort,
+                                  tui_selected_filepath, context, &action,
+                                  &error);
+    size_t refresh_index = selected_index;
+    if (result == EXIT_SUCCESS &&
+        action.command == BACA_LIBRARY_COMMAND_REFRESH &&
+        !resolve_library_selection(&history, action.sort, action.path,
+                                   selected_index, NULL, &refresh_index,
+                                   &error)) {
+      free(action.path);
+      baca_history_free(&history);
+      result = report_error(&error);
+      break;
+    }
+    baca_history_free(&history);
+    context[0] = '\0';
+    if (result != EXIT_SUCCESS) {
+      free(action.path);
+      if (result < 128 && baca_error_is_set(&error)) {
+        (void)report_error(&error);
+      }
+      break;
+    }
+
+    sort = action.sort;
+    if (action.command == BACA_LIBRARY_COMMAND_QUIT) {
+      free(action.path);
+      result = EXIT_SUCCESS;
+      break;
+    }
+    if (action.command == BACA_LIBRARY_COMMAND_REFRESH) {
+      free(selected_filepath);
+      selected_filepath = action.path;
+      selected_index = refresh_index;
+      preserve_index = true;
+      remove_missing = true;
+      (void)snprintf(context, sizeof(context), "library refreshed");
+      continue;
+    }
+    if (action.command != BACA_LIBRARY_COMMAND_OPEN || action.path == NULL) {
+      free(action.path);
+      baca_error_set(&error, BACA_ERROR_INTERNAL,
+                     "library returned no command");
+      result = report_error(&error);
+      break;
+    }
+
+    char *requested_path = action.path;
+    BacaError path_error = {0};
+    char *resolved_path = baca_realpath(requested_path, &path_error);
+    if (resolved_path == NULL) {
+      free(selected_filepath);
+      selected_filepath = requested_path;
+      (void)snprintf(context, sizeof(context), "cannot open: %.490s",
+                     path_error.message);
+      continue;
+    }
+    free(requested_path);
+    free(selected_filepath);
+    selected_filepath = resolved_path;
+    result = run_library_reader(resolved_path, context);
+    if (result != EXIT_SUCCESS) {
+      break;
+    }
+  }
+
+  free(selected_filepath);
+  baca_database_close(&database);
+  baca_config_free(&config);
+  return result;
+}
+
 int baca_cli_main(int argc, char **argv) {
   static const struct option options[] = {
       {"help", no_argument, NULL, 'h'},
@@ -349,6 +514,9 @@ int baca_cli_main(int argc, char **argv) {
 
   const int argument_count = argc - optind;
   char **arguments = argv + optind;
+  if (argument_count == 0) {
+    return run_library();
+  }
   bool direct_open = false;
   bool history_lookup = false;
   char *path = NULL;

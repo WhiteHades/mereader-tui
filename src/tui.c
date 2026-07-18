@@ -120,6 +120,35 @@ typedef struct BacaTuiState {
   bool dirty;
 } BacaTuiState;
 
+typedef enum BacaLibraryInputKind {
+  BACA_LIBRARY_INPUT_NONE = 0,
+  BACA_LIBRARY_INPUT_FILTER,
+  BACA_LIBRARY_INPUT_PATH,
+} BacaLibraryInputKind;
+
+typedef struct BacaLibraryTuiState {
+  const BacaConfig *config;
+  const BacaHistory *history;
+  BacaLibraryView view;
+  BacaLibraryAction action;
+  BacaPromptState input;
+  BacaLibraryInputKind input_kind;
+  BacaLibrarySort sort;
+  size_t selected;
+  size_t top;
+  int rows;
+  int columns;
+  int previous_cursor;
+  char filter[sizeof(((BacaPromptState *)0)->value)];
+  char filter_before[sizeof(((BacaPromptState *)0)->value)];
+  char *status;
+  char *input_selection;
+  bool colors;
+  bool g_pending;
+  bool quit;
+  bool dirty;
+} BacaLibraryTuiState;
+
 static void open_alert(BacaTuiState *state, const char *message);
 static void draw_frame(BacaTuiState *state);
 
@@ -127,6 +156,40 @@ static void request_exit(int signal_number) {
   if (baca_exit_signal == 0) {
     baca_exit_signal = signal_number;
   }
+}
+
+static bool block_exit_signals(sigset_t *previous, BacaError *error) {
+  sigset_t signals;
+  if (sigemptyset(&signals) != 0) {
+    baca_error_set(error, BACA_ERROR_EXTERNAL,
+                   "cannot create exit signal mask: %s", strerror(errno));
+    return false;
+  }
+  for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_EXIT_SIGNALS);
+       ++index) {
+    if (sigaddset(&signals, BACA_EXIT_SIGNALS[index]) != 0) {
+      baca_error_set(error, BACA_ERROR_EXTERNAL,
+                     "cannot create exit signal mask: %s", strerror(errno));
+      return false;
+    }
+  }
+  const int status = pthread_sigmask(SIG_BLOCK, &signals, previous);
+  if (status != 0) {
+    baca_error_set(error, BACA_ERROR_EXTERNAL,
+                   "cannot block exit signals: %s", strerror(status));
+    return false;
+  }
+  return true;
+}
+
+static bool restore_signal_mask(const sigset_t *previous, BacaError *error) {
+  const int status = pthread_sigmask(SIG_SETMASK, previous, NULL);
+  if (status != 0) {
+    baca_error_set(error, BACA_ERROR_EXTERNAL,
+                   "cannot restore signal mask: %s", strerror(status));
+    return false;
+  }
+  return true;
 }
 
 static bool capture_signal_handlers(BacaSignalHandlers *handlers,
@@ -258,6 +321,28 @@ static void add_clipped(WINDOW *window, int y, int x, const char *text,
   }
   const size_t bytes = utf8_bytes_for_columns(text, columns);
   (void)mvwaddnstr(window, y, x, text, size_to_int(bytes));
+}
+
+static void library_add_clipped(WINDOW *window, int y, int x, const char *text,
+                                int columns) {
+  if (window == NULL || text == NULL || columns <= 0) {
+    return;
+  }
+  int height = 0;
+  int width = 0;
+  getmaxyx(window, height, width);
+  if (y < 0 || y >= height || x < 0 || x >= width) {
+    return;
+  }
+  if (columns > width - x) {
+    columns = width - x;
+  }
+  BacaError ignored = {0};
+  char *safe = baca_library_sanitize_text(text, (size_t)columns, &ignored);
+  if (safe != NULL) {
+    (void)mvwaddnstr(window, y, x, safe, size_to_int(strlen(safe)));
+  }
+  free(safe);
 }
 
 static int content_width_for(const BacaConfig *config, int terminal_width) {
@@ -2460,6 +2545,771 @@ static void initialize_graphics(BacaTuiState *state) {
   baca_document_probe_images(&state->app->document, true);
 }
 
+static size_t library_visible_rows(const BacaLibraryTuiState *state) {
+  return state->rows > 3 ? (size_t)(state->rows - 3) : 1U;
+}
+
+static void library_ensure_selection_visible(BacaLibraryTuiState *state) {
+  if (state->view.length == 0U) {
+    state->selected = 0U;
+    state->top = 0U;
+    return;
+  }
+  if (state->selected >= state->view.length) {
+    state->selected = state->view.length - 1U;
+  }
+  const size_t visible = library_visible_rows(state);
+  if (state->selected < state->top) {
+    state->top = state->selected;
+  } else if (state->selected >= state->top + visible) {
+    state->top = state->selected - visible + 1U;
+  }
+  const size_t maximum_top =
+      state->view.length > visible ? state->view.length - visible : 0U;
+  if (state->top > maximum_top) {
+    state->top = maximum_top;
+  }
+}
+
+static void library_update_dimensions(BacaLibraryTuiState *state) {
+  getmaxyx(stdscr, state->rows, state->columns);
+  if (state->rows < 1) {
+    state->rows = 1;
+  }
+  if (state->columns < 1) {
+    state->columns = 1;
+  }
+  library_ensure_selection_visible(state);
+  state->dirty = true;
+}
+
+static void library_clear_status(BacaLibraryTuiState *state) {
+  free(state->status);
+  state->status = NULL;
+}
+
+static void library_copy_status(BacaLibraryTuiState *state,
+                                const char *message) {
+  BacaError ignored = {0};
+  char *safe = baca_library_sanitize_text(message, SIZE_MAX, &ignored);
+  if (safe != NULL) {
+    library_clear_status(state);
+    state->status = safe;
+  }
+}
+
+static bool library_rebuild_view(BacaLibraryTuiState *state,
+                                 const char *filter, BacaLibrarySort sort,
+                                 const char *selected_filepath,
+                                 BacaError *error) {
+  BacaLibraryView replacement = {0};
+  if (!baca_library_view_build(&replacement, state->history, filter, sort,
+                               error)) {
+    return false;
+  }
+  const size_t selected = baca_library_preserve_selection(
+      &replacement, selected_filepath, state->selected);
+  baca_library_view_free(&state->view);
+  state->view = replacement;
+  state->selected = selected;
+  if (filter != state->filter) {
+    (void)snprintf(state->filter, sizeof(state->filter), "%s", filter);
+  }
+  state->sort = sort;
+  library_ensure_selection_visible(state);
+  state->dirty = true;
+  return true;
+}
+
+static const char *library_selected_filepath(
+    const BacaLibraryTuiState *state) {
+  if (state->selected >= state->view.length) {
+    return NULL;
+  }
+  return state->view.rows[state->selected].entry->filepath;
+}
+
+static void library_runtime_error(BacaLibraryTuiState *state,
+                                  const BacaError *error,
+                                  const char *fallback) {
+  library_copy_status(
+      state,
+      error != NULL && error->message[0] != '\0' ? error->message : fallback);
+  state->dirty = true;
+}
+
+static void library_move_selection(BacaLibraryTuiState *state, int amount) {
+  if (state->view.length == 0U) {
+    return;
+  }
+  if (amount < 0) {
+    const size_t distance = (size_t)(-(long)amount);
+    state->selected =
+        distance > state->selected ? 0U : state->selected - distance;
+  } else {
+    const size_t distance = (size_t)amount;
+    const size_t maximum = state->view.length - 1U;
+    state->selected = distance > maximum - state->selected
+                          ? maximum
+                          : state->selected + distance;
+  }
+  library_clear_status(state);
+  library_ensure_selection_visible(state);
+  state->dirty = true;
+}
+
+static int library_progress_percent(double progress) {
+  if (!isfinite(progress) || progress < 0.0) {
+    progress = 0.0;
+  } else if (progress > 1.0) {
+    progress = 1.0;
+  }
+  return (int)lround(progress * 100.0);
+}
+
+static void library_format_recency(const char *last_read, char output[16]) {
+  struct timespec parsed = {0};
+  if (!baca_library_parse_timestamp(last_read, &parsed)) {
+    (void)snprintf(output, 16U, "-");
+    return;
+  }
+  const time_t now = time(NULL);
+  if (now == (time_t)-1) {
+    (void)snprintf(output, 16U, "-");
+    return;
+  }
+  double elapsed = difftime(now, parsed.tv_sec);
+  if (elapsed < 0.0) {
+    elapsed = 0.0;
+  }
+  if (elapsed < 3600.0) {
+    (void)snprintf(output, 16U, "now");
+  } else if (elapsed < 86400.0) {
+    (void)snprintf(output, 16U, "%.0fh", floor(elapsed / 3600.0));
+  } else if (elapsed < 2592000.0) {
+    (void)snprintf(output, 16U, "%.0fd", floor(elapsed / 86400.0));
+  } else if (elapsed < 31536000.0) {
+    (void)snprintf(output, 16U, "%.0fmo", floor(elapsed / 2592000.0));
+  } else {
+    (void)snprintf(output, 16U, "%.0fy", floor(elapsed / 31536000.0));
+  }
+}
+
+static void library_draw_row(BacaLibraryTuiState *state, int screen_row,
+                             size_t view_index) {
+  if (view_index >= state->view.length || state->columns <= 0) {
+    return;
+  }
+  const BacaLibraryRow *row = &state->view.rows[view_index];
+  const int x = state->columns > 2 ? 1 : 0;
+  const int width = state->columns > 2 ? state->columns - 2 : state->columns;
+  if (width <= 0) {
+    return;
+  }
+
+  const bool selected = view_index == state->selected;
+  const attr_t selected_attributes =
+      selected ? (state->colors ? A_NORMAL : A_REVERSE) : A_NORMAL;
+  const short selected_pair =
+      selected && state->colors ? BACA_PAIR_SEARCH : BACA_PAIR_BASE;
+  (void)wattron(stdscr, selected_attributes |
+                            (state->colors ? COLOR_PAIR(selected_pair) : 0));
+  (void)mvwhline(stdscr, screen_row, x, ' ', width);
+
+  char progress[8] = {0};
+  char recency[16] = {0};
+  (void)snprintf(progress, sizeof(progress), "%d%%",
+                 library_progress_percent(row->entry->reading_progress));
+  library_format_recency(row->entry->last_read, recency);
+  const int progress_width = size_to_int(strlen(progress));
+  const int recency_width = size_to_int(strlen(recency));
+
+  if (width < progress_width + recency_width + 6) {
+    library_add_clipped(stdscr, screen_row, x, row->title, width);
+  } else {
+    const int recency_x = x + width - recency_width;
+    const int progress_x = recency_x - progress_width - 1;
+    const int text_width = progress_x - x - 1;
+    int author_width = text_width >= 6 ? text_width / 3 : 0;
+    if (author_width > 20) {
+      author_width = 20;
+    }
+    const int title_width =
+        text_width - author_width - (author_width > 0 ? 1 : 0);
+    library_add_clipped(stdscr, screen_row, x, row->title, title_width);
+    if (author_width > 0) {
+      library_add_clipped(stdscr, screen_row, x + title_width + 1,
+                          row->author, author_width);
+    }
+    library_add_clipped(stdscr, screen_row, progress_x, progress,
+                        progress_width);
+    library_add_clipped(stdscr, screen_row, recency_x, recency, recency_width);
+  }
+  (void)wattroff(stdscr, selected_attributes |
+                             (state->colors ? COLOR_PAIR(selected_pair) : 0));
+}
+
+static size_t library_sanitized_width(const char *text, size_t length) {
+  if (length >= sizeof(((BacaPromptState *)0)->value)) {
+    return 0U;
+  }
+  char segment[sizeof(((BacaPromptState *)0)->value)] = {0};
+  memcpy(segment, text, length);
+  BacaError ignored = {0};
+  char *safe = baca_library_sanitize_text(segment, SIZE_MAX, &ignored);
+  const size_t width =
+      safe == NULL ? 0U : baca_utf8_width(safe, strlen(safe));
+  free(safe);
+  return width;
+}
+
+static size_t library_input_visible_start(const BacaPromptState *input,
+                                           int columns) {
+  if (columns <= 0) {
+    return input->cursor;
+  }
+  size_t start = input->cursor;
+  size_t used = 0U;
+  while (start > 0U) {
+    const size_t previous = previous_utf8_boundary(input->value, start);
+    const size_t width =
+        library_sanitized_width(input->value + previous, start - previous);
+    if (width > (size_t)columns - minimum_size(used, (size_t)columns)) {
+      break;
+    }
+    used += width;
+    start = previous;
+  }
+  return start;
+}
+
+static void library_draw_context(BacaLibraryTuiState *state, int row) {
+  if (row < 0 || row >= state->rows || state->columns <= 0) {
+    return;
+  }
+  const int x = state->columns > 2 ? 1 : 0;
+  const int width = state->columns > 2 ? state->columns - 2 : state->columns;
+  (void)wattron(stdscr, A_DIM);
+  if (state->input_kind != BACA_LIBRARY_INPUT_NONE) {
+    const char *prefix =
+        state->input_kind == BACA_LIBRARY_INPUT_FILTER ? "/ " : "open ";
+    const int full_prefix_width = size_to_int(strlen(prefix));
+    const int prefix_width =
+        full_prefix_width < width ? full_prefix_width : width > 1 ? width - 1 : 0;
+    library_add_clipped(stdscr, row, x, prefix, prefix_width);
+    const int input_width = width - prefix_width;
+    const size_t start =
+        library_input_visible_start(&state->input, input_width);
+    library_add_clipped(stdscr, row, x + prefix_width,
+                        state->input.value + start, input_width);
+    int cursor_x = x + prefix_width +
+                   size_to_int(library_sanitized_width(
+                       state->input.value + start, state->input.cursor - start));
+    if (cursor_x >= state->columns) {
+      cursor_x = state->columns - 1;
+    }
+    if (cursor_x < 0) {
+      cursor_x = 0;
+    }
+    (void)move(row, cursor_x);
+  } else if (state->status != NULL && state->status[0] != '\0') {
+    library_add_clipped(stdscr, row, x, state->status, width);
+  } else {
+    char context[128] = {0};
+    if (state->view.length == 0U) {
+      (void)snprintf(context, sizeof(context), "%s - %s%s",
+                     state->filter[0] == '\0' ? "0 books" : "no matches",
+                     baca_library_sort_name(state->sort),
+                     state->filter[0] == '\0' ? "" : " - /");
+    } else if (state->filter[0] == '\0') {
+      (void)snprintf(context, sizeof(context), "%zu/%zu - %s",
+                     state->selected + 1U, state->view.length,
+                     baca_library_sort_name(state->sort));
+    } else {
+      (void)snprintf(context, sizeof(context), "%zu/%zu - %s - /",
+                     state->selected + 1U, state->view.length,
+                     baca_library_sort_name(state->sort));
+    }
+    library_add_clipped(stdscr, row, x, context, width);
+    if (state->filter[0] != '\0') {
+      const int context_width = size_to_int(strlen(context));
+      if (context_width < width) {
+        library_add_clipped(stdscr, row, x + context_width, state->filter,
+                            width - context_width);
+      }
+    }
+  }
+  (void)wattroff(stdscr, A_DIM);
+}
+
+static void library_draw_frame(BacaLibraryTuiState *state) {
+  (void)werase(stdscr);
+  (void)wbkgd(stdscr,
+              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+  const bool compact_input =
+      state->rows == 2 && state->input_kind != BACA_LIBRARY_INPUT_NONE;
+  const bool input_active = state->input_kind != BACA_LIBRARY_INPUT_NONE;
+  const bool show_heading = state->rows >= 2 && !compact_input;
+  const bool show_separator = state->rows >= 4;
+  const int content_row = show_separator ? 2 : show_heading ? 1 : 0;
+  const int footer_row =
+      input_active || state->rows >= 3 ? state->rows - 1 : -1;
+  const int content_end = footer_row >= 0 ? footer_row : state->rows;
+  if (show_heading) {
+    (void)wattron(stdscr,
+                  A_BOLD |
+                      (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+    library_add_clipped(stdscr, 0, state->columns > 2 ? 1 : 0, "baca",
+                        state->columns > 2 ? state->columns - 2
+                                           : state->columns);
+    (void)wattroff(stdscr,
+                   A_BOLD |
+                       (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+  }
+  if (show_separator) {
+    (void)wattron(stdscr, A_DIM);
+    (void)mvwhline(stdscr, 1, 0, ACS_HLINE, state->columns);
+    (void)wattroff(stdscr, A_DIM);
+  }
+  if (state->view.length == 0U && content_row < content_end) {
+    const char *message =
+        state->filter[0] == '\0' ? "No books yet" : "No matching books";
+    library_add_clipped(stdscr, content_row,
+                        state->columns > 2 ? 1 : 0, message,
+                        state->columns > 2 ? state->columns - 2
+                                           : state->columns);
+  } else {
+    const size_t visible = library_visible_rows(state);
+    for (size_t offset = 0U; offset < visible; ++offset) {
+      const size_t index = state->top + offset;
+      if (index >= state->view.length ||
+          offset > (size_t)(INT_MAX - content_row) ||
+          content_row + (int)offset >= content_end) {
+        break;
+      }
+      library_draw_row(state, content_row + (int)offset, index);
+    }
+  }
+  library_draw_context(state, footer_row);
+  if (state->input_kind != BACA_LIBRARY_INPUT_NONE) {
+    if (state->previous_cursor != ERR) {
+      (void)curs_set(1);
+    }
+  } else {
+    (void)curs_set(0);
+  }
+  (void)refresh();
+  state->dirty = false;
+}
+
+static bool library_initialize_curses(BacaLibraryTuiState *state,
+                                      BacaError *error) {
+  if (initscr() == NULL) {
+    baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot initialize terminal");
+    return false;
+  }
+  (void)cbreak();
+  (void)noecho();
+  (void)keypad(stdscr, true);
+  (void)set_escdelay(25);
+  state->previous_cursor = curs_set(0);
+  state->colors = false;
+  if (has_colors() == true && start_color() == OK && COLORS >= 8 &&
+      COLOR_PAIRS > BACA_PAIR_SEARCH) {
+    const BacaColorScheme *theme = &state->config->dark;
+    (void)use_default_colors();
+    if (init_pair(BACA_PAIR_BASE, terminal_color(theme->foreground),
+                  terminal_color(theme->background)) != ERR &&
+        init_pair(BACA_PAIR_ACCENT, terminal_color(theme->accent),
+                  terminal_color(theme->background)) != ERR &&
+        init_pair(BACA_PAIR_SEARCH, terminal_color(theme->background),
+                  terminal_color(theme->accent)) != ERR) {
+      state->colors = true;
+    }
+  }
+  library_update_dimensions(state);
+  (void)wbkgd(stdscr,
+              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+  return true;
+}
+
+static void library_begin_filter(BacaLibraryTuiState *state) {
+  BacaError error = {0};
+  free(state->input_selection);
+  state->input_selection = NULL;
+  const char *selected = library_selected_filepath(state);
+  if (selected != NULL) {
+    state->input_selection = baca_strdup(selected, &error);
+    if (state->input_selection == NULL) {
+      library_runtime_error(state, &error, "cannot start filter");
+      return;
+    }
+  }
+  (void)snprintf(state->filter_before, sizeof(state->filter_before), "%s",
+                 state->filter);
+  memset(&state->input, 0, sizeof(state->input));
+  (void)snprintf(state->input.value, sizeof(state->input.value), "%s",
+                 state->filter);
+  state->input.length = strlen(state->input.value);
+  state->input.cursor = state->input.length;
+  state->input_kind = BACA_LIBRARY_INPUT_FILTER;
+  library_clear_status(state);
+  state->dirty = true;
+}
+
+static void library_begin_path(BacaLibraryTuiState *state) {
+  memset(&state->input, 0, sizeof(state->input));
+  state->input_kind = BACA_LIBRARY_INPUT_PATH;
+  library_clear_status(state);
+  state->dirty = true;
+}
+
+static void library_finish_input(BacaLibraryTuiState *state) {
+  state->input_kind = BACA_LIBRARY_INPUT_NONE;
+  memset(&state->input, 0, sizeof(state->input));
+  free(state->input_selection);
+  state->input_selection = NULL;
+  state->dirty = true;
+}
+
+static bool library_update_filter(BacaLibraryTuiState *state) {
+  BacaError error = {0};
+  if (!library_rebuild_view(state, state->input.value, state->sort,
+                            state->input_selection, &error)) {
+    library_runtime_error(state, &error, "cannot filter library");
+    return false;
+  }
+  library_clear_status(state);
+  return true;
+}
+
+static void library_cancel_input(BacaLibraryTuiState *state) {
+  if (state->input_kind == BACA_LIBRARY_INPUT_FILTER &&
+      strcmp(state->filter, state->filter_before) != 0) {
+    BacaError error = {0};
+    if (!library_rebuild_view(state, state->filter_before, state->sort,
+                              state->input_selection, &error)) {
+      library_runtime_error(state, &error, "cannot restore filter");
+      return;
+    }
+  }
+  library_clear_status(state);
+  library_finish_input(state);
+}
+
+static void library_emit(BacaLibraryTuiState *state,
+                         BacaLibraryCommand command, const char *path) {
+  char *stored_path = NULL;
+  if (path != NULL) {
+    BacaError error = {0};
+    stored_path = baca_strdup(path, &error);
+    if (stored_path == NULL) {
+      library_runtime_error(state, &error, "cannot select book");
+      return;
+    }
+  }
+  free(state->action.path);
+  state->action = (BacaLibraryAction){
+      .command = command,
+      .path = stored_path,
+      .sort = state->sort,
+  };
+  state->quit = true;
+}
+
+static bool library_key_is_enter(bool key_code, int code,
+                                 wchar_t character) {
+  return (key_code && code == KEY_ENTER) ||
+         (!key_code && (character == L'\n' || character == L'\r'));
+}
+
+static void library_handle_input_key(BacaLibraryTuiState *state,
+                                     bool key_code, int code,
+                                     wchar_t character) {
+  if (!key_code && character == 27) {
+    library_cancel_input(state);
+    return;
+  }
+  if (library_key_is_enter(key_code, code, character)) {
+    if (state->input_kind == BACA_LIBRARY_INPUT_PATH &&
+        state->input.length > 0U) {
+      library_emit(state, BACA_LIBRARY_COMMAND_OPEN, state->input.value);
+    } else if (state->input_kind == BACA_LIBRARY_INPUT_FILTER &&
+               strcmp(state->filter, state->input.value) != 0 &&
+               !library_update_filter(state)) {
+      return;
+    } else {
+      library_finish_input(state);
+    }
+    return;
+  }
+
+  bool changed = false;
+  if ((key_code && code == KEY_BACKSPACE) ||
+      (!key_code && (character == 8 || character == 127))) {
+    const size_t start =
+        previous_utf8_boundary(state->input.value, state->input.cursor);
+    changed = start != state->input.cursor;
+    prompt_delete_range(&state->input, start, state->input.cursor);
+  } else if (key_code && code == KEY_DC) {
+    const size_t end = next_utf8_boundary(
+        state->input.value, state->input.length, state->input.cursor);
+    changed = end != state->input.cursor;
+    prompt_delete_range(&state->input, state->input.cursor, end);
+  } else if (key_code && code == KEY_LEFT) {
+    state->input.cursor =
+        previous_utf8_boundary(state->input.value, state->input.cursor);
+  } else if (key_code && code == KEY_RIGHT) {
+    state->input.cursor = next_utf8_boundary(
+        state->input.value, state->input.length, state->input.cursor);
+  } else if ((key_code && code == KEY_HOME) ||
+             (!key_code && character == 1)) {
+    state->input.cursor = 0U;
+  } else if ((key_code && code == KEY_END) ||
+             (!key_code && character == 5)) {
+    state->input.cursor = state->input.length;
+  } else if (!key_code && character == 23) {
+    size_t start = state->input.cursor;
+    while (start > 0U &&
+           isspace((unsigned char)state->input.value[start - 1U]) != 0) {
+      --start;
+    }
+    while (start > 0U &&
+           isspace((unsigned char)state->input.value[start - 1U]) == 0) {
+      --start;
+    }
+    changed = start != state->input.cursor;
+    prompt_delete_range(&state->input, start, state->input.cursor);
+  } else if (!key_code && iswprint((wint_t)character) != 0) {
+    const size_t before = state->input.length;
+    prompt_insert(&state->input, character);
+    changed = state->input.length != before;
+  }
+  if (changed && state->input_kind == BACA_LIBRARY_INPUT_FILTER) {
+    (void)library_update_filter(state);
+  }
+  state->dirty = true;
+}
+
+static void library_cycle_sort(BacaLibraryTuiState *state) {
+  const char *selected = library_selected_filepath(state);
+  const BacaLibrarySort sort = baca_library_sort_next(state->sort);
+  BacaError error = {0};
+  if (!library_rebuild_view(state, state->filter, sort, selected, &error)) {
+    library_runtime_error(state, &error, "cannot sort library");
+  } else {
+    library_clear_status(state);
+  }
+}
+
+static void library_clear_filter(BacaLibraryTuiState *state) {
+  if (state->filter[0] == '\0') {
+    return;
+  }
+  const char *selected = library_selected_filepath(state);
+  BacaError error = {0};
+  if (!library_rebuild_view(state, "", state->sort, selected, &error)) {
+    library_runtime_error(state, &error, "cannot clear filter");
+  } else {
+    library_clear_status(state);
+  }
+}
+
+static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
+                               int code, wchar_t character) {
+  if (state->input_kind != BACA_LIBRARY_INPUT_NONE) {
+    library_handle_input_key(state, key_code, code, character);
+    return;
+  }
+
+  if (!key_code && character == L'g') {
+    if (state->g_pending) {
+      state->selected = 0U;
+      state->g_pending = false;
+      library_ensure_selection_visible(state);
+      state->dirty = true;
+    } else {
+      state->g_pending = true;
+    }
+    return;
+  }
+  state->g_pending = false;
+
+  if ((key_code && code == KEY_DOWN) || (!key_code && character == L'j')) {
+    library_move_selection(state, 1);
+  } else if ((key_code && code == KEY_UP) ||
+             (!key_code && character == L'k')) {
+    library_move_selection(state, -1);
+  } else if (key_code && code == KEY_HOME) {
+    state->selected = 0U;
+    library_ensure_selection_visible(state);
+    state->dirty = true;
+  } else if ((key_code && code == KEY_END) ||
+             (!key_code && character == L'G')) {
+    if (state->view.length > 0U) {
+      state->selected = state->view.length - 1U;
+      library_ensure_selection_visible(state);
+      state->dirty = true;
+    }
+  } else if ((key_code && code == KEY_NPAGE) ||
+             (!key_code && character == 6)) {
+    library_move_selection(state, size_to_int(library_visible_rows(state)));
+  } else if ((key_code && code == KEY_PPAGE) ||
+             (!key_code && character == 2)) {
+    library_move_selection(state,
+                           -size_to_int(library_visible_rows(state)));
+  } else if (library_key_is_enter(key_code, code, character) ||
+             (!key_code && character == L'l')) {
+    const char *path = library_selected_filepath(state);
+    if (path == NULL || path[0] == '\0') {
+      library_copy_status(state, "book path unavailable");
+      state->dirty = true;
+    } else {
+      library_emit(state, BACA_LIBRARY_COMMAND_OPEN, path);
+    }
+  } else if (!key_code && character == L'/') {
+    library_begin_filter(state);
+  } else if (!key_code && character == L's') {
+    library_cycle_sort(state);
+  } else if (!key_code && character == L'r') {
+    library_emit(state, BACA_LIBRARY_COMMAND_REFRESH,
+                 library_selected_filepath(state));
+  } else if (!key_code && character == L'o') {
+    library_begin_path(state);
+  } else if (!key_code && character == 27) {
+    library_clear_filter(state);
+  } else if (!key_code && character == L'q') {
+    library_emit(state, BACA_LIBRARY_COMMAND_QUIT, NULL);
+  }
+}
+
+int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
+                         BacaLibrarySort sort, const char *selected_filepath,
+                         const char *context, BacaLibraryAction *action,
+                         BacaError *error) {
+  if (config == NULL || history == NULL || action == NULL) {
+    baca_error_set(error, BACA_ERROR_ARGUMENT,
+                   "invalid library application state");
+    return EXIT_FAILURE;
+  }
+  if (action->command != BACA_LIBRARY_COMMAND_NONE || action->path != NULL) {
+    baca_error_set(error, BACA_ERROR_ARGUMENT,
+                   "library action output is not empty");
+    return EXIT_FAILURE;
+  }
+
+  BacaLibraryTuiState state = {
+      .config = config,
+      .history = history,
+      .sort = sort,
+      .previous_cursor = ERR,
+      .dirty = true,
+  };
+  library_copy_status(&state, context);
+  if (!baca_library_view_build(&state.view, history, "", sort, error)) {
+    library_clear_status(&state);
+    return EXIT_FAILURE;
+  }
+  state.selected = baca_library_preserve_selection(
+      &state.view, selected_filepath, 0U);
+
+  BacaSignalHandlers signal_handlers = {0};
+  sigset_t previous_signal_mask;
+  bool exit_signals_blocked = false;
+  if (!block_exit_signals(&previous_signal_mask, error)) {
+    library_clear_status(&state);
+    baca_library_view_free(&state.view);
+    return EXIT_FAILURE;
+  }
+  exit_signals_blocked = true;
+  baca_exit_signal = 0;
+  if (!capture_signal_handlers(&signal_handlers, error)) {
+    library_clear_status(&state);
+    baca_library_view_free(&state.view);
+    (void)restore_signal_mask(&previous_signal_mask, NULL);
+    return EXIT_FAILURE;
+  }
+  if (!library_initialize_curses(&state, error)) {
+    library_clear_status(&state);
+    baca_library_view_free(&state.view);
+    (void)restore_signal_mask(&previous_signal_mask, NULL);
+    return EXIT_FAILURE;
+  }
+
+  int result = EXIT_SUCCESS;
+  if (!install_signal_handlers(&signal_handlers, error)) {
+    result = EXIT_FAILURE;
+    goto cleanup;
+  }
+  if (!restore_signal_mask(&previous_signal_mask, error)) {
+    result = EXIT_FAILURE;
+    goto cleanup;
+  }
+  exit_signals_blocked = false;
+  while (!state.quit) {
+    if (baca_exit_signal != 0) {
+      break;
+    }
+    if (state.dirty) {
+      library_draw_frame(&state);
+    }
+    wtimeout(stdscr, 100);
+    wint_t input = 0;
+    const int status = wget_wch(stdscr, &input);
+    if (baca_exit_signal != 0) {
+      break;
+    }
+    if (status == ERR) {
+      continue;
+    }
+    const bool key_code = status == KEY_CODE_YES;
+    const int code = key_code ? (int)input : 0;
+    const wchar_t character = key_code ? L'\0' : (wchar_t)input;
+    if (key_code && code == KEY_RESIZE) {
+      library_update_dimensions(&state);
+      continue;
+    }
+    library_handle_key(&state, key_code, code, character);
+  }
+
+cleanup:
+  if (state.previous_cursor != ERR) {
+    (void)curs_set(state.previous_cursor);
+  }
+  (void)endwin();
+  free(state.input_selection);
+  library_clear_status(&state);
+  baca_library_view_free(&state.view);
+  if (!exit_signals_blocked) {
+    BacaError mask_error = {0};
+    if (block_exit_signals(&previous_signal_mask, &mask_error)) {
+      exit_signals_blocked = true;
+    } else if (result == EXIT_SUCCESS) {
+      *error = mask_error;
+      result = EXIT_FAILURE;
+    }
+  }
+  const int signal_number = (int)baca_exit_signal;
+  restore_signal_handlers(&signal_handlers);
+  if (exit_signals_blocked) {
+    BacaError mask_error = {0};
+    if (!restore_signal_mask(&previous_signal_mask, &mask_error) &&
+        result == EXIT_SUCCESS) {
+      *error = mask_error;
+      result = EXIT_FAILURE;
+    }
+  }
+  if (result == EXIT_SUCCESS && signal_number != 0) {
+    result = 128 + signal_number;
+  }
+  if (result == EXIT_SUCCESS) {
+    *action = state.action;
+  } else {
+    free(state.action.path);
+  }
+  return result;
+}
+
 int baca_tui_run(BacaApp *app, BacaError *error) {
   if (app == NULL || app->document.path == NULL) {
     baca_error_set(error, BACA_ERROR_ARGUMENT,
@@ -2472,11 +3322,19 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
       .dirty = true,
   };
   BacaSignalHandlers signal_handlers = {0};
+  sigset_t previous_signal_mask;
+  bool exit_signals_blocked = false;
+  if (!block_exit_signals(&previous_signal_mask, error)) {
+    return EXIT_FAILURE;
+  }
+  exit_signals_blocked = true;
   baca_exit_signal = 0;
   if (!capture_signal_handlers(&signal_handlers, error)) {
+    (void)restore_signal_mask(&previous_signal_mask, NULL);
     return EXIT_FAILURE;
   }
   if (!initialize_curses(&state, error)) {
+    (void)restore_signal_mask(&previous_signal_mask, NULL);
     return EXIT_FAILURE;
   }
   initialize_graphics(&state);
@@ -2486,6 +3344,11 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
     result = EXIT_FAILURE;
     goto cleanup;
   }
+  if (!restore_signal_mask(&previous_signal_mask, error)) {
+    result = EXIT_FAILURE;
+    goto cleanup;
+  }
+  exit_signals_blocked = false;
   if (!rebuild_layout(&state, error)) {
     result = EXIT_FAILURE;
     goto cleanup;
@@ -2545,8 +3408,25 @@ cleanup:
     (void)curs_set(state.previous_cursor);
   }
   (void)endwin();
+  if (!exit_signals_blocked) {
+    BacaError mask_error = {0};
+    if (block_exit_signals(&previous_signal_mask, &mask_error)) {
+      exit_signals_blocked = true;
+    } else if (result == EXIT_SUCCESS) {
+      *error = mask_error;
+      result = EXIT_FAILURE;
+    }
+  }
   const int signal_number = (int)baca_exit_signal;
   restore_signal_handlers(&signal_handlers);
+  if (exit_signals_blocked) {
+    BacaError mask_error = {0};
+    if (!restore_signal_mask(&previous_signal_mask, &mask_error) &&
+        result == EXIT_SUCCESS) {
+      *error = mask_error;
+      result = EXIT_FAILURE;
+    }
+  }
   if (result == EXIT_SUCCESS && signal_number != 0) {
     result = 128 + signal_number;
   }
