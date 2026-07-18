@@ -2,6 +2,7 @@
 
 #include "baca/document.h"
 #include "baca/document_backend.h"
+#include "baca/graphics.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -27,13 +28,64 @@ static const unsigned char pixel_png[] = {
     0x89U, 0x50U, 0x4eU, 0x47U, 0x0dU, 0x0aU, 0x1aU, 0x0aU,
     0x00U, 0x00U, 0x00U, 0x0dU, 0x49U, 0x48U, 0x44U, 0x52U,
     0x00U, 0x00U, 0x00U, 0x01U, 0x00U, 0x00U, 0x00U, 0x01U,
-    0x08U, 0x06U, 0x00U, 0x00U, 0x00U, 0x1fU, 0x15U, 0xc4U,
-    0x89U, 0x00U, 0x00U, 0x00U, 0x0dU, 0x49U, 0x44U, 0x41U,
-    0x54U, 0x08U, 0xd7U, 0x63U, 0xf8U, 0xcfU, 0xc0U, 0xf0U,
-    0x1fU, 0x00U, 0x05U, 0x00U, 0x01U, 0xffU, 0x89U, 0x99U,
-    0x3dU, 0x1dU, 0x00U, 0x00U, 0x00U, 0x00U, 0x49U, 0x45U,
-    0x4eU, 0x44U, 0xaeU, 0x42U, 0x60U, 0x82U,
+    0x08U, 0x04U, 0x00U, 0x00U, 0x00U, 0xb5U, 0x1cU, 0x0cU,
+    0x02U, 0x00U, 0x00U, 0x00U, 0x0bU, 0x49U, 0x44U, 0x41U,
+    0x54U, 0x78U, 0xdaU, 0x63U, 0x64U, 0xf8U, 0x0fU, 0x00U,
+    0x01U, 0x05U, 0x01U, 0x01U, 0x27U, 0x18U, 0xe3U, 0x66U,
+    0x00U, 0x00U, 0x00U, 0x00U, 0x49U, 0x45U, 0x4eU, 0x44U,
+    0xaeU, 0x42U, 0x60U, 0x82U,
 };
+
+typedef struct ProbeBackend {
+    size_t loads;
+    bool corrupt;
+} ProbeBackend;
+
+static bool probe_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
+                                BacaError *error) {
+    (void)uri;
+    ProbeBackend *backend = document->backend;
+    ++backend->loads;
+    const size_t allocation = backend->corrupt ? 1U : sizeof(pixel_png);
+    resource->data = malloc(allocation);
+    resource->mime_type = baca_strdup("image/png", error);
+    if (resource->data == NULL || resource->mime_type == NULL) {
+        baca_resource_free(resource);
+        baca_error_set(error, BACA_ERROR_MEMORY, "cannot allocate probe fixture");
+        return false;
+    }
+    if (!backend->corrupt) {
+        memcpy(resource->data, pixel_png, sizeof(pixel_png));
+    } else {
+        resource->data[0] = 'x';
+    }
+    resource->length = allocation;
+    return true;
+}
+
+static const BacaDocumentOps probe_document_ops = {
+    .load_resource = probe_load_resource,
+};
+
+static bool patch_member_size(const char *path, const char *member_name, uint32_t size);
+
+static bool append_probe_image(BacaDocument *document, const char *uri, BacaError *error) {
+    BacaBlock block = {
+        .kind = BACA_BLOCK_IMAGE,
+        .value.image = {
+            .uri = baca_strdup(uri, error),
+            .alt = baca_strdup(uri, error),
+            .page_index = -1,
+        },
+    };
+    if (block.value.image.uri != NULL && block.value.image.alt != NULL &&
+        baca_document_add_image_block(document, &block, error)) {
+        return true;
+    }
+    free(block.value.image.uri);
+    free(block.value.image.alt);
+    return false;
+}
 
 static bool buffer_contains(const unsigned char *data, size_t length, const void *needle, size_t needle_length) {
     if (needle_length == 0U) {
@@ -85,6 +137,47 @@ static bool close_archive(zip_t *archive) {
     fprintf(stderr, "EPUB fixture close: %s\n", zip_strerror(archive));
     zip_discard(archive);
     return false;
+}
+
+static bool create_numbered_probe_archive(const char *relative, const char *prefix, size_t member_count,
+                                          const void *data, size_t data_length, char **output_path) {
+    char *path = baca_test_path(relative);
+    if (path == NULL) {
+        return false;
+    }
+    BacaError error = {0};
+    char *directory = baca_path_dirname(path, &error);
+    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+        free(directory);
+        free(path);
+        return false;
+    }
+    free(directory);
+
+    int zip_error = 0;
+    zip_t *archive = zip_open(path, ZIP_CREATE | ZIP_TRUNCATE, &zip_error);
+    if (archive == NULL) {
+        free(path);
+        return false;
+    }
+    bool built = true;
+    for (size_t index = 0U; index < member_count && built; ++index) {
+        char name[64] = {0};
+        const int length = snprintf(name, sizeof(name), "%s-%zu.png", prefix, index);
+        built = length > 0 && (size_t)length < sizeof(name) &&
+                zip_add_bytes(archive, name, data, data_length, false, NULL);
+    }
+    if (!built) {
+        zip_discard(archive);
+        free(path);
+        return false;
+    }
+    if (!close_archive(archive)) {
+        free(path);
+        return false;
+    }
+    *output_path = path;
+    return true;
 }
 
 static bool create_epub(const char *relative, const char *opf, const FixtureMember *members, size_t member_count,
@@ -198,6 +291,7 @@ static bool build_epub2(char **path) {
         "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>"
         "<item id=\"pixel\" href=\"Images/pixel.png\" media-type=\"image/png\"/>"
         "<item id=\"high\" href=\"Images/high.png\" media-type=\"image/png\"/>"
+        "<item id=\"broken\" href=\"Images/broken.png\" media-type=\"image/png\"/>"
         "<item id=\"vector\" href=\"Images/vector.svg\" media-type=\"image/svg+xml\"/>"
         "</manifest><spine toc=\"ncx\"><itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>";
     static const char chapter1[] =
@@ -207,6 +301,9 @@ static bool build_epub2(char **path) {
         "<a id=\"next\" name=\"legacy-next\" href=\"nested/chapter2.xhtml#deep\">next</a> "
         "<a href=\"https://example.test/reference\">outside</a>. </p>"
         "<img id=\"raster\" src=\"../Images/pixel.png\" alt=\"Pixel\"/>"
+        "<img id=\"broken\" src=\"../Images/broken.png\" alt=\"Broken\"/>"
+        "<img id=\"data-image\" alt=\"Data\" "
+        "src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=\"/>"
         "<a id=\"image-link\" href=\"nested/chapter2.xhtml#deep\">"
         "<img id=\"linked\" src=\"../Images/pixel.png\" alt=\"Linked\"/></a>"
         "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">"
@@ -236,6 +333,7 @@ static bool build_epub2(char **path) {
         {.name = "OEBPS/toc.ncx", .data = ncx, .length = sizeof(ncx) - 1U},
         {.name = "OEBPS/Images/pixel.png", .data = pixel_png, .length = sizeof(pixel_png)},
         {.name = "OEBPS/Images/high.png", .data = pixel_png, .length = sizeof(pixel_png)},
+        {.name = "OEBPS/Images/broken.png", .data = "not a PNG", .length = 9U},
         {.name = "OEBPS/Images/vector.svg", .data = vector, .length = sizeof(vector) - 1U},
     };
     return create_epub("document/epub2.epub", opf, members, BACA_ARRAY_LEN(members), path);
@@ -247,6 +345,7 @@ static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
     BacaDocument document = {0};
     BacaError error = {0};
     TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    baca_document_probe_images(&document, true);
     TEST_ASSERT_INT(document.format, BACA_FORMAT_EPUB);
     TEST_ASSERT_STR(document.metadata.title, "Harness Book");
     TEST_ASSERT_STR(document.metadata.creator, "Test Author");
@@ -278,12 +377,21 @@ static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
     const BacaImageBlock *vector = find_image(&document, "Vector");
     const BacaImageBlock *svg_href = find_image(&document, "SVG Href");
     const BacaImageBlock *responsive = find_image(&document, "Responsive");
-    TEST_ASSERT(pixel != NULL && linked != NULL && vector != NULL && svg_href != NULL && responsive != NULL);
+    const BacaImageBlock *broken = find_image(&document, "Broken");
+    const BacaImageBlock *data = find_image(&document, "Data");
+    TEST_ASSERT(pixel != NULL && linked != NULL && vector != NULL && svg_href != NULL && responsive != NULL &&
+                broken != NULL && data != NULL);
     TEST_ASSERT_STR(pixel->uri, "OEBPS/Images/pixel.png");
+    TEST_ASSERT_INT(pixel->intrinsic_width, 1);
+    TEST_ASSERT_INT(pixel->intrinsic_height, 1);
+    TEST_ASSERT(!pixel->broken);
     TEST_ASSERT_STR(linked->link, "OEBPS/Text/nested/chapter2.xhtml#deep");
     TEST_ASSERT_STR(vector->uri, "OEBPS/Images/vector.svg");
     TEST_ASSERT_STR(svg_href->uri, "OEBPS/Images/pixel.png");
     TEST_ASSERT_STR(responsive->uri, "OEBPS/Images/high.png");
+    TEST_ASSERT(!vector->broken && vector->intrinsic_width == 1 && vector->intrinsic_height == 1);
+    TEST_ASSERT(broken->broken && broken->intrinsic_width == 0 && broken->intrinsic_height == 0);
+    TEST_ASSERT(!data->broken && data->intrinsic_width == 1 && data->intrinsic_height == 1);
 
     static const char *const anchors[] = {
         "root-body", "top", "intro", "next", "legacy-next", "raster", "image-link", "linked",
@@ -372,6 +480,7 @@ static BacaTestResult test_epub3_nav_and_svg_spine(void) {
     BacaDocument document = {0};
     BacaError error = {0};
     TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    baca_document_probe_images(&document, true);
     TEST_ASSERT_SIZE(document.section_count, 3U);
     TEST_ASSERT_STR(document.sections[1].id, "OEBPS/Images/page.svg");
     TEST_ASSERT(!document.sections[1].linear);
@@ -379,6 +488,9 @@ static BacaTestResult test_epub3_nav_and_svg_spine(void) {
     const BacaBlock *svg_block = &document.blocks[document.sections[1].first_block];
     TEST_ASSERT_INT(svg_block->kind, BACA_BLOCK_IMAGE);
     TEST_ASSERT_STR(svg_block->value.image.uri, "OEBPS/Images/page.svg");
+    TEST_ASSERT_INT(svg_block->value.image.intrinsic_width, 2);
+    TEST_ASSERT_INT(svg_block->value.image.intrinsic_height, 2);
+    TEST_ASSERT(!svg_block->value.image.broken);
     TEST_ASSERT_SIZE(document.toc_count, 3U);
     TEST_ASSERT_STR(document.toc[0].label, "One");
     TEST_ASSERT_INT((int)document.toc[1].depth, 1);
@@ -453,6 +565,98 @@ static BacaTestResult test_data_resources(void) {
     baca_resource_free(&resource);
     TEST_ASSERT(!baca_document_load_resource(&document, "data:text/plain;base64,%%%", &resource, &error));
     TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    return BACA_TEST_PASS;
+}
+
+static BacaTestResult test_image_probe_dedupe_placeholder_and_aggregate_limit(void) {
+    char *path = NULL;
+    TEST_ASSERT(create_numbered_probe_archive("document/probe-same.zip", "same", 1U, pixel_png,
+                                              sizeof(pixel_png), &path));
+    ProbeBackend backend = {0};
+    BacaDocument document = {
+        .path = path,
+        .format = BACA_FORMAT_EPUB,
+        .backend = &backend,
+        .ops = &probe_document_ops,
+    };
+    BacaError error = {0};
+    TEST_ASSERT(append_probe_image(&document, "same-0.png", &error));
+    TEST_ASSERT(append_probe_image(&document, "same-0.png", &error));
+    baca_document_probe_images(&document, false);
+    TEST_ASSERT_SIZE(backend.loads, 0U);
+    TEST_ASSERT(document.blocks[0].value.image.broken && document.blocks[1].value.image.broken);
+
+    baca_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, 1U);
+    TEST_ASSERT(!document.blocks[0].value.image.broken && !document.blocks[1].value.image.broken);
+    TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
+    TEST_ASSERT_INT(document.blocks[1].value.image.intrinsic_height, 1);
+    baca_document_close(&document);
+
+    path = NULL;
+    TEST_ASSERT(create_numbered_probe_archive("document/probe-count.zip", "image",
+                                              BACA_GRAPHICS_MAX_PROBES + 5U, "x", 1U, &path));
+    backend = (ProbeBackend){.corrupt = true};
+    document = (BacaDocument){
+        .path = path,
+        .format = BACA_FORMAT_EPUB,
+        .backend = &backend,
+        .ops = &probe_document_ops,
+    };
+    for (size_t index = 0U; index < BACA_GRAPHICS_MAX_PROBES + 5U; ++index) {
+        char uri[64] = {0};
+        const int length = snprintf(uri, sizeof(uri), "image-%zu.png", index);
+        TEST_ASSERT(length > 0 && (size_t)length < sizeof(uri));
+        TEST_ASSERT(append_probe_image(&document, uri, &error));
+    }
+    baca_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, BACA_GRAPHICS_MAX_PROBES);
+    TEST_ASSERT(document.blocks[0].value.image.broken);
+    TEST_ASSERT(document.blocks[document.block_count - 1U].value.image.broken);
+    baca_document_close(&document);
+
+    path = NULL;
+    TEST_ASSERT(create_numbered_probe_archive("document/probe-budget.zip", "budget", 6U, "x", 1U,
+                                              &path));
+    for (size_t index = 0U; index < 4U; ++index) {
+        char member[64] = {0};
+        const int length = snprintf(member, sizeof(member), "budget-%zu.png", index);
+        TEST_ASSERT(length > 0 && (size_t)length < sizeof(member));
+        TEST_ASSERT(patch_member_size(path, member, BACA_GRAPHICS_MAX_INPUT_BYTES));
+    }
+    TEST_ASSERT(patch_member_size(path, "budget-5.png", BACA_GRAPHICS_MAX_INPUT_BYTES + 1U));
+    char *oversized_path = baca_strdup(path, &error);
+    TEST_ASSERT(oversized_path != NULL);
+
+    backend = (ProbeBackend){.corrupt = true};
+    document = (BacaDocument){
+        .path = path,
+        .format = BACA_FORMAT_EPUB,
+        .backend = &backend,
+        .ops = &probe_document_ops,
+    };
+    for (size_t index = 0U; index < 5U; ++index) {
+        char uri[64] = {0};
+        const int length = snprintf(uri, sizeof(uri), "budget-%zu.png", index);
+        TEST_ASSERT(length > 0 && (size_t)length < sizeof(uri));
+        TEST_ASSERT(append_probe_image(&document, uri, &error));
+    }
+    baca_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, BACA_GRAPHICS_MAX_PROBE_BYTES / BACA_GRAPHICS_MAX_INPUT_BYTES);
+    baca_document_close(&document);
+
+    backend = (ProbeBackend){.corrupt = true};
+    document = (BacaDocument){
+        .path = oversized_path,
+        .format = BACA_FORMAT_EPUB,
+        .backend = &backend,
+        .ops = &probe_document_ops,
+    };
+    TEST_ASSERT(append_probe_image(&document, "budget-5.png", &error));
+    baca_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, 0U);
+    TEST_ASSERT(document.blocks[0].value.image.broken);
+    baca_document_close(&document);
     return BACA_TEST_PASS;
 }
 
@@ -653,6 +857,8 @@ const BacaTestCase *baca_document_test_cases(size_t *count) {
         {.name = "epub3_nav_and_svg_spine", .function = test_epub3_nav_and_svg_spine},
         {.name = "missing_toc_fallback", .function = test_missing_toc_fallback},
         {.name = "data_resources", .function = test_data_resources},
+        {.name = "image_probe_dedupe_placeholder_and_aggregate_limit",
+         .function = test_image_probe_dedupe_placeholder_and_aggregate_limit},
         {.name = "traversal_errors", .function = test_traversal_errors},
         {.name = "oversized_member_error", .function = test_oversized_member_error},
         {.name = "encryption_document_error", .function = test_encryption_document_error},

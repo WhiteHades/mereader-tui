@@ -40,6 +40,13 @@ typedef enum BacaJustification : uint8_t {
     BACA_JUSTIFY_RIGHT,
 } BacaJustification;
 
+typedef enum BacaImageMode : uint8_t {
+    BACA_IMAGE_MODE_AUTO = 0,
+    BACA_IMAGE_MODE_KITTY,
+    BACA_IMAGE_MODE_ANSI,
+    BACA_IMAGE_MODE_PLACEHOLDER,
+} BacaImageMode;
+
 typedef struct BacaConfig {
     char *preferred_image_viewer;
     int max_text_width;
@@ -47,6 +54,8 @@ typedef struct BacaConfig {
     BacaJustification justification;
     bool pretty;
     double page_scroll_duration;
+    BacaImageMode image_mode;
+    bool image_mode_explicit;
     bool show_image_as_ansi;
     BacaColorScheme dark;
     BacaColorScheme light;

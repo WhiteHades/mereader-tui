@@ -1,4 +1,5 @@
 #include "baca/app.h"
+#include "baca/graphics.h"
 #include "baca/platform.h"
 
 #include <ctype.h>
@@ -14,12 +15,14 @@
 #include <time.h>
 #include <wchar.h>
 #include <wctype.h>
+#include <unistd.h>
 
 enum {
   BACA_PAIR_BASE = 1,
   BACA_PAIR_ACCENT,
   BACA_PAIR_SEARCH,
   BACA_PAIR_ALERT,
+  BACA_PAIR_IMAGE_FIRST,
 };
 
 static const char BACA_IMAGE_PLACEHOLDER[] = "IMAGE";
@@ -93,6 +96,7 @@ typedef struct BacaSignalHandlers {
 
 typedef struct BacaTuiState {
   BacaApp *app;
+  BacaGraphicsContext *graphics;
   int rows;
   int columns;
   int content_width;
@@ -108,7 +112,10 @@ typedef struct BacaTuiState {
   char **temp_directories;
   size_t temp_directory_count;
   size_t temp_directory_capacity;
+  BacaImageMode image_mode;
+  short image_pair_capacity;
   bool colors;
+  bool raw_truecolor;
   bool quit;
   bool dirty;
 } BacaTuiState;
@@ -182,6 +189,40 @@ static int size_to_int(size_t value) {
   return value > (size_t)INT_MAX ? INT_MAX : (int)value;
 }
 
+static bool terminal_graphics_write(void *user_data, const void *data,
+                                    size_t length) {
+  (void)user_data;
+  const unsigned char *cursor = data;
+  size_t remaining = length;
+  while (remaining > 0U) {
+    const ssize_t written = write(STDOUT_FILENO, cursor, remaining);
+    if (written > 0) {
+      cursor += (size_t)written;
+      remaining -= (size_t)written;
+    } else if (written < 0 && errno == EINTR) {
+      continue;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+static uint32_t current_background(const BacaTuiState *state) {
+  return state->app->dark_mode ? state->app->config.dark.background
+                               : state->app->config.light.background;
+}
+
+static void delete_kitty_images(BacaTuiState *state) {
+  if (state->graphics == NULL || state->image_mode != BACA_IMAGE_MODE_KITTY) {
+    return;
+  }
+  BacaError ignored = {0};
+  (void)fflush(stdout);
+  (void)baca_graphics_kitty_delete_all(
+      state->graphics, terminal_graphics_write, state, &ignored);
+}
+
 static size_t utf8_bytes_for_columns(const char *text, int columns) {
   if (text == NULL || columns <= 0) {
     return 0U;
@@ -231,6 +272,9 @@ static int content_width_for(const BacaConfig *config, int terminal_width) {
   if (width < 1) {
     width = 1;
   }
+  if (width > BACA_GRAPHICS_MAX_COLUMNS) {
+    width = BACA_GRAPHICS_MAX_COLUMNS;
+  }
   if (width > available) {
     width = available;
   }
@@ -238,6 +282,8 @@ static int content_width_for(const BacaConfig *config, int terminal_width) {
 }
 
 static void update_dimensions(BacaTuiState *state) {
+  const int previous_rows = state->rows;
+  const int previous_columns = state->columns;
   getmaxyx(stdscr, state->rows, state->columns);
   if (state->rows < 1) {
     state->rows = 1;
@@ -250,50 +296,26 @@ static void update_dimensions(BacaTuiState *state) {
   if (state->content_x < 0) {
     state->content_x = 0;
   }
-}
-
-static short nearest_basic_color(uint32_t rgb) {
-  static const uint32_t palette[] = {
-      0x000000U, 0x800000U, 0x008000U, 0x808000U,
-      0x000080U, 0x800080U, 0x008080U, 0xc0c0c0U,
-  };
-  unsigned best = 0U;
-  uint64_t best_distance = UINT64_MAX;
-  const int red = (int)((rgb >> 16U) & 0xffU);
-  const int green = (int)((rgb >> 8U) & 0xffU);
-  const int blue = (int)(rgb & 0xffU);
-  for (unsigned index = 0U; index < BACA_ARRAY_LEN(palette); ++index) {
-    const int candidate_red = (int)((palette[index] >> 16U) & 0xffU);
-    const int candidate_green = (int)((palette[index] >> 8U) & 0xffU);
-    const int candidate_blue = (int)(palette[index] & 0xffU);
-    const int red_delta = red - candidate_red;
-    const int green_delta = green - candidate_green;
-    const int blue_delta = blue - candidate_blue;
-    const uint64_t distance = (uint64_t)(red_delta * red_delta) +
-                              (uint64_t)(green_delta * green_delta) +
-                              (uint64_t)(blue_delta * blue_delta);
-    if (distance < best_distance) {
-      best = index;
-      best_distance = distance;
-    }
+  if (state->graphics != NULL &&
+      (previous_rows != state->rows || previous_columns != state->columns)) {
+    delete_kitty_images(state);
+    BacaError ignored = {0};
+    (void)baca_graphics_resize(state->graphics, state->columns, state->rows,
+                               &ignored);
   }
-  return (short)best;
 }
 
 static short terminal_color(uint32_t rgb) {
-  if (COLORS >= 256) {
-    const int red = (int)((rgb >> 16U) & 0xffU);
-    const int green = (int)((rgb >> 8U) & 0xffU);
-    const int blue = (int)(rgb & 0xffU);
-    const int red_level = (red * 5 + 127) / 255;
-    const int green_level = (green * 5 + 127) / 255;
-    const int blue_level = (blue * 5 + 127) / 255;
-    return (short)(16 + 36 * red_level + 6 * green_level + blue_level);
-  }
-  return nearest_basic_color(rgb);
+  return (short)baca_graphics_rgb_to_palette(rgb, (unsigned)COLORS);
 }
 
 static void apply_theme(BacaTuiState *state) {
+  if (state->graphics != NULL) {
+    delete_kitty_images(state);
+    BacaError ignored = {0};
+    (void)baca_graphics_set_background(
+        state->graphics, current_background(state), &ignored);
+  }
   if (!state->colors) {
     return;
   }
@@ -308,6 +330,9 @@ static void apply_theme(BacaTuiState *state) {
       init_pair(BACA_PAIR_SEARCH, background, accent) == ERR ||
       init_pair(BACA_PAIR_ALERT, COLOR_RED, background) == ERR) {
     state->colors = false;
+    if (state->image_mode == BACA_IMAGE_MODE_ANSI) {
+      state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    }
     (void)wbkgd(stdscr, A_NORMAL);
     state->dirty = true;
     return;
@@ -861,6 +886,11 @@ static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
 
 static bool open_external(BacaTuiState *state, const char *target,
                           const char *preferred, BacaError *error) {
+  delete_kitty_images(state);
+  if (state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) {
+    (void)clearok(stdscr, true);
+    (void)refresh();
+  }
   if (def_prog_mode() == ERR) {
     baca_error_set(error, BACA_ERROR_EXTERNAL,
                    "cannot suspend terminal for external opener");
@@ -1036,11 +1066,122 @@ static void highlight_search_match(BacaTuiState *state, int row, int x,
   }
 }
 
+static bool first_visible_image_line(const BacaTuiState *state, int row,
+                                     size_t line_index) {
+  if (row == 0 || line_index == 0U) {
+    return true;
+  }
+  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
+  const BacaLayoutLine *previous = &state->app->layout.lines[line_index - 1U];
+  return previous->kind != BACA_LAYOUT_IMAGE ||
+         previous->block_index != line->block_index;
+}
+
+static void mark_image_broken(BacaTuiState *state, size_t block_index) {
+  if (block_index < state->app->document.block_count &&
+      state->app->document.blocks[block_index].kind == BACA_BLOCK_IMAGE) {
+    BacaImageBlock *image =
+        &state->app->document.blocks[block_index].value.image;
+    image->intrinsic_width = 0;
+    image->intrinsic_height = 0;
+    image->broken = true;
+  }
+  state->dirty = true;
+}
+
+static bool prepare_image_placement(BacaTuiState *state,
+                                    const BacaLayoutLine *line, int row,
+                                    const BacaGraphicsRect *occlusions,
+                                    size_t occlusion_count,
+                                    BacaGraphicsSurface *surface,
+                                    BacaGraphicsPlacement *placement,
+                                    BacaError *error) {
+  if (state->graphics == NULL || line->block_index >= state->app->document.block_count) {
+    return false;
+  }
+  if (!baca_graphics_prepare(state->graphics, &state->app->document,
+                             line->block_index, state->content_width,
+                             line->image_rows, surface, error)) {
+    return false;
+  }
+  *placement = (BacaGraphicsPlacement){
+      .row = row - line->image_row,
+      .column = state->content_x,
+      .viewport_rows = state->rows,
+      .viewport_columns = state->columns,
+      .occlusions = occlusions,
+      .occlusion_count = occlusion_count,
+  };
+  return true;
+}
+
+static bool draw_image_cell(void *user_data, int row, int column,
+                            uint32_t foreground, uint32_t background) {
+  BacaTuiState *state = user_data;
+  const unsigned foreground_index =
+      baca_graphics_rgb_to_palette(foreground, (unsigned)COLORS);
+  const unsigned background_index =
+      baca_graphics_rgb_to_palette(background, (unsigned)COLORS);
+  bool created = false;
+  const short pair = baca_graphics_pair(
+      state->graphics, foreground_index, background_index,
+      BACA_PAIR_IMAGE_FIRST, state->image_pair_capacity, &created);
+  if (pair <= 0 ||
+      (created && init_pair(pair, (short)foreground_index,
+                            (short)background_index) == ERR)) {
+    return false;
+  }
+  cchar_t character = {0};
+  return setcchar(&character, L"\u2580", A_NORMAL, pair, NULL) != ERR &&
+         mvwadd_wch(stdscr, row, column, &character) != ERR;
+}
+
+static bool draw_ncurses_image(BacaTuiState *state,
+                               const BacaLayoutLine *line, int row) {
+  BacaGraphicsSurface surface = {0};
+  BacaGraphicsPlacement placement = {0};
+  BacaError ignored = {0};
+  if (!prepare_image_placement(state, line, row, NULL, 0U, &surface,
+                               &placement, &ignored)) {
+    return false;
+  }
+  const bool drawn = baca_graphics_render_cells(
+      &surface, &placement, draw_image_cell, state, &ignored);
+  baca_graphics_surface_release(&surface);
+  return drawn;
+}
+
 static bool image_content_bounds(const BacaTuiState *state,
                                  const BacaLayoutLine *line, int *x,
                                  int *width) {
   if (line->kind != BACA_LAYOUT_IMAGE ||
-      (line->image_rows > 1 && line->image_row != line->image_rows / 2)) {
+      line->block_index >= state->app->document.block_count) {
+    return false;
+  }
+  const BacaImageBlock *image =
+      &state->app->document.blocks[line->block_index].value.image;
+  if (!image->broken && state->image_mode != BACA_IMAGE_MODE_PLACEHOLDER &&
+      state->graphics != NULL) {
+    int image_x = state->content_x;
+    int visible_width = state->content_width;
+    if (image_x < 0) {
+      visible_width += image_x;
+      image_x = 0;
+    }
+    if (image_x >= state->columns) {
+      return false;
+    }
+    if (visible_width > state->columns - image_x) {
+      visible_width = state->columns - image_x;
+    }
+    if (visible_width <= 0) {
+      return false;
+    }
+    *x = image_x;
+    *width = visible_width;
+    return true;
+  }
+  if (line->image_rows > 1 && line->image_row != line->image_rows / 2) {
     return false;
   }
   const int label_width = (int)(sizeof(BACA_IMAGE_PLACEHOLDER) - 1U);
@@ -1064,6 +1205,37 @@ static bool image_content_bounds(const BacaTuiState *state,
   return true;
 }
 
+static void draw_image_placeholder(const BacaTuiState *state,
+                                    const BacaLayoutLine *line, int row,
+                                    size_t line_index) {
+  const size_t image_row = line->image_row > 0 ? (size_t)line->image_row : 0U;
+  const size_t image_rows =
+      line->image_rows > 0 ? (size_t)line->image_rows : 1U;
+  const size_t image_start =
+      line_index >= image_row ? line_index - image_row : 0U;
+  const size_t image_end = image_rows > SIZE_MAX - image_start
+                               ? SIZE_MAX
+                               : image_start + image_rows;
+  const size_t viewport_end =
+      (size_t)state->rows > SIZE_MAX - state->app->scroll_line
+          ? SIZE_MAX
+          : state->app->scroll_line + (size_t)state->rows;
+  const size_t visible_start = image_start > state->app->scroll_line
+                                   ? image_start
+                                   : state->app->scroll_line;
+  const size_t visible_end = image_end < viewport_end ? image_end : viewport_end;
+  if (visible_start >= visible_end ||
+      line_index != visible_start + (visible_end - visible_start - 1U) / 2U) {
+    return;
+  }
+  const int label_width = (int)(sizeof(BACA_IMAGE_PLACEHOLDER) - 1U);
+  int x = state->content_x + (state->content_width - label_width) / 2;
+  if (x < 0) {
+    x = 0;
+  }
+  add_clipped(stdscr, row, x, BACA_IMAGE_PLACEHOLDER, label_width);
+}
+
 static void draw_document_line(BacaTuiState *state, int row,
                                size_t line_index) {
   if (line_index >= state->app->layout.line_count) {
@@ -1075,10 +1247,22 @@ static void draw_document_line(BacaTuiState *state, int row,
     x = 0;
   }
   if (line->kind == BACA_LAYOUT_IMAGE) {
-    int image_x = 0;
-    int image_width = 0;
-    if (image_content_bounds(state, line, &image_x, &image_width)) {
-      add_clipped(stdscr, row, image_x, BACA_IMAGE_PLACEHOLDER, image_width);
+    const BacaImageBlock *image =
+        line->block_index < state->app->document.block_count
+            ? &state->app->document.blocks[line->block_index].value.image
+            : NULL;
+    if (image != NULL && !image->broken &&
+        state->image_mode == BACA_IMAGE_MODE_ANSI &&
+        !state->raw_truecolor &&
+        first_visible_image_line(state, row, line_index)) {
+      if (!draw_ncurses_image(state, line, row)) {
+        mark_image_broken(state, line->block_index);
+      }
+    }
+    if (image == NULL || image->broken ||
+        state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
+        state->image_mode == BACA_IMAGE_MODE_KITTY) {
+      draw_image_placeholder(state, line, row, line_index);
     }
     return;
   }
@@ -1353,6 +1537,9 @@ static void draw_prompt(BacaTuiState *state) {
     return;
   }
   const int top = state->rows >= 3 ? state->rows - 3 : 0;
+  for (int row = top; row < state->rows; ++row) {
+    (void)mvwhline(stdscr, row, 0, ' ', state->columns);
+  }
   if (state->rows >= 3) {
     (void)mvaddch(top, 0, ACS_ULCORNER);
     if (state->columns > 2) {
@@ -1380,7 +1567,95 @@ static void draw_prompt(BacaTuiState *state) {
   (void)move(input_row, cursor_x);
 }
 
+static size_t terminal_graphics_occlusions(const BacaTuiState *state,
+                                           BacaGraphicsRect rects[2]) {
+  size_t count = 0U;
+  if (state->overlay != BACA_OVERLAY_NONE) {
+    const BacaOverlayBox box_size = overlay_box(state);
+    rects[count++] = (BacaGraphicsRect){
+        .row = box_size.y,
+        .column = box_size.x,
+        .rows = box_size.height,
+        .columns = box_size.width,
+    };
+  }
+  if (state->prompt.active) {
+    const int top = state->rows >= 3 ? state->rows - 3 : 0;
+    rects[count++] = (BacaGraphicsRect){
+        .row = top,
+        .column = 0,
+        .rows = state->rows - top,
+        .columns = state->columns,
+    };
+  }
+  return count;
+}
+
+static void begin_terminal_graphics_frame(BacaTuiState *state) {
+  if (state->graphics == NULL || state->image_mode != BACA_IMAGE_MODE_KITTY) {
+    return;
+  }
+  BacaError ignored = {0};
+  (void)fflush(stdout);
+  (void)baca_graphics_kitty_delete_placements(
+      state->graphics, terminal_graphics_write, state, &ignored);
+}
+
+static void draw_terminal_graphics(BacaTuiState *state) {
+  const bool raw_ansi = state->image_mode == BACA_IMAGE_MODE_ANSI &&
+                         state->raw_truecolor;
+  if (state->graphics == NULL && state->image_mode != BACA_IMAGE_MODE_PLACEHOLDER) {
+    return;
+  }
+  if (!raw_ansi && state->image_mode != BACA_IMAGE_MODE_KITTY) {
+    return;
+  }
+
+  BacaGraphicsRect occlusions[2] = {0};
+  const size_t occlusion_count =
+      terminal_graphics_occlusions(state, occlusions);
+  (void)fflush(stdout);
+  for (int row = 0; row < state->rows; ++row) {
+    const size_t line_index = state->app->scroll_line + (size_t)row;
+    if (line_index >= state->app->layout.line_count) {
+      break;
+    }
+    const BacaLayoutLine *line = &state->app->layout.lines[line_index];
+    if (line->kind != BACA_LAYOUT_IMAGE ||
+        !first_visible_image_line(state, row, line_index) ||
+        line->block_index >= state->app->document.block_count ||
+        state->app->document.blocks[line->block_index].value.image.broken) {
+      continue;
+    }
+
+    BacaGraphicsSurface surface = {0};
+    BacaGraphicsPlacement placement = {0};
+    BacaError ignored = {0};
+    if (!prepare_image_placement(state, line, row, occlusions,
+                                 occlusion_count, &surface, &placement,
+                                 &ignored)) {
+      mark_image_broken(state, line->block_index);
+      continue;
+    }
+    const bool drawn = raw_ansi
+                           ? baca_graphics_render_ansi(
+                                 &surface, &placement, terminal_graphics_write,
+                                 state, &ignored)
+                           : baca_graphics_kitty_draw(
+                                  state->graphics, &surface, &placement,
+                                  terminal_graphics_write, state, &ignored);
+    baca_graphics_surface_release(&surface);
+    if (!drawn) {
+      mark_image_broken(state, line->block_index);
+    }
+  }
+}
+
 static void draw_frame(BacaTuiState *state) {
+  begin_terminal_graphics_frame(state);
+  if (state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) {
+    (void)clearok(stdscr, true);
+  }
   (void)werase(stdscr);
   (void)wbkgd(stdscr,
               state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
@@ -1400,6 +1675,7 @@ static void draw_frame(BacaTuiState *state) {
   }
   (void)doupdate();
   state->dirty = false;
+  draw_terminal_graphics(state);
 }
 
 static void open_alert(BacaTuiState *state, const char *message) {
@@ -1879,6 +2155,12 @@ static void handle_reader_click(BacaTuiState *state, const MEVENT *event) {
   if (event->y < 0 || event->y >= state->rows) {
     return;
   }
+  if (state->prompt.active) {
+    const int prompt_top = state->rows >= 3 ? state->rows - 3 : 0;
+    if (event->y >= prompt_top) {
+      return;
+    }
+  }
   const size_t line_index = state->app->scroll_line + (size_t)event->y;
   if (line_index >= state->app->layout.line_count) {
     return;
@@ -2120,6 +2402,64 @@ static bool initialize_curses(BacaTuiState *state, BacaError *error) {
   return true;
 }
 
+static void initialize_graphics(BacaTuiState *state) {
+  const BacaGraphicsEnvironment environment = {
+      .term_program = getenv("TERM_PROGRAM"),
+      .term = getenv("TERM"),
+      .kitty_window_id = getenv("KITTY_WINDOW_ID"),
+      .colorterm = getenv("COLORTERM"),
+      .tmux = getenv("TMUX"),
+      .sty = getenv("STY"),
+      .colors = state->colors,
+      .output_is_tty = isatty(STDOUT_FILENO) != 0,
+  };
+  const BacaGraphicsMultiplexer multiplexer =
+      baca_graphics_multiplexer(&environment);
+  state->image_mode = baca_graphics_select_mode(
+      state->app->config.image_mode, state->app->config.image_mode_explicit,
+      &environment);
+  state->raw_truecolor =
+      baca_graphics_truecolor_available(&environment) &&
+      multiplexer == BACA_GRAPHICS_MULTIPLEXER_NONE;
+
+  int pair_capacity = state->colors ? COLOR_PAIRS - BACA_PAIR_IMAGE_FIRST : 0;
+  if (pair_capacity > 256) {
+    pair_capacity = 256;
+  }
+  if (pair_capacity < 0) {
+    pair_capacity = 0;
+  }
+  state->image_pair_capacity = (short)pair_capacity;
+
+  if (state->image_mode == BACA_IMAGE_MODE_ANSI && !state->raw_truecolor &&
+      state->image_pair_capacity == 0) {
+    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+  }
+  if (state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER) {
+    baca_document_probe_images(&state->app->document, false);
+    return;
+  }
+
+  BacaError ignored = {0};
+  state->graphics = baca_graphics_create(
+      BACA_GRAPHICS_DEFAULT_CACHE_BYTES, multiplexer,
+      current_background(state), &ignored);
+  if (state->graphics == NULL) {
+    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    baca_document_probe_images(&state->app->document, false);
+    return;
+  }
+  if (!baca_graphics_resize(state->graphics, state->columns, state->rows,
+                            &ignored)) {
+    baca_graphics_free(state->graphics);
+    state->graphics = NULL;
+    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    baca_document_probe_images(&state->app->document, false);
+    return;
+  }
+  baca_document_probe_images(&state->app->document, true);
+}
+
 int baca_tui_run(BacaApp *app, BacaError *error) {
   if (app == NULL || app->document.path == NULL) {
     baca_error_set(error, BACA_ERROR_ARGUMENT,
@@ -2139,6 +2479,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
   if (!initialize_curses(&state, error)) {
     return EXIT_FAILURE;
   }
+  initialize_graphics(&state);
 
   int result = EXIT_SUCCESS;
   if (!install_signal_handlers(&signal_handlers, error)) {
@@ -2197,6 +2538,9 @@ cleanup:
   remember_progress(&state);
   clear_search(&state.search);
   cleanup_temp_directories(&state);
+  delete_kitty_images(&state);
+  baca_graphics_free(state.graphics);
+  state.graphics = NULL;
   if (state.previous_cursor != ERR) {
     (void)curs_set(state.previous_cursor);
   }

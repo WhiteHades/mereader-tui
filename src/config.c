@@ -40,11 +40,9 @@ static const char BACA_DEFAULT_CONFIG[] =
     "\n"
     "PageScrollDuration = 0.2\n"
     "\n"
-    "# either show image as ansi image\n"
-    "# or text 'IMAGE' as a placehoder\n"
-    "# (showing ansi image will affect\n"
-    "# performance & resource usage)\n"
-    "ShowImageAsANSI = yes\n"
+    "# auto, kitty, ansi, or placeholder\n"
+    "# oversized, animated, or corrupt images are shown as placeholders\n"
+    "ImageMode = auto\n"
     "\n"
     "# colors accept #rgb, #rrggbb, or common names\n"
     "[Color Dark]\n"
@@ -318,6 +316,22 @@ static bool baca_config_parse_justification(const char *value, BacaJustification
     return true;
 }
 
+static bool baca_config_parse_image_mode(const char *value, BacaImageMode *mode, BacaError *error) {
+    if (baca_casecmp(value, "auto") == 0) {
+        *mode = BACA_IMAGE_MODE_AUTO;
+    } else if (baca_casecmp(value, "kitty") == 0) {
+        *mode = BACA_IMAGE_MODE_KITTY;
+    } else if (baca_casecmp(value, "ansi") == 0) {
+        *mode = BACA_IMAGE_MODE_ANSI;
+    } else if (baca_casecmp(value, "placeholder") == 0) {
+        *mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    } else {
+        baca_error_set(error, BACA_ERROR_CORRUPT, "invalid General.ImageMode value '%s'", value);
+        return false;
+    }
+    return true;
+}
+
 static bool baca_config_parse_bool(const char *section, const char *key, const char *value, bool *result,
                                    BacaError *error) {
     if (baca_casecmp(value, "1") == 0 || baca_casecmp(value, "yes") == 0 ||
@@ -529,6 +543,23 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
     (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Accent", "#0178d4"),
                                   &result.light.accent);
 
+    const char *image_mode = baca_ini_get(ini, "General", "ImageMode", nullptr);
+    if (image_mode != nullptr) {
+        result.image_mode_explicit = true;
+        if (!baca_config_parse_image_mode(image_mode, &result.image_mode, error)) {
+            baca_config_free(&result);
+            return false;
+        }
+        result.show_image_as_ansi = result.image_mode != BACA_IMAGE_MODE_PLACEHOLDER;
+    } else if (!baca_config_parse_bool("General", "ShowImageAsANSI",
+                                       baca_ini_get(ini, "General", "ShowImageAsANSI", "yes"),
+                                       &result.show_image_as_ansi, error)) {
+        baca_config_free(&result);
+        return false;
+    } else {
+        result.image_mode = result.show_image_as_ansi ? BACA_IMAGE_MODE_AUTO : BACA_IMAGE_MODE_PLACEHOLDER;
+    }
+
     result.preferred_image_viewer =
         baca_strdup(baca_ini_get(ini, "General", "PreferredImageViewer", "auto"), error);
     if (result.preferred_image_viewer == nullptr ||
@@ -538,9 +569,6 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
                                 &result.pretty, error) ||
         !baca_config_parse_duration(baca_ini_get(ini, "General", "PageScrollDuration", "0.2"),
                                     &result.page_scroll_duration, error) ||
-        !baca_config_parse_bool("General", "ShowImageAsANSI",
-                                 baca_ini_get(ini, "General", "ShowImageAsANSI", "yes"),
-                                 &result.show_image_as_ansi, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ToggleLightDark", "c"),
                                     &result.keymaps.toggle_dark, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ScrollDown", "down,j"),
@@ -586,7 +614,8 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
 static bool baca_config_output_empty(const BacaConfig *config) {
     if (config->preferred_image_viewer != nullptr || config->max_text_width != 0 ||
         config->max_text_width_percent || config->justification != BACA_JUSTIFY_LEFT || config->pretty ||
-        config->page_scroll_duration != 0.0 || config->show_image_as_ansi || config->dark.background != 0U ||
+        config->page_scroll_duration != 0.0 || config->image_mode != BACA_IMAGE_MODE_AUTO ||
+        config->image_mode_explicit || config->show_image_as_ansi || config->dark.background != 0U ||
         config->dark.foreground != 0U || config->dark.accent != 0U || config->light.background != 0U ||
         config->light.foreground != 0U || config->light.accent != 0U) {
         return false;

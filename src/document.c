@@ -1,4 +1,5 @@
 #include "baca/document_backend.h"
+#include "baca/graphics.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -995,6 +996,208 @@ static bool document_output_is_empty(const BacaDocument *document) {
            document->section_capacity == 0 && document->blocks == NULL && document->block_count == 0 &&
            document->block_capacity == 0 && document->retained_bytes == 0 && document->backend == NULL &&
            document->ops == NULL;
+}
+
+typedef struct BacaImageProbe {
+    const char *uri;
+    int width;
+    int height;
+    bool broken;
+} BacaImageProbe;
+
+static bool data_uri_probe_size(const char *uri, size_t *size) {
+    const char *comma = strchr(uri + 5, ',');
+    if (comma == NULL) {
+        return false;
+    }
+    size_t metadata_length = (size_t) (comma - (uri + 5));
+    bool base64 = false;
+    const char *semicolon = memchr(uri + 5, ';', metadata_length);
+    if (semicolon != NULL) {
+        const char *option = semicolon + 1;
+        while (option < comma) {
+            const char *option_end = memchr(option, ';', (size_t) (comma - option));
+            if (option_end == NULL) {
+                option_end = comma;
+            }
+            if (ascii_case_equal_n(option, (size_t) (option_end - option), "base64")) {
+                base64 = true;
+                break;
+            }
+            option = option_end + 1;
+        }
+    }
+
+    const char *payload = comma + 1;
+    size_t payload_length = strlen(payload);
+    if (!base64) {
+        if (payload_length > BACA_DATA_URI_MAX) {
+            return false;
+        }
+        size_t decoded = 0U;
+        for (size_t index = 0U; index < payload_length; ++index) {
+            if (payload[index] == '%') {
+                if (index + 2U >= payload_length || hex_value(payload[index + 1U]) < 0 ||
+                    hex_value(payload[index + 2U]) < 0) {
+                    return false;
+                }
+                index += 2U;
+            }
+            ++decoded;
+        }
+        *size = decoded;
+        return true;
+    }
+
+    if (payload_length > BACA_DATA_URI_MAX * 2U) {
+        return false;
+    }
+    size_t significant = 0U;
+    size_t padding = 0U;
+    bool padded = false;
+    for (size_t index = 0U; index < payload_length; ++index) {
+        unsigned char value = (unsigned char) payload[index];
+        if (isspace(value) != 0) {
+            continue;
+        }
+        if (value == '=') {
+            padded = true;
+            ++padding;
+        } else if (base64_value(value) < 0 || padded) {
+            return false;
+        }
+        ++significant;
+    }
+    size_t remainder = significant % 4U;
+    if (remainder == 1U || padding > 2U || (padding > 0U && remainder != 0U)) {
+        return false;
+    }
+    size_t decoded = (significant / 4U) * 3U;
+    if (remainder > 1U) {
+        decoded += remainder - 1U;
+    }
+    if (padding > decoded) {
+        return false;
+    }
+    *size = decoded - padding;
+    return true;
+}
+
+static bool archive_probe_size(zip_t *archive, const char *uri, size_t *size) {
+    if (archive == NULL) {
+        return false;
+    }
+    BacaError ignored = {0};
+    char *member_path = baca_document_uri_path(uri, &ignored);
+    if (member_path == NULL) {
+        return false;
+    }
+    zip_int64_t member_index = zip_name_locate(archive, member_path, ZIP_FL_ENC_GUESS);
+    free(member_path);
+    if (member_index < 0) {
+        return false;
+    }
+    zip_stat_t stat;
+    zip_stat_init(&stat);
+    if (zip_stat_index(archive, (zip_uint64_t) member_index, ZIP_FL_ENC_GUESS, &stat) != 0 ||
+        (stat.valid & ZIP_STAT_SIZE) == 0 || stat.size > (zip_uint64_t) SIZE_MAX) {
+        return false;
+    }
+    *size = (size_t) stat.size;
+    return true;
+}
+
+static bool image_probe_size(zip_t *archive, const char *uri, size_t *size) {
+    return strlen(uri) >= 5U && ascii_case_equal_n(uri, 5U, "data:") ?
+               data_uri_probe_size(uri, size) :
+               archive_probe_size(archive, uri, size);
+}
+
+void baca_document_probe_images(BacaDocument *document, bool enabled) {
+    if (document == NULL || (document->block_count > 0U && document->blocks == NULL)) {
+        return;
+    }
+    size_t image_count = 0U;
+    for (size_t index = 0U; index < document->block_count; ++index) {
+        BacaBlock *block = &document->blocks[index];
+        if (block->kind != BACA_BLOCK_IMAGE) {
+            continue;
+        }
+        ++image_count;
+        BacaImageBlock *image = &block->value.image;
+        image->intrinsic_width = 0;
+        image->intrinsic_height = 0;
+        image->broken = true;
+    }
+    if (!enabled || image_count == 0U) {
+        return;
+    }
+
+    size_t probe_capacity = image_count;
+    if (probe_capacity > BACA_GRAPHICS_MAX_PROBES) {
+        probe_capacity = BACA_GRAPHICS_MAX_PROBES;
+    }
+    BacaImageProbe *probes = calloc(probe_capacity, sizeof(*probes));
+    if (probes == NULL) {
+        return;
+    }
+    zip_t *archive = NULL;
+    if (document->path != NULL) {
+        int zip_error = 0;
+        archive = zip_open(document->path, ZIP_RDONLY, &zip_error);
+    }
+    size_t probe_count = 0U;
+    size_t probe_bytes = 0U;
+    for (size_t index = 0U; index < document->block_count; ++index) {
+        BacaBlock *block = &document->blocks[index];
+        if (block->kind != BACA_BLOCK_IMAGE || block->value.image.uri == NULL) {
+            continue;
+        }
+        BacaImageBlock *image = &block->value.image;
+        size_t prior = 0U;
+        while (prior < probe_count && strcmp(probes[prior].uri, image->uri) != 0) {
+            ++prior;
+        }
+        if (prior < probe_count) {
+            image->intrinsic_width = probes[prior].width;
+            image->intrinsic_height = probes[prior].height;
+            image->broken = probes[prior].broken;
+            continue;
+        }
+        if (probe_count == probe_capacity) {
+            continue;
+        }
+
+        BacaError ignored = {0};
+        BacaResource resource = {0};
+        size_t resource_size = 0U;
+        if (image_probe_size(archive, image->uri, &resource_size) &&
+            resource_size <= BACA_GRAPHICS_MAX_INPUT_BYTES &&
+            resource_size <= BACA_GRAPHICS_MAX_PROBE_BYTES - probe_bytes) {
+            probe_bytes += resource_size;
+            if (baca_document_load_resource(document, image->uri, &resource, &ignored)) {
+                if (resource.length <= resource_size &&
+                    baca_graphics_probe_resource(&resource, &image->intrinsic_width,
+                                                 &image->intrinsic_height, &ignored)) {
+                    image->broken = false;
+                } else if (resource.length > resource_size) {
+                    /* The backend violated the size established before loading. */
+                    probe_bytes = BACA_GRAPHICS_MAX_PROBE_BYTES;
+                }
+            }
+        }
+        baca_resource_free(&resource);
+        probes[probe_count++] = (BacaImageProbe) {
+            .uri = image->uri,
+            .width = image->intrinsic_width,
+            .height = image->intrinsic_height,
+            .broken = image->broken,
+        };
+    }
+    if (archive != NULL) {
+        zip_discard(archive);
+    }
+    free(probes);
 }
 
 bool baca_document_open(BacaDocument *document, const char *path, BacaError *error) {

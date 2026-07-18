@@ -7,6 +7,7 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
 	-Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration
 LDLIBS += $(shell pkg-config --libs $(PKGS)) -lm -pthread
+TEST_LDLIBS = -lutil
 
 SOURCES = \
 	src/app.c \
@@ -15,6 +16,7 @@ SOURCES = \
 	src/database.c \
 	src/document.c \
 	src/epub.c \
+	src/graphics.c \
 	src/html.c \
 	src/layout.c \
 	src/mobi.c \
@@ -23,7 +25,7 @@ SOURCES = \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_config.c tests/test_database.c \
-	tests/test_document.c tests/test_layout.c tests/test_support.c
+	tests/test_document.c tests/test_graphics.c tests/test_layout.c tests/test_support.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)
 LIB_OBJECTS = $(filter-out build/main.o,$(OBJECTS))
 
@@ -34,8 +36,8 @@ all: build/baca
 build/baca: $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 
-build/tests/test_baca: $(LIB_OBJECTS) $(TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $(LIB_OBJECTS) $(TEST_OBJECTS) $(LDLIBS)
+build/tests/test_baca: build/baca $(LIB_OBJECTS) $(TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $(LIB_OBJECTS) $(TEST_OBJECTS) $(LDLIBS) $(TEST_LDLIBS)
 
 build/%.o: src/%.c
 	@mkdir -p build

@@ -4,6 +4,7 @@
 #include <pcre2.h>
 
 #include <math.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -342,25 +343,45 @@ static bool layout_add_text_block(BacaLayout *layout, size_t block_index, const 
     return true;
 }
 
-static bool layout_add_image_block(BacaLayout *layout, size_t block_index, BacaError *error) {
+static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const BacaImageBlock *image,
+                                   BacaError *error) {
+    int image_rows = 1;
     int indent = 0;
-    if (layout->width > 5) {
+    if (!image->broken && image->intrinsic_width > 0 && image->intrinsic_height > 0) {
+        const long double rows = ceill((long double)image->intrinsic_height * (long double)layout->width /
+                                       ((long double)image->intrinsic_width * 2.0L));
+        if (isfinite(rows) && rows > 1.0L) {
+            image_rows = rows > (long double)BACA_LAYOUT_MAX_IMAGE_ROWS ? BACA_LAYOUT_MAX_IMAGE_ROWS : (int)rows;
+        }
+    } else if (layout->width > 5) {
         indent = (layout->width - 5) / 2;
     }
 
-    BacaLayoutLine line = {
-        .kind = BACA_LAYOUT_IMAGE,
-        .block_index = block_index,
-        .byte_start = 0U,
-        .byte_end = 0U,
-        .logical_offset = layout->logical_length,
-        .indent = indent,
-        .image_row = 0,
-        .image_rows = 1,
-        .paragraph_end = true,
-    };
-    if (!layout_add_line(layout, line, error)) {
-        return false;
+    size_t extra_rows = (size_t)(image_rows - 1);
+    const size_t remaining_extra = layout->image_extra_rows < BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS
+                                       ? BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS - layout->image_extra_rows
+                                       : 0U;
+    if (extra_rows > remaining_extra) {
+        extra_rows = remaining_extra;
+        image_rows = (int)extra_rows + 1;
+    }
+    layout->image_extra_rows += extra_rows;
+
+    for (int row = 0; row < image_rows; ++row) {
+        BacaLayoutLine line = {
+            .kind = BACA_LAYOUT_IMAGE,
+            .block_index = block_index,
+            .byte_start = 0U,
+            .byte_end = 0U,
+            .logical_offset = layout->logical_length,
+            .indent = indent,
+            .image_row = row,
+            .image_rows = image_rows,
+            .paragraph_end = row + 1 == image_rows,
+        };
+        if (!layout_add_line(layout, line, error)) {
+            return false;
+        }
     }
     return layout_advance(layout, 1U, error);
 }
@@ -403,7 +424,7 @@ bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int wid
 
     BacaLayout built = {
         .document = document,
-        .width = width,
+        .width = width > BACA_LAYOUT_MAX_WIDTH ? BACA_LAYOUT_MAX_WIDTH : width,
         .justification = justification,
     };
 
@@ -425,7 +446,7 @@ bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int wid
             ok = layout_add_text_block(&built, block_index, &block->value.text, error);
             break;
         case BACA_BLOCK_IMAGE:
-            ok = layout_add_image_block(&built, block_index, error);
+            ok = layout_add_image_block(&built, block_index, &block->value.image, error);
             break;
         case BACA_BLOCK_PAGE_BREAK:
             ok = layout_add_blank(&built, block_index, 0U, built.logical_length, error) &&

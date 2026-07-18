@@ -44,6 +44,7 @@ void baca_test_support_cleanup(void);
 [[nodiscard]] const BacaTestCase *baca_config_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_database_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_document_test_cases(size_t *count);
+[[nodiscard]] const BacaTestCase *baca_graphics_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_layout_test_cases(size_t *count);
 
 #define TEST_ASSERT(condition)                                                                                \

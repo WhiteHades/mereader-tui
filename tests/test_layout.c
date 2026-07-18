@@ -2,6 +2,8 @@
 
 #include "baca/layout.h"
 
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static bool append_text_block(BacaDocument *document, const char *section_id, const char *text,
@@ -42,7 +44,7 @@ static bool append_text_block(BacaDocument *document, const char *section_id, co
 }
 
 static bool append_image_block(BacaDocument *document, const char *section_id, const char *anchor,
-                               BacaError *error) {
+                                int width, int height, bool broken, BacaError *error) {
     BacaBlock block = {
         .kind = BACA_BLOCK_IMAGE,
         .section_id = baca_strdup(section_id, error),
@@ -50,6 +52,9 @@ static bool append_image_block(BacaDocument *document, const char *section_id, c
             .uri = baca_strdup("image.png", error),
             .anchor = baca_strdup(anchor, error),
             .page_index = -1,
+            .intrinsic_width = width,
+            .intrinsic_height = height,
+            .broken = broken,
         },
     };
     if (block.section_id != NULL && block.value.image.uri != NULL && block.value.image.anchor != NULL &&
@@ -151,7 +156,7 @@ static BacaTestResult test_exact_fallback_and_missing_targets(void) {
                                   "chapter1.xhtml#point", 3U, &error));
     TEST_ASSERT(append_text_block(&document, "chapter2.xhtml", "zero one two three four", 0U, false,
                                   "chapter2.xhtml#deep", 14U, &error));
-    TEST_ASSERT(append_image_block(&document, "chapter2.xhtml", "chapter2.xhtml#image", &error));
+    TEST_ASSERT(append_image_block(&document, "chapter2.xhtml", "chapter2.xhtml#image", 8, 4, false, &error));
     TEST_ASSERT(append_section(&document, "chapter1.xhtml", 0U, 1U, &error));
     TEST_ASSERT(append_section(&document, "chapter2.xhtml", 1U, 2U, &error));
     BacaLayout layout = {0};
@@ -180,6 +185,55 @@ static BacaTestResult test_progress_semantics(void) {
     TEST_ASSERT_SIZE(baca_layout_restore_progress(75.0, 11U), 11U);
     TEST_ASSERT_SIZE(baca_layout_restore_progress(-1.0, 11U), 0U);
     TEST_ASSERT_SIZE(baca_layout_restore_progress(NAN, 11U), 0U);
+    return BACA_TEST_PASS;
+}
+
+static BacaTestResult test_image_aspect_rows_and_broken_placeholder(void) {
+    BacaDocument document = {0};
+    BacaError error = {0};
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#valid", 8, 4, false, &error));
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#broken", 0, 0, true, &error));
+    BacaLayout layout = {0};
+    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 10, BACA_JUSTIFY_LEFT, &error), "%s", error.message);
+    TEST_ASSERT_INT(layout.lines[layout.block_first_line[0]].image_rows, 3);
+    TEST_ASSERT_INT(layout.lines[layout.block_first_line[0] + 2U].image_row, 2);
+    TEST_ASSERT_INT(layout.lines[layout.block_first_line[1]].image_rows, 1);
+    char *placeholder = baca_layout_line_text(&layout, layout.block_first_line[1], false, &error);
+    TEST_ASSERT_STR(placeholder, "  IMAGE");
+    free(placeholder);
+
+    baca_layout_free(&layout);
+    TEST_ASSERT(baca_layout_build(&layout, &document, 8, BACA_JUSTIFY_LEFT, &error));
+    TEST_ASSERT_INT(layout.lines[layout.block_first_line[0]].image_rows, 2);
+    baca_layout_free(&layout);
+    baca_document_close(&document);
+    return BACA_TEST_PASS;
+}
+
+static BacaTestResult test_hostile_image_dimensions_are_bounded(void) {
+    BacaDocument document = {0};
+    BacaError error = {0};
+    const size_t image_count = BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS /
+                                   (BACA_LAYOUT_MAX_IMAGE_ROWS - 1U) +
+                               2U;
+    for (size_t index = 0U; index < image_count; ++index) {
+        char anchor[64] = {0};
+        const int length = snprintf(anchor, sizeof(anchor), "images.xhtml#hostile-%zu", index);
+        TEST_ASSERT(length > 0 && (size_t)length < sizeof(anchor));
+        TEST_ASSERT(append_image_block(&document, "images.xhtml", anchor, 1, INT_MAX, false, &error));
+    }
+    BacaLayout layout = {0};
+    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, INT_MAX, BACA_JUSTIFY_LEFT, &error), "%s",
+                    error.message);
+    TEST_ASSERT_INT(layout.width, BACA_LAYOUT_MAX_WIDTH);
+    TEST_ASSERT_INT(layout.lines[0].image_rows, BACA_LAYOUT_MAX_IMAGE_ROWS);
+    TEST_ASSERT_SIZE(layout.image_extra_rows, BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS);
+    TEST_ASSERT_SIZE(layout.line_count,
+                     image_count + BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS + image_count - 1U);
+    TEST_ASSERT(layout.lines[layout.block_first_line[image_count - 1U]].image_rows <=
+                BACA_LAYOUT_MAX_IMAGE_ROWS);
+    baca_layout_free(&layout);
+    baca_document_close(&document);
     return BACA_TEST_PASS;
 }
 
@@ -256,6 +310,10 @@ const BacaTestCase *baca_layout_test_cases(size_t *count) {
         {.name = "wrapping_justification_and_alignment", .function = test_wrapping_justification_and_alignment},
         {.name = "exact_fallback_and_missing_targets", .function = test_exact_fallback_and_missing_targets},
         {.name = "progress_semantics", .function = test_progress_semantics},
+        {.name = "image_aspect_rows_and_broken_placeholder",
+         .function = test_image_aspect_rows_and_broken_placeholder},
+        {.name = "hostile_image_dimensions_are_bounded",
+         .function = test_hostile_image_dimensions_are_bounded},
         {.name = "regex_valid_invalid_empty_and_casefold",
          .function = test_regex_valid_invalid_empty_and_casefold},
         {.name = "resize_stable_search_identity", .function = test_resize_stable_search_identity},

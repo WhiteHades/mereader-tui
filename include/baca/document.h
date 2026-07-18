@@ -72,6 +72,9 @@ typedef struct BacaImageBlock {
     char *anchor;
     char *link;
     int page_index;
+    int intrinsic_width;
+    int intrinsic_height;
+    bool broken;
 } BacaImageBlock;
 
 typedef enum BacaBlockKind : uint8_t {
@@ -146,6 +149,8 @@ void baca_resource_free(BacaResource *resource);
 /* resource must point to {0}; free it before passing it here again. */
 [[nodiscard]] bool baca_document_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
                                                BacaError *error);
+/* Disabled probing performs no resource loads and leaves image blocks as placeholders. */
+void baca_document_probe_images(BacaDocument *document, bool enabled);
 [[nodiscard]] const char *baca_document_format_name(BacaDocumentFormat format);
 [[nodiscard]] const BacaTocEntry *baca_document_current_toc(const BacaDocument *document, const char *target);
 [[nodiscard]] bool baca_document_add_text_block(BacaDocument *document, BacaBlock *block, BacaError *error);

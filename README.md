@@ -10,7 +10,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 - Formats supported: Epub, Epub3, Mobi & Azw
 - Remembers last reading position
-- Show images as ANSI image & you can click it for more detail
+- Native images in Ghostty/Kitty with ANSI and text fallbacks
 - Scroll animations
 - Clean & modern looks
 - Text justification
@@ -55,30 +55,14 @@ baca alice wonder lewis carroll
 
 ## Opening an Image
 
-To open an image, when you encounter an ANSI image (when `ShowImageAsANSI=yes`) or some thing like this
-(if `ShowImageAsANSI=no`):
+`ImageMode=auto` uses the Kitty graphics protocol in Ghostty and Kitty, true-color
+ANSI half blocks in other color terminals, and a text placeholder when neither is
+available. Images are clipped as they scroll, so partially visible images do not
+break the reading flow.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                    IMAGE                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-just click on it using mouse and it will open the image using system app.
-Yeah, I know you want to use keyboard for this, me too, but bear with this for now.
-
-> "Why show the images as ANSI images instead of render it directly on terminal like ranger does?"
-
-1. The main reason is that currently, rendering images directly on the terminal
-   doesn't allow for partial scrolling of the image.
-   This means that we can't display only a portion (e.g., 30%) of the image when scrolling,
-   resulting in a broken and non-seamless scrolling experience.
-
-2. My primary intention in developing this app is for reading fiction e-books rather than technical ones,
-   and most fiction e-books don't contain many images.
-
-3. Displaying images on the terminal requires different implementations for various terminal emulators,
-   which requires a lot of maintenance.
+Click a visible image or its `IMAGE` fallback to open the original resource with
+the configured system viewer. Corrupt, oversized, or unsupported images remain a
+placeholder instead of preventing the book from opening.
 
 ## Configurations
 
@@ -91,24 +75,19 @@ Configuration file available at `~/.config/baca/config.ini` for linux users. Her
 # pick your favorite image viewer
 PreferredImageViewer = auto
 
-# int or css value string like 90%%
-# (escape percent with double percent %%)
+# integer columns or a terminal-width percentage
 MaxTextWidth = 80
 
 # 'justify', 'center', 'left', 'right'
 TextJustification = justify
 
-# currently using pretty=yes is slow
-# and taking huge amount of memory
 Pretty = no
 
 PageScrollDuration = 0.2
 
-# either show image as ansii image
-# or text 'IMAGE' as a placehoder
-# (showing ansii image will affect
-# performance & resource usage)
-ShowImageAsANSII = yes
+# auto, kitty, ansi, or placeholder
+# oversized, animated, or corrupt images are shown as placeholders
+ImageMode = auto
 
 [Color Dark]
 Background = #1e1e1e

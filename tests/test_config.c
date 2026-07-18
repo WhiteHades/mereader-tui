@@ -41,6 +41,8 @@ static BacaTestResult test_defaults(void) {
     TEST_ASSERT_INT(config.justification, BACA_JUSTIFY_FULL);
     TEST_ASSERT(!config.pretty);
     TEST_ASSERT_DOUBLE(config.page_scroll_duration, 0.2, 1e-12);
+    TEST_ASSERT_INT(config.image_mode, BACA_IMAGE_MODE_AUTO);
+    TEST_ASSERT(!config.image_mode_explicit);
     TEST_ASSERT(config.show_image_as_ansi);
     TEST_ASSERT_INT((int)config.dark.background, 0x1e1e1e);
     TEST_ASSERT_INT((int)config.light.foreground, 0x1e1e1e);
@@ -71,6 +73,8 @@ static BacaTestResult test_partial_case_insensitive_overrides(void) {
     TEST_ASSERT_INT(config.justification, BACA_JUSTIFY_RIGHT);
     TEST_ASSERT(config.pretty);
     TEST_ASSERT_DOUBLE(config.page_scroll_duration, 1.25, 1e-12);
+    TEST_ASSERT_INT(config.image_mode, BACA_IMAGE_MODE_PLACEHOLDER);
+    TEST_ASSERT(!config.image_mode_explicit);
     TEST_ASSERT(!config.show_image_as_ansi);
     TEST_ASSERT_SIZE(config.keymaps.scroll_down.length, 3U);
     TEST_ASSERT_STR(config.keymaps.scroll_down.items[0], "down");
@@ -166,6 +170,37 @@ static BacaTestResult test_key_lists(void) {
     return BACA_TEST_PASS;
 }
 
+static BacaTestResult test_image_modes_and_legacy_precedence(void) {
+    static const struct {
+        const char *value;
+        BacaImageMode mode;
+    } modes[] = {
+        {"auto", BACA_IMAGE_MODE_AUTO},
+        {"KITTY", BACA_IMAGE_MODE_KITTY},
+        {"ansi", BACA_IMAGE_MODE_ANSI},
+        {"Placeholder", BACA_IMAGE_MODE_PLACEHOLDER},
+    };
+    for (size_t index = 0U; index < BACA_ARRAY_LEN(modes); ++index) {
+        char text[128] = {0};
+        const int length = snprintf(text, sizeof(text),
+                                    "[General]\nImageMode=%s\nShowImageAsANSI=definitely-invalid\n",
+                                    modes[index].value);
+        TEST_ASSERT(length > 0 && (size_t)length < sizeof(text));
+        BacaConfig config = {0};
+        BacaTestResult result = load_config_text(index == 0U   ? "mode-auto"
+                                                 : index == 1U ? "mode-kitty"
+                                                 : index == 2U ? "mode-ansi"
+                                                               : "mode-placeholder",
+                                                 text, &config);
+        TEST_ASSERT(result == BACA_TEST_PASS);
+        TEST_ASSERT_INT(config.image_mode, modes[index].mode);
+        TEST_ASSERT(config.image_mode_explicit);
+        TEST_ASSERT(config.show_image_as_ansi == (modes[index].mode != BACA_IMAGE_MODE_PLACEHOLDER));
+        baca_config_free(&config);
+    }
+    return BACA_TEST_PASS;
+}
+
 static BacaTestResult test_default_file_creation_is_isolated(void) {
     char *path = baca_test_path("xdg-config/baca/config.ini");
     TEST_ASSERT(path != NULL);
@@ -179,6 +214,7 @@ static BacaTestResult test_default_file_creation_is_isolated(void) {
     TEST_ASSERT((status.st_mode & 0777U) == 0600U);
     TEST_ASSERT_STR(config.preferred_image_viewer, "auto");
     TEST_ASSERT(strstr(baca_config_default_text(), "MaxTextWidth = 80") != NULL);
+    TEST_ASSERT(strstr(baca_config_default_text(), "ImageMode = auto") != NULL);
     baca_config_free(&config);
     free(path);
     return BACA_TEST_PASS;
@@ -192,6 +228,7 @@ const BacaTestCase *baca_config_test_cases(size_t *count) {
         {.name = "bool_spellings", .function = test_bool_spellings},
         {.name = "colors_and_invalid_fallback", .function = test_colors_and_invalid_fallback},
         {.name = "key_lists", .function = test_key_lists},
+        {.name = "image_modes_and_legacy_precedence", .function = test_image_modes_and_legacy_precedence},
         {.name = "default_file_creation_is_isolated", .function = test_default_file_creation_is_isolated},
     };
     *count = BACA_ARRAY_LEN(cases);

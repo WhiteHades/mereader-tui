@@ -3,6 +3,11 @@
 #include "baca/config.h"
 #include "baca/document.h"
 
+/* Layout clamps hostile geometry and limits aggregate aspect-ratio expansion. */
+#define BACA_LAYOUT_MAX_WIDTH 1024
+#define BACA_LAYOUT_MAX_IMAGE_ROWS 1024
+#define BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS 65536U
+
 typedef enum BacaLayoutLineKind : uint8_t {
     BACA_LAYOUT_TEXT = 0,
     BACA_LAYOUT_IMAGE,
@@ -28,6 +33,7 @@ typedef struct BacaLayout {
     size_t line_capacity;
     size_t *block_first_line;
     size_t logical_length;
+    size_t image_extra_rows;
     int width;
     BacaJustification justification;
 } BacaLayout;
