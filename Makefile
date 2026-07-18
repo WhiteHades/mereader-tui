@@ -23,11 +23,11 @@ SOURCES = \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_config.c tests/test_database.c \
-	tests/test_document.c tests/test_layout.c
+	tests/test_document.c tests/test_layout.c tests/test_support.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)
 LIB_OBJECTS = $(filter-out build/main.o,$(OBJECTS))
 
-.PHONY: all clean format install sanitize test tests python-tests
+.PHONY: all clean format install sanitize test test-clang test-gcc tests
 
 all: build/baca
 
@@ -47,19 +47,28 @@ build/tests/%.o: tests/%.c
 
 test tests: build/tests/test_baca build/baca
 	./build/tests/test_baca
-	./tests/cli_test.sh ./build/baca
+	sh ./tests/cli_test.sh ./build/baca
 
-python-tests:
-	poetry run python -m pytest tests/test_html_parser.py
+sanitize:
+	$(MAKE) clean
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	$(MAKE) CC="$(CC)" \
+		CFLAGS="-O1 -g -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
+		-Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration \
+		-fsanitize=address,undefined -fno-omit-frame-pointer" \
+		LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined" test
 
-sanitize: CFLAGS = -O1 -g -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
-	-Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration \
-	-fsanitize=address,undefined -fno-omit-frame-pointer
-sanitize: LDFLAGS += -fsanitize=address,undefined
-sanitize: clean test
+test-gcc:
+	$(MAKE) clean
+	$(MAKE) CC=gcc test
+
+test-clang:
+	$(MAKE) clean
+	$(MAKE) CC=clang test
 
 format:
-	clang-format -i include/baca/*.h src/*.c tests/*.c
+	clang-format -i include/baca/*.h src/*.c tests/*.c tests/*.h
 
 install: build/baca
 	install -Dm755 build/baca "$(DESTDIR)$(PREFIX)/bin/baca"
