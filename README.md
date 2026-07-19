@@ -8,7 +8,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Features
 
-- Formats supported: Epub, Epub3, Mobi & Azw
+- Formats supported: EPUB, EPUB3, MOBI, AZW, and PDF
 - Remembers last reading position
 - Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
@@ -40,7 +40,7 @@ sudo make PREFIX=/usr/local install
 # open the library
 baca
 
-# open an ebook directly
+# open an ebook or PDF directly
 baca path/to/your/ebook.epub
 
 # print reading history without opening the TUI
@@ -72,6 +72,32 @@ Click a visible image or its `IMAGE` fallback to open the original resource with
 the configured system viewer. Corrupt, oversized, or unsupported images remain a
 placeholder instead of preventing the book from opening.
 
+## Reading PDFs
+
+PDFs open in fixed-page view when the terminal has a usable Kitty or ANSI image
+mode. When terminal graphics are unavailable and `ImageMode` resolves to a text
+placeholder, PDFs open in extracted, reflowable text instead. Use the
+`TogglePdfView` mapping (`v` by default) to switch views. Search works in both
+views; a fixed-view match jumps to the matching page.
+
+Click a PDF link to follow it. Clicking elsewhere on a rendered page opens the
+original PDF in the system viewer. Reflow and search require an embedded text
+layer, so scanned image-only pages may have no reflowable text. Password-protected
+PDFs are not supported.
+
+PDF input is limited to 10,000 pages, 1 MiB of extracted text per page and
+16 MiB in total, 100,000 links with 8 MiB of retained link targets, and 100,000
+outline nodes at up to 64 levels. Layout is limited to 262,144 lines, 1,024 rows
+per image, and 65,536 aggregate extra image rows. Fixed-page renders are limited
+to 32,768 pixels per dimension, 10 million target pixels, and 16 MiB of encoded
+image data. A PDF that cannot preserve page aspect ratios within these limits
+fails with an explicit error rather than shortening page images.
+
+Poppler 26.07 does not expose page rotation through its GLib API. For a detected
+90- or 270-degree page, Baca follows a destination to the page top instead of
+using a vertical coordinate that may be wrong; normal-page XYZ, FitH, FitBH, and
+FitR coordinates retain their vertical position.
+
 ## Configurations
 
 ![pretty_yes_no_cap](https://user-images.githubusercontent.com/43810055/228417623-ac78fb84-0ee0-4930-a843-752ef693822d.png)
@@ -95,6 +121,7 @@ PageScrollDuration = 0.2
 
 # auto, kitty, ansi, or placeholder
 # oversized, animated, or corrupt images are shown as placeholders
+# PDF fixed-page rendering follows this mode; press v for reflowable text
 ImageMode = auto
 
 [Color Dark]
@@ -109,6 +136,7 @@ Accent = #0178d4
 
 [Keymaps]
 ToggleLightDark = c
+TogglePdfView = v
 ScrollDown = down,j
 ScrollUp = up,k
 PageDown = ctrl+f,pagedown,l,space

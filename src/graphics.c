@@ -27,6 +27,8 @@ enum {
 typedef struct BacaGraphicsCacheEntry {
   GdkPixbuf *pixbuf;
   char *uri;
+  const BacaDocument *document;
+  uint64_t document_instance_id;
   size_t bytes;
   uint64_t last_used;
   uint32_t image_id;
@@ -60,6 +62,8 @@ struct BacaGraphicsContext {
   uint32_t background;
   int terminal_columns;
   int terminal_rows;
+  int cell_pixel_width;
+  int cell_pixel_height;
   BacaGraphicsMultiplexer multiplexer;
   uint32_t *remote_images;
   size_t remote_image_count;
@@ -534,6 +538,8 @@ BacaGraphicsContext *baca_graphics_create(size_t maximum_bytes,
   context->maximum_bytes = maximum_bytes;
   context->multiplexer = multiplexer;
   context->background = background;
+  context->cell_pixel_width = 1;
+  context->cell_pixel_height = 2;
   context->generation = 1U;
   const uint_least32_t serial = atomic_fetch_add_explicit(
       &graphics_context_serial, 1U, memory_order_relaxed);
@@ -584,6 +590,27 @@ bool baca_graphics_resize(BacaGraphicsContext *context, int columns, int rows,
   return true;
 }
 
+bool baca_graphics_set_cell_pixels(BacaGraphicsContext *context, int width,
+                                   int height, BacaError *error) {
+  if (context == NULL || width <= 0 || height <= 0 ||
+      width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION) {
+    baca_error_set(error, BACA_ERROR_ARGUMENT,
+                   "invalid terminal cell pixel dimensions");
+    return false;
+  }
+  if (context->cell_pixel_width == width &&
+      context->cell_pixel_height == height) {
+    return true;
+  }
+  if (!graphics_cache_clear(context, error)) {
+    return false;
+  }
+  context->cell_pixel_width = width;
+  context->cell_pixel_height = height;
+  return true;
+}
+
 bool baca_graphics_set_background(BacaGraphicsContext *context,
                                   uint32_t background, BacaError *error) {
   if (context == NULL) {
@@ -624,10 +651,13 @@ static size_t graphics_pixbuf_bytes(GdkPixbuf *pixbuf) {
 }
 
 static BacaGraphicsCacheEntry *graphics_find_entry(BacaGraphicsContext *context,
+                                                   const BacaDocument *document,
                                                    const char *uri,
                                                    int columns, int rows) {
   for (size_t index = 0U; index < context->entry_count; ++index) {
-    if (context->entries[index].columns == columns &&
+    if (context->entries[index].document == document &&
+        context->entries[index].document_instance_id == document->instance_id &&
+        context->entries[index].columns == columns &&
         context->entries[index].rows == rows &&
         strcmp(context->entries[index].uri, uri) == 0) {
       return &context->entries[index];
@@ -776,8 +806,10 @@ static GdkPixbuf *graphics_scale_composited(GdkPixbuf *source, int width,
   const int decoded_width = gdk_pixbuf_get_width(source);
   const int decoded_height = gdk_pixbuf_get_height(source);
   if (decoded_width <= 0 || decoded_height <= 0 ||
-      decoded_width > BACA_GRAPHICS_MAX_COLUMNS ||
-      decoded_height > BACA_GRAPHICS_MAX_ROWS * 2) {
+      decoded_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      decoded_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      (size_t)decoded_width >
+          BACA_GRAPHICS_MAX_RENDER_PIXELS / (size_t)decoded_height) {
     baca_error_set(error, BACA_ERROR_CORRUPT,
                    "decoder ignored the bounded image target");
     return NULL;
@@ -864,44 +896,72 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     rows = BACA_GRAPHICS_MAX_ROWS;
   }
   BacaBlock *block = &document->blocks[block_index];
+  const bool rendered_page = block->kind == BACA_BLOCK_IMAGE &&
+                             block->value.image.page_index >= 0 &&
+                             document->ops != NULL &&
+                             document->ops->render_page != NULL;
   if (block->kind != BACA_BLOCK_IMAGE || block->value.image.uri == NULL ||
       block->value.image.broken || block->value.image.intrinsic_width <= 0 ||
       block->value.image.intrinsic_height <= 0 ||
-      block->value.image.intrinsic_width >
-          BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      block->value.image.intrinsic_height >
-          BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      (size_t)block->value.image.intrinsic_width >
-          BACA_GRAPHICS_MAX_SOURCE_PIXELS /
-              (size_t)block->value.image.intrinsic_height) {
+      (!rendered_page &&
+       (block->value.image.intrinsic_width >
+            BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        block->value.image.intrinsic_height >
+            BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        (size_t)block->value.image.intrinsic_width >
+            BACA_GRAPHICS_MAX_SOURCE_PIXELS /
+                (size_t)block->value.image.intrinsic_height))) {
     baca_error_set(error, BACA_ERROR_CORRUPT,
                    "image block has no decodable resource");
     return false;
   }
 
   BacaGraphicsCacheEntry *entry = graphics_find_entry(
-      context, block->value.image.uri, columns, rows);
+      context, document, block->value.image.uri, columns, rows);
   if (entry == NULL) {
+    int target_width = columns;
+    int target_height = rows * 2;
+    if (rendered_page) {
+      if (columns > INT_MAX / context->cell_pixel_width ||
+          rows > INT_MAX / context->cell_pixel_height) {
+        baca_error_set(error, BACA_ERROR_MEMORY,
+                       "PDF render dimensions overflow");
+        return false;
+      }
+      target_width = columns * context->cell_pixel_width;
+      target_height = rows * context->cell_pixel_height;
+    }
     size_t estimated = 0U;
-    if (!graphics_estimated_bytes(columns, rows * 2, 3U, &estimated) ||
+    if (target_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        target_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        (size_t)target_width >
+            BACA_GRAPHICS_MAX_RENDER_PIXELS / (size_t)target_height ||
+        !graphics_estimated_bytes(target_width, target_height, 3U, &estimated) ||
         estimated > context->maximum_bytes) {
       baca_error_set(error, BACA_ERROR_MEMORY,
                      "target image exceeds graphics cache limit");
       return false;
     }
     BacaResource resource = {0};
-    if (!baca_document_load_resource(document, block->value.image.uri,
-                                     &resource, error)) {
+    const bool loaded = rendered_page
+                            ? baca_document_render_page(
+                                  document, block->value.image.page_index,
+                                  target_width, target_height,
+                                  context->background, &resource, error)
+                            : baca_document_load_resource(
+                                  document, block->value.image.uri, &resource,
+                                  error);
+    if (!loaded) {
       return false;
     }
     GdkPixbuf *decoded =
-        graphics_decode_target(&resource, columns, rows * 2, error);
+        graphics_decode_target(&resource, target_width, target_height, error);
     baca_resource_free(&resource);
     if (decoded == NULL) {
       return false;
     }
     GdkPixbuf *pixbuf = graphics_scale_composited(
-        decoded, columns, rows * 2, context->background, error);
+        decoded, target_width, target_height, context->background, error);
     g_object_unref(decoded);
     if (pixbuf == NULL) {
       return false;
@@ -945,6 +1005,8 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     context->entries[context->entry_count++] = (BacaGraphicsCacheEntry){
         .pixbuf = pixbuf,
         .uri = uri,
+        .document = document,
+        .document_instance_id = document->instance_id,
         .bytes = bytes,
         .last_used = ++context->tick,
         .image_id = image_id,
@@ -952,7 +1014,8 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
         .rows = rows,
     };
     context->bytes += bytes;
-    entry = graphics_find_entry(context, block->value.image.uri, columns, rows);
+    entry = graphics_find_entry(context, document, block->value.image.uri,
+                                columns, rows);
   }
 
   if (entry == NULL) {
@@ -966,6 +1029,8 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
   surface->pixel_bytes = graphics_pixbuf_bytes(backing);
   surface->width = gdk_pixbuf_get_width(backing);
   surface->height = gdk_pixbuf_get_height(backing);
+  surface->columns = entry->columns;
+  surface->rows = entry->rows;
   surface->rowstride = gdk_pixbuf_get_rowstride(backing);
   surface->image_id = entry->image_id;
   surface->backing = backing;
@@ -983,15 +1048,33 @@ void baca_graphics_surface_release(BacaGraphicsSurface *surface) {
 }
 
 static bool graphics_valid_surface(const BacaGraphicsSurface *surface) {
+  const int columns = surface != NULL && surface->columns > 0
+                          ? surface->columns
+                          : surface == NULL ? 0 : surface->width;
+  const int rows = surface != NULL && surface->rows > 0
+                       ? surface->rows
+                       : surface == NULL ? 0 : (surface->height + 1) / 2;
   return surface != NULL && surface->pixels != NULL && surface->width > 0 &&
-         surface->height > 0 &&
-         surface->width <= BACA_GRAPHICS_MAX_COLUMNS &&
-         surface->height <= BACA_GRAPHICS_MAX_ROWS * 2 &&
-         surface->rowstride >= surface->width * 3 &&
-         surface->rowstride <= BACA_GRAPHICS_MAX_COLUMNS * 4 &&
+          surface->height > 0 &&
+          surface->width <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION &&
+          surface->height <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION &&
+          (size_t)surface->width <=
+              BACA_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)surface->height &&
+          columns > 0 && columns <= BACA_GRAPHICS_MAX_COLUMNS && rows > 0 &&
+          rows <= BACA_GRAPHICS_MAX_ROWS &&
+          surface->rowstride >= surface->width * 3 &&
+          surface->rowstride <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION * 4 &&
          surface->pixel_bytes >= (size_t)surface->rowstride &&
          (size_t)surface->height <=
              surface->pixel_bytes / (size_t)surface->rowstride;
+}
+
+static int graphics_surface_columns(const BacaGraphicsSurface *surface) {
+  return surface->columns > 0 ? surface->columns : surface->width;
+}
+
+static int graphics_surface_rows(const BacaGraphicsSurface *surface) {
+  return surface->rows > 0 ? surface->rows : (surface->height + 1) / 2;
 }
 
 static bool
@@ -1005,8 +1088,9 @@ graphics_valid_placement(const BacaGraphicsPlacement *placement) {
 
 static BacaGraphicsRect
 graphics_visible_bounds(const BacaGraphicsSurface *surface,
-                         const BacaGraphicsPlacement *placement) {
-  const int64_t image_rows = ((int64_t)surface->height + 1) / 2;
+                          const BacaGraphicsPlacement *placement) {
+  const int64_t image_rows = graphics_surface_rows(surface);
+  const int64_t image_columns = graphics_surface_columns(surface);
   const int64_t viewport_rows =
       placement->viewport_rows > BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
           ? BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
@@ -1018,7 +1102,7 @@ graphics_visible_bounds(const BacaGraphicsSurface *surface,
   int64_t top = placement->row > 0 ? placement->row : 0;
   int64_t left = placement->column > 0 ? placement->column : 0;
   int64_t bottom = (int64_t)placement->row + image_rows;
-  int64_t right = (int64_t)placement->column + surface->width;
+  int64_t right = (int64_t)placement->column + image_columns;
   if (bottom > viewport_rows) {
     bottom = viewport_rows;
   }
@@ -1073,6 +1157,30 @@ static uint32_t graphics_surface_pixel(const BacaGraphicsSurface *surface,
       surface->pixels + (size_t)y * (size_t)surface->rowstride + (size_t)x * 3U;
   return ((uint32_t)pixel[0] << 16U) | ((uint32_t)pixel[1] << 8U) |
          (uint32_t)pixel[2];
+}
+
+static int graphics_source_column(const BacaGraphicsSurface *surface,
+                                  int display_column) {
+  const int columns = graphics_surface_columns(surface);
+  if (display_column <= 0) {
+    return 0;
+  }
+  if (display_column >= columns) {
+    return surface->width;
+  }
+  return (int)((int64_t)display_column * surface->width / columns);
+}
+
+static int graphics_source_row(const BacaGraphicsSurface *surface,
+                               int display_row) {
+  const int rows = graphics_surface_rows(surface);
+  if (display_row <= 0) {
+    return 0;
+  }
+  if (display_row >= rows) {
+    return surface->height;
+  }
+  return (int)((int64_t)display_row * surface->height / rows);
 }
 
 static bool graphics_has_visible_cell(const BacaGraphicsPlacement *placement,
@@ -1137,13 +1245,17 @@ bool baca_graphics_render_ansi(const BacaGraphicsSurface *surface,
       while (column < bounds.column + bounds.columns &&
              !graphics_occluded(placement, row, column)) {
         const int source_x =
-            (int)((int64_t)column - (int64_t)placement->column);
-        const int source_y =
-            (int)(((int64_t)row - (int64_t)placement->row) * 2);
+            graphics_source_column(surface, (int)((int64_t)column -
+                                                  (int64_t)placement->column));
+        const int display_row =
+            (int)((int64_t)row - (int64_t)placement->row);
+        const int source_y = graphics_source_row(surface, display_row);
+        const int source_bottom =
+            graphics_source_row(surface, display_row + 1) - 1;
         const uint32_t foreground =
             graphics_surface_pixel(surface, source_x, source_y);
         const uint32_t background =
-            graphics_surface_pixel(surface, source_x, source_y + 1);
+            graphics_surface_pixel(surface, source_x, source_bottom);
         char colors[96] = {0};
         const int colors_length =
             snprintf(colors, sizeof(colors),
@@ -1181,12 +1293,16 @@ bool baca_graphics_render_cells(const BacaGraphicsSurface *surface,
         continue;
       }
       const int source_x =
-          (int)((int64_t)column - (int64_t)placement->column);
-      const int source_y =
-          (int)(((int64_t)row - (int64_t)placement->row) * 2);
+          graphics_source_column(surface, (int)((int64_t)column -
+                                                (int64_t)placement->column));
+      const int display_row =
+          (int)((int64_t)row - (int64_t)placement->row);
+      const int source_y = graphics_source_row(surface, display_row);
+      const int source_bottom =
+          graphics_source_row(surface, display_row + 1) - 1;
       if (!writer(user_data, row, column,
-                  graphics_surface_pixel(surface, source_x, source_y),
-                  graphics_surface_pixel(surface, source_x, source_y + 1))) {
+                   graphics_surface_pixel(surface, source_x, source_y),
+                   graphics_surface_pixel(surface, source_x, source_bottom))) {
         baca_error_set(error, BACA_ERROR_EXTERNAL,
                        "cannot draw terminal image cell");
         return false;
@@ -1797,10 +1913,16 @@ bool baca_graphics_kitty_place(BacaGraphicsContext *context,
   }
   for (size_t index = 0U; index < rect_count; ++index) {
     const BacaGraphicsRect rect = rects[index];
-    const int source_x =
+    const int display_x =
         (int)((int64_t)rect.column - (int64_t)placement->column);
-    const int source_y =
-        (int)(((int64_t)rect.row - (int64_t)placement->row) * 2);
+    const int display_y =
+        (int)((int64_t)rect.row - (int64_t)placement->row);
+    const int source_x = graphics_source_column(surface, display_x);
+    const int source_y = graphics_source_row(surface, display_y);
+    const int source_right =
+        graphics_source_column(surface, display_x + rect.columns);
+    const int source_bottom =
+        graphics_source_row(surface, display_y + rect.rows);
     const uint32_t placement_id = graphics_next_placement_id(context);
     if (placement_id == 0U ||
         !graphics_remote_add_placement(context, surface->image_id,
@@ -1816,8 +1938,9 @@ bool baca_graphics_kitty_place(BacaGraphicsContext *context,
     const int command_length = snprintf(
         command, sizeof(command),
         "\033_Ga=p,i=%u,p=%u,q=2,x=%d,y=%d,w=%d,h=%d,c=%d,r=%d,C=1;\033\\",
-        surface->image_id, placement_id, source_x, source_y, rect.columns,
-        rect.rows * 2, rect.columns, rect.rows);
+        surface->image_id, placement_id, source_x, source_y,
+        source_right - source_x, source_bottom - source_y, rect.columns,
+        rect.rows);
     if (cursor_length <= 0 || (size_t)cursor_length >= sizeof(cursor) ||
         command_length <= 0 || (size_t)command_length >= sizeof(command) ||
         !graphics_write(writer, user_data, cursor, (size_t)cursor_length,

@@ -17,5 +17,6 @@
 [[nodiscard]] char *baca_document_fragment_target(const char *base, const char *fragment, BacaError *error);
 [[nodiscard]] bool baca_document_account_metadata(BacaDocument *document, BacaError *error);
 [[nodiscard]] bool baca_document_index_toc_sections(BacaDocument *document, BacaError *error);
+void baca_document_block_free(BacaBlock *block);
 void baca_document_rollback_blocks(BacaDocument *document, size_t first_block);
 void baca_document_rollback_toc(BacaDocument *document, size_t first_entry);

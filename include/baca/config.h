@@ -15,6 +15,7 @@ typedef struct BacaKeyList {
 
 typedef struct BacaKeymaps {
     BacaKeyList toggle_dark;
+    BacaKeyList toggle_pdf_view;
     BacaKeyList scroll_down;
     BacaKeyList scroll_up;
     BacaKeyList page_down;

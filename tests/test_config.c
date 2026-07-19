@@ -46,6 +46,8 @@ static BacaTestResult test_defaults(void) {
     TEST_ASSERT(config.show_image_as_ansi);
     TEST_ASSERT_INT((int)config.dark.background, 0x1e1e1e);
     TEST_ASSERT_INT((int)config.light.foreground, 0x1e1e1e);
+    TEST_ASSERT_SIZE(config.keymaps.toggle_pdf_view.length, 1U);
+    TEST_ASSERT_STR(config.keymaps.toggle_pdf_view.items[0], "v");
     TEST_ASSERT_SIZE(config.keymaps.page_down.length, 4U);
     TEST_ASSERT_STR(config.keymaps.page_down.items[0], "ctrl+f");
     TEST_ASSERT_STR(config.keymaps.page_down.items[3], "space");
@@ -154,6 +156,7 @@ static BacaTestResult test_key_lists(void) {
     static const char text[] =
         "[Keymaps]\n"
         "ToggleLightDark = t, ctrl+t\n"
+        "TogglePdfView = x, ctrl+x\n"
         "PageDown = space, pagedown , ctrl+f\n"
         "CloseOrQuit = q, escape, ctrl+c\n";
     BacaConfig config = {0};
@@ -161,6 +164,9 @@ static BacaTestResult test_key_lists(void) {
     TEST_ASSERT(result == BACA_TEST_PASS);
     TEST_ASSERT_SIZE(config.keymaps.toggle_dark.length, 2U);
     TEST_ASSERT_STR(config.keymaps.toggle_dark.items[1], "ctrl+t");
+    TEST_ASSERT_SIZE(config.keymaps.toggle_pdf_view.length, 2U);
+    TEST_ASSERT_STR(config.keymaps.toggle_pdf_view.items[0], "x");
+    TEST_ASSERT_STR(config.keymaps.toggle_pdf_view.items[1], "ctrl+x");
     TEST_ASSERT_SIZE(config.keymaps.page_down.length, 3U);
     TEST_ASSERT_STR(config.keymaps.page_down.items[0], "space");
     TEST_ASSERT_STR(config.keymaps.page_down.items[2], "ctrl+f");
@@ -215,6 +221,7 @@ static BacaTestResult test_default_file_creation_is_isolated(void) {
     TEST_ASSERT_STR(config.preferred_image_viewer, "auto");
     TEST_ASSERT(strstr(baca_config_default_text(), "MaxTextWidth = 80") != NULL);
     TEST_ASSERT(strstr(baca_config_default_text(), "ImageMode = auto") != NULL);
+    TEST_ASSERT(strstr(baca_config_default_text(), "TogglePdfView = v") != NULL);
     baca_config_free(&config);
     free(path);
     return BACA_TEST_PASS;

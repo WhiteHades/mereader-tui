@@ -34,32 +34,6 @@ static bool node_is(const xmlNode *node, const char *name) {
     return node != NULL && node->type == XML_ELEMENT_NODE && xmlStrcasecmp(node->name, BAD_CAST name) == 0;
 }
 
-static void html_text_block_free(BacaTextBlock *text) {
-    free(text->text);
-    for (size_t index = 0; index < text->span_count; index++) {
-        free(text->spans[index].link);
-    }
-    free(text->spans);
-    for (size_t index = 0; index < text->anchor_count; index++) {
-        free(text->anchors[index].target);
-    }
-    free(text->anchors);
-    memset(text, 0, sizeof(*text));
-}
-
-static void html_block_free(BacaBlock *block) {
-    free(block->section_id);
-    if (block->kind == BACA_BLOCK_TEXT) {
-        html_text_block_free(&block->value.text);
-    } else if (block->kind == BACA_BLOCK_IMAGE) {
-        free(block->value.image.uri);
-        free(block->value.image.alt);
-        free(block->value.image.anchor);
-        free(block->value.image.link);
-    }
-    memset(block, 0, sizeof(*block));
-}
-
 static void context_text_free(HtmlContext *context) {
     baca_string_free(&context->text);
     for (size_t index = 0; index < context->span_count; index++) {
@@ -354,7 +328,7 @@ static bool flush_text(HtmlContext *context) {
     };
     reset_text_context(context);
     if (!baca_document_add_text_block(context->document, &block, context->error)) {
-        html_block_free(&block);
+        baca_document_block_free(&block);
         return false;
     }
     return true;
@@ -706,7 +680,7 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
         },
     };
     if (!baca_document_add_image_block(context->document, &block, context->error)) {
-        html_block_free(&block);
+        baca_document_block_free(&block);
         return false;
     }
     return true;

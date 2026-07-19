@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <wchar.h>
 #include <wctype.h>
@@ -83,11 +84,23 @@ typedef struct BacaParserJob {
   const BacaDocument *document;
   int width;
   BacaJustification justification;
+  BacaPresentation presentation;
+  int cell_pixel_width;
+  int cell_pixel_height;
   BacaLayout layout;
   BacaError error;
+  atomic_bool cancel;
   atomic_bool done;
   atomic_bool succeeded;
 } BacaParserJob;
+
+typedef struct BacaPdfRenderFailure {
+  int columns;
+  int rows;
+  int cell_pixel_width;
+  int cell_pixel_height;
+  bool valid;
+} BacaPdfRenderFailure;
 
 typedef struct BacaSignalHandlers {
   struct sigaction previous[BACA_ARRAY_LEN(BACA_EXIT_SIGNALS)];
@@ -106,6 +119,8 @@ typedef struct BacaTuiState {
   size_t overlay_scroll;
   size_t toc_index;
   char alert[512];
+  BacaPdfRenderFailure *pdf_render_failures;
+  size_t pdf_render_failure_count;
   BacaSearchState search;
   BacaPromptState prompt;
   BacaAnimation animation;
@@ -113,6 +128,9 @@ typedef struct BacaTuiState {
   size_t temp_directory_count;
   size_t temp_directory_capacity;
   BacaImageMode image_mode;
+  BacaPresentation presentation;
+  int cell_pixel_width;
+  int cell_pixel_height;
   short image_pair_capacity;
   bool colors;
   bool raw_truecolor;
@@ -151,6 +169,8 @@ typedef struct BacaLibraryTuiState {
 
 static void open_alert(BacaTuiState *state, const char *message);
 static void draw_frame(BacaTuiState *state);
+static bool follow_link(BacaTuiState *state, const char *link,
+                        const char *missing_target_message);
 
 static void request_exit(int signal_number) {
   if (baca_exit_signal == 0) {
@@ -366,6 +386,29 @@ static int content_width_for(const BacaConfig *config, int terminal_width) {
   return width;
 }
 
+static void update_cell_pixels(BacaTuiState *state) {
+  int width = 1;
+  int height = 2;
+  if (state->image_mode == BACA_IMAGE_MODE_KITTY) {
+    width = 8;
+    height = 16;
+    struct winsize size = {0};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0U &&
+        size.ws_row > 0U && size.ws_xpixel >= size.ws_col &&
+        size.ws_ypixel >= size.ws_row) {
+      width = (int)(size.ws_xpixel / size.ws_col);
+      height = (int)(size.ws_ypixel / size.ws_row);
+    }
+  }
+  state->cell_pixel_width = width;
+  state->cell_pixel_height = height;
+  if (state->graphics != NULL) {
+    BacaError ignored = {0};
+    (void)baca_graphics_set_cell_pixels(state->graphics, width, height,
+                                        &ignored);
+  }
+}
+
 static void update_dimensions(BacaTuiState *state) {
   const int previous_rows = state->rows;
   const int previous_columns = state->columns;
@@ -388,6 +431,7 @@ static void update_dimensions(BacaTuiState *state) {
     (void)baca_graphics_resize(state->graphics, state->columns, state->rows,
                                &ignored);
   }
+  update_cell_pixels(state);
 }
 
 static short terminal_color(uint32_t rgb) {
@@ -581,6 +625,9 @@ static BacaCommand normalize_command(const BacaConfig *config,
   if (key_list_matches(&maps->screenshot, key)) {
     return BACA_COMMAND_SCREENSHOT;
   }
+  if (key_list_matches(&maps->toggle_pdf_view, key)) {
+    return BACA_COMMAND_TOGGLE_PDF_VIEW;
+  }
   return BACA_COMMAND_NONE;
 }
 
@@ -608,12 +655,92 @@ static size_t maximum_scroll(const BacaTuiState *state) {
              : 0U;
 }
 
+static size_t pdf_page_start(const BacaTuiState *state, size_t page) {
+  if (page >= state->app->document.section_count ||
+      state->app->layout.section_first_line == NULL) {
+    return state->app->layout.line_count;
+  }
+  return state->app->layout.section_first_line[page];
+}
+
+static void pdf_position(const BacaTuiState *state, size_t *page,
+                         double *intra_page) {
+  const size_t page_count = state->app->document.section_count;
+  *page = 0U;
+  *intra_page = 0.0;
+  if (page_count == 0U || state->app->layout.line_count == 0U) {
+    return;
+  }
+  const size_t section = baca_layout_section_for_line(
+      &state->app->layout, state->app->scroll_line, NULL);
+  if (section != SIZE_MAX && section < page_count) {
+    *page = section;
+  }
+  const size_t start = pdf_page_start(state, *page);
+  const size_t end = *page + 1U < page_count
+                         ? pdf_page_start(state, *page + 1U)
+                         : state->app->layout.line_count;
+  if (end > start + 1U && state->app->scroll_line > start) {
+    const size_t offset = minimum_size(state->app->scroll_line - start,
+                                       end - start - 1U);
+    *intra_page = (double)offset / (double)(end - start - 1U);
+  }
+}
+
+static size_t pdf_restore_line(const BacaTuiState *state, double progress) {
+  const size_t page_count = state->app->document.section_count;
+  if (page_count == 0U || !isfinite(progress) || !(progress > 0.0)) {
+    return 0U;
+  }
+  if (progress > 1.0) {
+    progress = 1.0;
+  }
+  long double scaled = (long double)progress * (long double)page_count;
+  size_t page = scaled >= (long double)page_count
+                    ? page_count - 1U
+                    : (size_t)scaled;
+  double intra_page = scaled >= (long double)page_count
+                          ? 1.0
+                          : (double)(scaled - (long double)page);
+  const size_t start = pdf_page_start(state, page);
+  const size_t end = page + 1U < page_count ? pdf_page_start(state, page + 1U)
+                                            : state->app->layout.line_count;
+  if (end <= start + 1U) {
+    return start;
+  }
+  const size_t span = end - start - 1U;
+  const size_t offset = (size_t)llround(intra_page * (double)span);
+  return start + minimum_size(offset, span);
+}
+
+static size_t restore_progress_line(const BacaTuiState *state,
+                                    double progress) {
+  return state->app->document.format == BACA_FORMAT_PDF
+             ? pdf_restore_line(state, progress)
+             : baca_layout_restore_progress(progress, maximum_scroll(state));
+}
+
 static void remember_progress(BacaTuiState *state) {
   const size_t maximum = maximum_scroll(state);
-  if (maximum > 0U) {
-    state->app->saved_progress =
-        baca_layout_progress(state->app->scroll_line, maximum);
+  if (maximum == 0U) {
+    return;
   }
+  if (state->app->scroll_line >= maximum) {
+    state->app->saved_progress = 1.0;
+    return;
+  }
+  if (state->app->document.format == BACA_FORMAT_PDF &&
+      state->app->document.section_count > 0U) {
+    size_t page = 0U;
+    double intra_page = 0.0;
+    pdf_position(state, &page, &intra_page);
+    state->app->saved_progress =
+        ((double)page + intra_page) /
+        (double)state->app->document.section_count;
+    return;
+  }
+  state->app->saved_progress =
+      baca_layout_progress(state->app->scroll_line, maximum);
 }
 
 static void set_scroll_line(BacaTuiState *state, size_t line) {
@@ -798,8 +925,7 @@ static void cancel_search(BacaTuiState *state) {
   if (!state->search.active) {
     return;
   }
-  const size_t target = baca_layout_restore_progress(
-      state->search.saved_progress, maximum_scroll(state));
+  const size_t target = restore_progress_line(state, state->search.saved_progress);
   clear_search(&state->search);
   start_scroll_animation(state, target);
 }
@@ -855,8 +981,10 @@ static bool refresh_search_after_layout(BacaTuiState *state) {
 
 static void *parser_thread(void *argument) {
   BacaParserJob *job = argument;
-  const bool succeeded = baca_layout_build(
-      &job->layout, job->document, job->width, job->justification, &job->error);
+  const bool succeeded = baca_layout_build_presentation(
+      &job->layout, job->document, job->width, job->justification,
+      job->presentation, job->cell_pixel_width, job->cell_pixel_height,
+      &job->cancel, &job->error);
   atomic_store_explicit(&job->succeeded, succeeded, memory_order_relaxed);
   atomic_store_explicit(&job->done, true, memory_order_release);
   return NULL;
@@ -886,7 +1014,11 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
         .document = &state->app->document,
         .width = state->content_width,
         .justification = state->app->config.justification,
+        .presentation = state->presentation,
+        .cell_pixel_width = state->cell_pixel_width,
+        .cell_pixel_height = state->cell_pixel_height,
     };
+    atomic_init(&job.cancel, false);
     atomic_init(&job.done, false);
     atomic_init(&job.succeeded, false);
 
@@ -904,8 +1036,15 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
     while (!atomic_load_explicit(&job.done, memory_order_acquire)) {
       if (baca_exit_signal != 0) {
         state->quit = true;
+        atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
       update_dimensions(state);
+      if (job.width != state->content_width ||
+          job.cell_pixel_width != state->cell_pixel_width ||
+          job.cell_pixel_height != state->cell_pixel_height ||
+          job.presentation != state->presentation) {
+        atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
+      }
       draw_loader(state, phase++);
       wtimeout(stdscr, 80);
       wint_t input = 0;
@@ -914,11 +1053,14 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
           read_normalized_key(&state->app->config, status, input);
       if (baca_exit_signal != 0) {
         state->quit = true;
+        atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
       if (key.valid && key.key_code && key.code == KEY_RESIZE) {
         update_dimensions(state);
+        atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       } else if (key.valid && key.command == BACA_COMMAND_QUIT) {
         state->quit = true;
+        atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
     }
 
@@ -929,8 +1071,15 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
                      "cannot join parser thread: %s", strerror(join_result));
       return false;
     }
+    const bool cancelled = atomic_load_explicit(&job.cancel, memory_order_relaxed);
     if (!atomic_load_explicit(&job.succeeded, memory_order_relaxed)) {
       baca_layout_free(&job.layout);
+      if (cancelled) {
+        if (state->quit) {
+          return true;
+        }
+        continue;
+      }
       *error = job.error;
       return false;
     }
@@ -938,7 +1087,10 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
       baca_layout_free(&job.layout);
       return true;
     }
-    if (job.width != state->content_width) {
+    if (job.width != state->content_width ||
+        job.cell_pixel_width != state->cell_pixel_width ||
+        job.cell_pixel_height != state->cell_pixel_height ||
+        job.presentation != state->presentation) {
       baca_layout_free(&job.layout);
       continue;
     }
@@ -949,6 +1101,10 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
 
 static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
   double progress = state->app->saved_progress;
+  if (state->app->layout.line_count > 0U) {
+    remember_progress(state);
+    progress = state->app->saved_progress;
+  }
 
   BacaLayout layout = {0};
   if (!build_layout_in_background(state, &layout, error)) {
@@ -960,8 +1116,8 @@ static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
 
   baca_layout_free(&state->app->layout);
   state->app->layout = layout;
-  state->app->scroll_line =
-      baca_layout_restore_progress(progress, maximum_scroll(state));
+  const size_t restored = restore_progress_line(state, progress);
+  state->app->scroll_line = minimum_size(restored, maximum_scroll(state));
   remember_progress(state);
   cancel_animation(state);
   (void)refresh_search_after_layout(state);
@@ -985,7 +1141,11 @@ static bool open_external(BacaTuiState *state, const char *target,
   const int previous_rows = state->rows;
   const int previous_content_width = state->content_width;
   (void)endwin();
-  bool opened = baca_platform_open(target, preferred, error);
+  bool opened = state->app->external_opener != NULL
+                    ? state->app->external_opener(
+                          state->app->external_opener_data, target, preferred,
+                          error)
+                    : baca_platform_open(target, preferred, error);
   if (reset_prog_mode() == ERR) {
     if (opened) {
       baca_error_set(error, BACA_ERROR_EXTERNAL,
@@ -1007,8 +1167,9 @@ static bool open_external(BacaTuiState *state, const char *target,
       opened = false;
     }
   } else if (previous_rows != state->rows) {
-    state->app->scroll_line = baca_layout_restore_progress(
-        state->app->saved_progress, maximum_scroll(state));
+    state->app->scroll_line =
+        minimum_size(restore_progress_line(state, state->app->saved_progress),
+                     maximum_scroll(state));
     remember_progress(state);
   }
   state->dirty = true;
@@ -1162,16 +1323,75 @@ static bool first_visible_image_line(const BacaTuiState *state, int row,
          previous->block_index != line->block_index;
 }
 
-static void mark_image_broken(BacaTuiState *state, size_t block_index) {
+static bool pdf_render_failure_matches(const BacaTuiState *state,
+                                       size_t block_index,
+                                       const BacaLayoutLine *line) {
+  if (state->app->document.format != BACA_FORMAT_PDF ||
+      block_index >= state->pdf_render_failure_count ||
+      state->pdf_render_failures == NULL) {
+    return false;
+  }
+  const BacaPdfRenderFailure *failure = &state->pdf_render_failures[block_index];
+  return failure->valid && failure->columns == state->content_width &&
+         failure->rows == line->image_rows &&
+         failure->cell_pixel_width == state->cell_pixel_width &&
+         failure->cell_pixel_height == state->cell_pixel_height;
+}
+
+static bool image_has_visible_render(const BacaTuiState *state,
+                                     const BacaLayoutLine *line) {
+  if (line->kind != BACA_LAYOUT_IMAGE ||
+      line->block_index >= state->app->document.block_count ||
+      state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
+      state->graphics == NULL) {
+    return false;
+  }
+  const BacaBlock *block = &state->app->document.blocks[line->block_index];
+  return block->kind == BACA_BLOCK_IMAGE && !block->value.image.broken &&
+         !pdf_render_failure_matches(state, line->block_index, line);
+}
+
+static void clear_pdf_render_failure(BacaTuiState *state, size_t block_index) {
+  if (block_index < state->pdf_render_failure_count &&
+      state->pdf_render_failures != NULL) {
+    state->pdf_render_failures[block_index] = (BacaPdfRenderFailure){0};
+  }
+}
+
+static bool mark_image_failure(BacaTuiState *state, size_t block_index,
+                               const BacaLayoutLine *line,
+                               const BacaError *error) {
+  bool rendered_pdf_page = false;
   if (block_index < state->app->document.block_count &&
       state->app->document.blocks[block_index].kind == BACA_BLOCK_IMAGE) {
     BacaImageBlock *image =
         &state->app->document.blocks[block_index].value.image;
+    rendered_pdf_page =
+        state->app->document.format == BACA_FORMAT_PDF && image->page_index >= 0;
+    if (rendered_pdf_page &&
+        (error == NULL || (error->code != BACA_ERROR_CORRUPT &&
+                           error->code != BACA_ERROR_UNSUPPORTED))) {
+      if (block_index >= state->pdf_render_failure_count ||
+          state->pdf_render_failures == NULL || line == NULL) {
+        return false;
+      }
+      BacaPdfRenderFailure *failure = &state->pdf_render_failures[block_index];
+      const bool repeated = pdf_render_failure_matches(state, block_index, line);
+      *failure = (BacaPdfRenderFailure){
+          .columns = state->content_width,
+          .rows = line->image_rows,
+          .cell_pixel_width = state->cell_pixel_width,
+          .cell_pixel_height = state->cell_pixel_height,
+          .valid = true,
+      };
+      return !repeated;
+    }
     image->intrinsic_width = 0;
     image->intrinsic_height = 0;
     image->broken = true;
   }
   state->dirty = true;
+  return rendered_pdf_page;
 }
 
 static bool prepare_image_placement(BacaTuiState *state,
@@ -1184,11 +1404,15 @@ static bool prepare_image_placement(BacaTuiState *state,
   if (state->graphics == NULL || line->block_index >= state->app->document.block_count) {
     return false;
   }
+  if (pdf_render_failure_matches(state, line->block_index, line)) {
+    return false;
+  }
   if (!baca_graphics_prepare(state->graphics, &state->app->document,
                              line->block_index, state->content_width,
                              line->image_rows, surface, error)) {
     return false;
   }
+  clear_pdf_render_failure(state, line->block_index);
   *placement = (BacaGraphicsPlacement){
       .row = row - line->image_row,
       .column = state->content_x,
@@ -1222,31 +1446,28 @@ static bool draw_image_cell(void *user_data, int row, int column,
 }
 
 static bool draw_ncurses_image(BacaTuiState *state,
-                               const BacaLayoutLine *line, int row) {
+                               const BacaLayoutLine *line, int row,
+                               BacaError *error) {
   BacaGraphicsSurface surface = {0};
   BacaGraphicsPlacement placement = {0};
-  BacaError ignored = {0};
   if (!prepare_image_placement(state, line, row, NULL, 0U, &surface,
-                               &placement, &ignored)) {
+                               &placement, error)) {
     return false;
   }
   const bool drawn = baca_graphics_render_cells(
-      &surface, &placement, draw_image_cell, state, &ignored);
+      &surface, &placement, draw_image_cell, state, error);
   baca_graphics_surface_release(&surface);
   return drawn;
 }
 
 static bool image_content_bounds(const BacaTuiState *state,
-                                 const BacaLayoutLine *line, int *x,
-                                 int *width) {
+                                 const BacaLayoutLine *line,
+                                 size_t line_index, int *x, int *width) {
   if (line->kind != BACA_LAYOUT_IMAGE ||
       line->block_index >= state->app->document.block_count) {
     return false;
   }
-  const BacaImageBlock *image =
-      &state->app->document.blocks[line->block_index].value.image;
-  if (!image->broken && state->image_mode != BACA_IMAGE_MODE_PLACEHOLDER &&
-      state->graphics != NULL) {
+  if (image_has_visible_render(state, line)) {
     int image_x = state->content_x;
     int visible_width = state->content_width;
     if (image_x < 0) {
@@ -1266,7 +1487,24 @@ static bool image_content_bounds(const BacaTuiState *state,
     *width = visible_width;
     return true;
   }
-  if (line->image_rows > 1 && line->image_row != line->image_rows / 2) {
+  const size_t image_row = line->image_row > 0 ? (size_t)line->image_row : 0U;
+  const size_t image_rows =
+      line->image_rows > 0 ? (size_t)line->image_rows : 1U;
+  const size_t image_start =
+      line_index >= image_row ? line_index - image_row : 0U;
+  const size_t image_end = image_rows > SIZE_MAX - image_start
+                               ? SIZE_MAX
+                               : image_start + image_rows;
+  const size_t viewport_end =
+      (size_t)state->rows > SIZE_MAX - state->app->scroll_line
+          ? SIZE_MAX
+          : state->app->scroll_line + (size_t)state->rows;
+  const size_t visible_start = image_start > state->app->scroll_line
+                                   ? image_start
+                                   : state->app->scroll_line;
+  const size_t visible_end = image_end < viewport_end ? image_end : viewport_end;
+  if (visible_start >= visible_end ||
+      line_index != visible_start + (visible_end - visible_start - 1U) / 2U) {
     return false;
   }
   const int label_width = (int)(sizeof(BACA_IMAGE_PLACEHOLDER) - 1U);
@@ -1340,8 +1578,12 @@ static void draw_document_line(BacaTuiState *state, int row,
         state->image_mode == BACA_IMAGE_MODE_ANSI &&
         !state->raw_truecolor &&
         first_visible_image_line(state, row, line_index)) {
-      if (!draw_ncurses_image(state, line, row)) {
-        mark_image_broken(state, line->block_index);
+      BacaError image_error = {0};
+      if (!draw_ncurses_image(state, line, row, &image_error)) {
+        if (mark_image_failure(state, line->block_index, line, &image_error) &&
+            image_error.message[0] != '\0') {
+          open_alert(state, image_error.message);
+        }
       }
     }
     if (image == NULL || image->broken ||
@@ -1487,14 +1729,18 @@ static void draw_toc_overlay(BacaTuiState *state, WINDOW *window, int height,
 static void draw_metadata_overlay(BacaTuiState *state, WINDOW *window,
                                   int height, int width) {
   static const char *const names[] = {
-      "Title",    "Creator", "Description", "Publisher", "Date",
-      "Language", "Format",  "Identifier",  "Source",
+      "Title",      "Author",   "Creator",      "Description",
+      "Publisher",  "Producer", "Date",         "Created",
+      "Modified",   "Language", "Format",       "Identifier",
+      "Source",
   };
   const BacaMetadata *metadata = &state->app->document.metadata;
   const char *const values[] = {
-      metadata->title,     metadata->creator,    metadata->description,
-      metadata->publisher, metadata->date,       metadata->language,
-      metadata->format,    metadata->identifier, metadata->source,
+      metadata->title,       metadata->author,       metadata->creator,
+      metadata->description, metadata->publisher,    metadata->producer,
+      metadata->date,        metadata->creation_date, metadata->modification_date,
+      metadata->language,    metadata->format,       metadata->identifier,
+      metadata->source,
   };
   const int visible = height > 2 ? height - 2 : 0;
   for (int row = 0; row < visible; ++row) {
@@ -1547,6 +1793,7 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
       "Confirm",
       "Close or quit",
       "Screenshot",
+      "Toggle PDF view",
   };
   const BacaKeymaps *maps = &state->app->config.keymaps;
   const BacaKeyList *const lists[] = {
@@ -1555,12 +1802,15 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
       &maps->end,         &maps->open_toc,       &maps->open_metadata,
       &maps->open_help,   &maps->search_forward, &maps->search_backward,
       &maps->next_match,  &maps->previous_match, &maps->confirm,
-      &maps->close,       &maps->screenshot,
+      &maps->close,       &maps->screenshot,      &maps->toggle_pdf_view,
   };
+  const size_t count = state->app->document.format == BACA_FORMAT_PDF
+                           ? BACA_ARRAY_LEN(names)
+                           : BACA_ARRAY_LEN(names) - 1U;
   const int visible = height > 2 ? height - 2 : 0;
   for (int row = 0; row < visible; ++row) {
     const size_t index = state->overlay_scroll + (size_t)row;
-    if (index >= BACA_ARRAY_LEN(names)) {
+    if (index >= count) {
       break;
     }
     draw_key_list(window, row + 1, width, names[index], lists[index]);
@@ -1719,7 +1969,12 @@ static void draw_terminal_graphics(BacaTuiState *state) {
     if (!prepare_image_placement(state, line, row, occlusions,
                                  occlusion_count, &surface, &placement,
                                  &ignored)) {
-      mark_image_broken(state, line->block_index);
+      const bool newly_failed =
+          mark_image_failure(state, line->block_index, line, &ignored);
+      if (newly_failed &&
+          ignored.message[0] != '\0') {
+        open_alert(state, ignored.message);
+      }
       continue;
     }
     const bool drawn = raw_ansi
@@ -1731,7 +1986,10 @@ static void draw_terminal_graphics(BacaTuiState *state) {
                                   terminal_graphics_write, state, &ignored);
     baca_graphics_surface_release(&surface);
     if (!drawn) {
-      mark_image_broken(state, line->block_index);
+      if (mark_image_failure(state, line->block_index, line, &ignored) &&
+          ignored.message[0] != '\0') {
+        open_alert(state, ignored.message);
+      }
     }
   }
 }
@@ -1807,9 +2065,9 @@ static size_t overlay_line_count(const BacaTuiState *state) {
   case BACA_OVERLAY_TOC:
     return state->app->document.toc_count;
   case BACA_OVERLAY_METADATA:
-    return 9U;
+    return 13U;
   case BACA_OVERLAY_HELP:
-    return 17U;
+    return state->app->document.format == BACA_FORMAT_PDF ? 18U : 17U;
   case BACA_OVERLAY_ALERT:
     return 1U;
   case BACA_OVERLAY_NONE:
@@ -1861,18 +2119,13 @@ static void follow_toc_selection(BacaTuiState *state) {
     return;
   }
   const char *target = state->app->document.toc[state->toc_index].target;
-  const size_t line =
-      target != NULL
-          ? baca_layout_target_line(&state->app->layout, target)
-          : SIZE_MAX;
-  if (line == SIZE_MAX) {
-    open_alert(state, "No target for selected table of contents entry");
+  if (!follow_link(state, target,
+                   "No target for selected table of contents entry")) {
     return;
   }
-  cancel_animation(state);
-  set_scroll_line(state, line);
   state->overlay = BACA_OVERLAY_NONE;
   state->overlay_scroll = 0U;
+  state->dirty = true;
 }
 
 static size_t previous_utf8_boundary(const char *value, size_t offset) {
@@ -2039,21 +2292,31 @@ static void save_screenshot(BacaTuiState *state) {
   free(lines);
 }
 
-static void follow_link(BacaTuiState *state, const char *link) {
+static bool follow_link(BacaTuiState *state, const char *link,
+                        const char *missing_target_message) {
+  if (link == NULL || link[0] == '\0') {
+    open_alert(state, missing_target_message);
+    return false;
+  }
   BacaError error = {0};
-  if (baca_is_external_uri(link)) {
+  const bool pdf_page_link =
+      state->app->document.format == BACA_FORMAT_PDF &&
+      strncmp(link, "pdf://page/", 11U) == 0;
+  if (!pdf_page_link && baca_is_external_uri(link)) {
     if (!open_external(state, link, NULL, &error)) {
       open_alert(state, error.message);
+      return false;
     }
-    return;
+    return true;
   }
   const size_t line = baca_layout_target_line(&state->app->layout, link);
   if (line == SIZE_MAX) {
-    open_alert(state, "No exact target for link");
-    return;
+    open_alert(state, missing_target_message);
+    return false;
   }
   cancel_animation(state);
   set_scroll_line(state, line);
+  return true;
 }
 
 static void cleanup_temp_directories(BacaTuiState *state) {
@@ -2139,6 +2402,12 @@ static void open_image(BacaTuiState *state, size_t block_index) {
   const BacaImageBlock *image =
       &state->app->document.blocks[block_index].value.image;
   BacaError error = {0};
+  if (image->page_index >= 0 && state->app->document.format == BACA_FORMAT_PDF) {
+    if (!open_external(state, state->app->document.path, NULL, &error)) {
+      open_alert(state, error.message);
+    }
+    return;
+  }
   BacaResource resource = {0};
   char *directory = NULL;
   char *filename = NULL;
@@ -2182,6 +2451,32 @@ cleanup:
   free(filename);
   free(path);
   baca_resource_free(&resource);
+}
+
+static const char *image_link_at_position(const BacaTuiState *state,
+                                          const BacaLayoutLine *line,
+                                          int absolute_x) {
+  if (line->block_index >= state->app->document.block_count ||
+      line->image_rows <= 0) {
+    return NULL;
+  }
+  const BacaBlock *block = &state->app->document.blocks[line->block_index];
+  if (block->kind != BACA_BLOCK_IMAGE || block->value.image.link_count == 0U ||
+      state->content_width <= 0 || !image_has_visible_render(state, line)) {
+    return NULL;
+  }
+  const double x = ((double)(absolute_x - state->content_x) + 0.5) /
+                   (double)state->content_width;
+  const double y = ((double)line->image_row + 0.5) /
+                   (double)line->image_rows;
+  for (size_t index = 0U; index < block->value.image.link_count; ++index) {
+    const BacaImageLink *link = &block->value.image.links[index];
+    if (x >= link->x && x < link->x + link->width && y >= link->y &&
+        y < link->y + link->height) {
+      return link->target;
+    }
+  }
+  return NULL;
 }
 
 static const char *link_at_position(BacaTuiState *state, size_t line_index,
@@ -2254,15 +2549,20 @@ static void handle_reader_click(BacaTuiState *state, const MEVENT *event) {
   if (line->kind == BACA_LAYOUT_IMAGE) {
     int image_x = 0;
     int image_width = 0;
-    if (image_content_bounds(state, line, &image_x, &image_width) &&
+    if (image_content_bounds(state, line, line_index, &image_x, &image_width) &&
         event->x >= image_x && event->x < image_x + image_width) {
-      open_image(state, line->block_index);
+      const char *link = image_link_at_position(state, line, event->x);
+      if (link != NULL) {
+        (void)follow_link(state, link, "No exact target for link");
+      } else {
+        open_image(state, line->block_index);
+      }
     }
     return;
   }
   const char *link = link_at_position(state, line_index, event->x);
   if (link != NULL) {
-    follow_link(state, link);
+    (void)follow_link(state, link, "No exact target for link");
   }
 }
 
@@ -2393,6 +2693,24 @@ static void begin_search_prompt(BacaTuiState *state, bool forward) {
   state->dirty = true;
 }
 
+static void toggle_pdf_view(BacaTuiState *state) {
+  if (state->app->document.format != BACA_FORMAT_PDF) {
+    return;
+  }
+  const BacaPresentation previous = state->presentation;
+  state->presentation = previous == BACA_PRESENTATION_FIXED
+                            ? BACA_PRESENTATION_REFLOW
+                            : BACA_PRESENTATION_FIXED;
+  BacaError error = {0};
+  if (!rebuild_layout(state, &error) && !state->quit) {
+    state->presentation = previous;
+    BacaError restore_error = {0};
+    (void)rebuild_layout(state, &restore_error);
+    open_alert(state, error.message[0] != '\0' ? error.message
+                                               : "Cannot change PDF view");
+  }
+}
+
 static void handle_reader_key(BacaTuiState *state,
                               const BacaNormalizedKey *key) {
   switch (key->command) {
@@ -2451,6 +2769,9 @@ static void handle_reader_key(BacaTuiState *state,
     break;
   case BACA_COMMAND_PREVIOUS_MATCH:
     repeat_search(state, false);
+    break;
+  case BACA_COMMAND_TOGGLE_PDF_VIEW:
+    toggle_pdf_view(state);
     break;
   case BACA_COMMAND_CONFIRM:
     clear_search(&state->search);
@@ -2521,6 +2842,10 @@ static void initialize_graphics(BacaTuiState *state) {
     state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
   }
   if (state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER) {
+    state->presentation = state->app->document.format == BACA_FORMAT_PDF
+                              ? BACA_PRESENTATION_REFLOW
+                              : BACA_PRESENTATION_DEFAULT;
+    update_cell_pixels(state);
     baca_document_probe_images(&state->app->document, false);
     return;
   }
@@ -2531,6 +2856,10 @@ static void initialize_graphics(BacaTuiState *state) {
       current_background(state), &ignored);
   if (state->graphics == NULL) {
     state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    state->presentation = state->app->document.format == BACA_FORMAT_PDF
+                              ? BACA_PRESENTATION_REFLOW
+                              : BACA_PRESENTATION_DEFAULT;
+    update_cell_pixels(state);
     baca_document_probe_images(&state->app->document, false);
     return;
   }
@@ -2539,9 +2868,17 @@ static void initialize_graphics(BacaTuiState *state) {
     baca_graphics_free(state->graphics);
     state->graphics = NULL;
     state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    state->presentation = state->app->document.format == BACA_FORMAT_PDF
+                              ? BACA_PRESENTATION_REFLOW
+                              : BACA_PRESENTATION_DEFAULT;
+    update_cell_pixels(state);
     baca_document_probe_images(&state->app->document, false);
     return;
   }
+  state->presentation = state->app->document.format == BACA_FORMAT_PDF
+                            ? BACA_PRESENTATION_FIXED
+                            : BACA_PRESENTATION_DEFAULT;
+  update_cell_pixels(state);
   baca_document_probe_images(&state->app->document, true);
 }
 
@@ -3340,6 +3677,18 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
   initialize_graphics(&state);
 
   int result = EXIT_SUCCESS;
+  if (app->document.format == BACA_FORMAT_PDF &&
+      app->document.block_count > 0U) {
+    state.pdf_render_failures =
+        calloc(app->document.block_count, sizeof(*state.pdf_render_failures));
+    if (state.pdf_render_failures == NULL) {
+      baca_error_set(error, BACA_ERROR_MEMORY,
+                     "cannot allocate PDF render failure cache");
+      result = EXIT_FAILURE;
+      goto cleanup;
+    }
+    state.pdf_render_failure_count = app->document.block_count;
+  }
   if (!install_signal_handlers(&signal_handlers, error)) {
     result = EXIT_FAILURE;
     goto cleanup;
@@ -3400,6 +3749,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
 cleanup:
   remember_progress(&state);
   clear_search(&state.search);
+  free(state.pdf_render_failures);
   cleanup_temp_directories(&state);
   delete_kitty_images(&state);
   baca_graphics_free(state.graphics);

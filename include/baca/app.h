@@ -23,9 +23,13 @@ typedef enum BacaCommand : uint8_t {
     BACA_COMMAND_SEARCH_BACKWARD,
     BACA_COMMAND_NEXT_MATCH,
     BACA_COMMAND_PREVIOUS_MATCH,
+    BACA_COMMAND_TOGGLE_PDF_VIEW,
     BACA_COMMAND_CONFIRM,
     BACA_COMMAND_SCREENSHOT,
 } BacaCommand;
+
+typedef bool (*BacaExternalOpener)(void *user_data, const char *target, const char *preferred,
+                                   BacaError *error);
 
 typedef struct BacaApp {
     BacaConfig config;
@@ -36,6 +40,8 @@ typedef struct BacaApp {
     double saved_progress;
     bool dark_mode;
     bool direct_open;
+    BacaExternalOpener external_opener;
+    void *external_opener_data;
 } BacaApp;
 
 typedef enum BacaLibraryCommand : uint8_t {

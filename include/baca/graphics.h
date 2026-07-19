@@ -9,6 +9,7 @@
 #define BACA_GRAPHICS_MAX_TRANSMIT_BYTES (16U * 1024U * 1024U)
 #define BACA_GRAPHICS_MAX_SOURCE_DIMENSION 32768
 #define BACA_GRAPHICS_MAX_SOURCE_PIXELS 64000000U
+#define BACA_GRAPHICS_MAX_RENDER_PIXELS 10000000U
 #define BACA_GRAPHICS_MAX_COLUMNS 1024
 #define BACA_GRAPHICS_MAX_ROWS 1024
 #define BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION 32767
@@ -58,6 +59,8 @@ typedef struct BacaGraphicsSurface {
   size_t pixel_bytes;
   int width;
   int height;
+  int columns;
+  int rows;
   int rowstride;
   uint32_t image_id;
   void *backing;
@@ -97,8 +100,11 @@ baca_graphics_create(size_t maximum_bytes, BacaGraphicsMultiplexer multiplexer,
                      uint32_t background, BacaError *error);
 void baca_graphics_free(BacaGraphicsContext *context);
 [[nodiscard]] bool baca_graphics_resize(BacaGraphicsContext *context,
-                                        int columns, int rows,
-                                        BacaError *error);
+                                         int columns, int rows,
+                                         BacaError *error);
+[[nodiscard]] bool baca_graphics_set_cell_pixels(BacaGraphicsContext *context,
+                                                  int width, int height,
+                                                  BacaError *error);
 [[nodiscard]] bool baca_graphics_set_background(BacaGraphicsContext *context,
                                                 uint32_t background,
                                                 BacaError *error);

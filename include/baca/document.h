@@ -7,6 +7,7 @@
 #define BACA_DOCUMENT_MAX_TOC_ENTRIES 100000U
 #define BACA_DOCUMENT_MAX_SPANS_PER_BLOCK 100000U
 #define BACA_DOCUMENT_MAX_ANCHORS_PER_BLOCK 100000U
+#define BACA_DOCUMENT_MAX_LINKS_PER_IMAGE 4096U
 #define BACA_DOCUMENT_MAX_RETAINED_BYTES (256U * 1024U * 1024U)
 
 typedef enum BacaDocumentFormat : uint8_t {
@@ -23,10 +24,14 @@ typedef enum BacaDocumentFormat : uint8_t {
 
 typedef struct BacaMetadata {
     char *title;
+    char *author;
     char *creator;
     char *description;
     char *publisher;
+    char *producer;
     char *date;
+    char *creation_date;
+    char *modification_date;
     char *language;
     char *format;
     char *identifier;
@@ -66,6 +71,14 @@ typedef struct BacaTextBlock {
     bool preformatted;
 } BacaTextBlock;
 
+typedef struct BacaImageLink {
+    double x;
+    double y;
+    double width;
+    double height;
+    char *target;
+} BacaImageLink;
+
 typedef struct BacaImageBlock {
     char *uri;
     char *alt;
@@ -74,8 +87,17 @@ typedef struct BacaImageBlock {
     int page_index;
     int intrinsic_width;
     int intrinsic_height;
+    BacaImageLink *links;
+    size_t link_count;
+    size_t link_capacity;
     bool broken;
 } BacaImageBlock;
+
+typedef enum BacaPresentation : uint8_t {
+    BACA_PRESENTATION_DEFAULT = 0,
+    BACA_PRESENTATION_FIXED,
+    BACA_PRESENTATION_REFLOW,
+} BacaPresentation;
 
 typedef enum BacaBlockKind : uint8_t {
     BACA_BLOCK_TEXT = 0,
@@ -85,6 +107,7 @@ typedef enum BacaBlockKind : uint8_t {
 
 typedef struct BacaBlock {
     BacaBlockKind kind;
+    BacaPresentation presentation;
     char *section_id;
     union {
         BacaTextBlock text;
@@ -119,13 +142,14 @@ struct BacaDocument;
 typedef struct BacaDocumentOps {
     bool (*load_resource)(struct BacaDocument *document, const char *uri, BacaResource *resource,
                           BacaError *error);
-    bool (*render_page)(struct BacaDocument *document, int page_index, double scale, BacaResource *resource,
-                        BacaError *error);
+    bool (*render_page)(struct BacaDocument *document, int page_index, int width, int height,
+                        uint32_t background, BacaResource *resource, BacaError *error);
     void (*close)(struct BacaDocument *document);
 } BacaDocumentOps;
 
 typedef struct BacaDocument {
     char *path;
+    uint64_t instance_id; /* Zero unless assigned by baca_document_open. */
     BacaDocumentFormat format;
     BacaMetadata metadata;
     BacaTocEntry *toc;
@@ -138,6 +162,7 @@ typedef struct BacaDocument {
     size_t block_count;
     size_t block_capacity;
     size_t retained_bytes;
+    BacaPresentation default_presentation;
     void *backend;
     const BacaDocumentOps *ops;
 } BacaDocument;
@@ -149,6 +174,8 @@ void baca_resource_free(BacaResource *resource);
 /* resource must point to {0}; free it before passing it here again. */
 [[nodiscard]] bool baca_document_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
                                                BacaError *error);
+[[nodiscard]] bool baca_document_render_page(BacaDocument *document, int page_index, int width, int height,
+                                             uint32_t background, BacaResource *resource, BacaError *error);
 /* Disabled probing performs no resource loads and leaves image blocks as placeholders. */
 void baca_document_probe_images(BacaDocument *document, bool enabled);
 [[nodiscard]] const char *baca_document_format_name(BacaDocumentFormat format);

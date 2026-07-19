@@ -32,7 +32,9 @@ static bool save_progress(BacaApp *app, BacaError *error) {
   const BacaHistoryEntry entry = {
       .filepath = app->document.path,
       .title = app->document.metadata.title,
-      .author = app->document.metadata.creator,
+      .author = app->document.metadata.author != NULL
+                    ? app->document.metadata.author
+                    : app->document.metadata.creator,
       .reading_progress = normalized_progress(app->saved_progress),
       .last_read = last_read,
   };

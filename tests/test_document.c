@@ -550,6 +550,29 @@ static BacaTestResult test_missing_toc_fallback(void) {
     return BACA_TEST_PASS;
 }
 
+static BacaTestResult test_document_instance_identity_changes_on_reopen(void) {
+    char *path = NULL;
+    TEST_ASSERT(build_minimal_epub("document/instance-id.epub", "", "", NULL, 0U, &path));
+    BacaDocument document = {0};
+    BacaError error = {0};
+    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    const uint64_t first_instance_id = document.instance_id;
+    TEST_ASSERT(first_instance_id != 0U);
+    baca_document_close(&document);
+    TEST_ASSERT(document.instance_id == 0U);
+
+    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT(document.instance_id != 0U && document.instance_id != first_instance_id);
+    baca_document_close(&document);
+
+    document.instance_id = first_instance_id;
+    TEST_ASSERT(!baca_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+    document.instance_id = 0U;
+    free(path);
+    return BACA_TEST_PASS;
+}
+
 static BacaTestResult test_data_resources(void) {
     BacaDocument document = {0};
     BacaResource resource = {0};
@@ -856,6 +879,8 @@ const BacaTestCase *baca_document_test_cases(size_t *count) {
          .function = test_epub2_normalization_toc_resources_and_cleanup},
         {.name = "epub3_nav_and_svg_spine", .function = test_epub3_nav_and_svg_spine},
         {.name = "missing_toc_fallback", .function = test_missing_toc_fallback},
+        {.name = "document_instance_identity_changes_on_reopen",
+         .function = test_document_instance_identity_changes_on_reopen},
         {.name = "data_resources", .function = test_data_resources},
         {.name = "image_probe_dedupe_placeholder_and_aggregate_limit",
          .function = test_image_probe_dedupe_placeholder_and_aggregate_limit},

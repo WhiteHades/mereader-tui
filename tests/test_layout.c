@@ -2,7 +2,6 @@
 
 #include "baca/layout.h"
 
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -210,29 +209,84 @@ static BacaTestResult test_image_aspect_rows_and_broken_placeholder(void) {
     return BACA_TEST_PASS;
 }
 
-static BacaTestResult test_hostile_image_dimensions_are_bounded(void) {
+static BacaTestResult test_image_row_limits_fail_instead_of_crushing(void) {
     BacaDocument document = {0};
     BacaError error = {0};
-    const size_t image_count = BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS /
-                                   (BACA_LAYOUT_MAX_IMAGE_ROWS - 1U) +
-                               2U;
-    for (size_t index = 0U; index < image_count; ++index) {
+    const size_t full_images = BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS /
+                               (BACA_LAYOUT_MAX_IMAGE_ROWS - 1U);
+    for (size_t index = 0U; index < full_images; ++index) {
         char anchor[64] = {0};
-        const int length = snprintf(anchor, sizeof(anchor), "images.xhtml#hostile-%zu", index);
+        const int length = snprintf(anchor, sizeof(anchor), "images.xhtml#boundary-%zu", index);
         TEST_ASSERT(length > 0 && (size_t)length < sizeof(anchor));
-        TEST_ASSERT(append_image_block(&document, "images.xhtml", anchor, 1, INT_MAX, false, &error));
+        TEST_ASSERT(append_image_block(&document, "images.xhtml", anchor, 1,
+                                       BACA_LAYOUT_MAX_IMAGE_ROWS * 2, false, &error));
     }
+    const size_t remainder = BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS -
+                             full_images * (BACA_LAYOUT_MAX_IMAGE_ROWS - 1U);
+    TEST_ASSERT(remainder > 0U && remainder < BACA_LAYOUT_MAX_IMAGE_ROWS);
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#boundary-last", 1,
+                                   (int)(remainder + 1U) * 2, false, &error));
+
     BacaLayout layout = {0};
-    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, INT_MAX, BACA_JUSTIFY_LEFT, &error), "%s",
-                    error.message);
-    TEST_ASSERT_INT(layout.width, BACA_LAYOUT_MAX_WIDTH);
+    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error), "%s",
+                     error.message);
     TEST_ASSERT_INT(layout.lines[0].image_rows, BACA_LAYOUT_MAX_IMAGE_ROWS);
     TEST_ASSERT_SIZE(layout.image_extra_rows, BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS);
+    const size_t boundary_count = full_images + 1U;
     TEST_ASSERT_SIZE(layout.line_count,
-                     image_count + BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS + image_count - 1U);
-    TEST_ASSERT(layout.lines[layout.block_first_line[image_count - 1U]].image_rows <=
-                BACA_LAYOUT_MAX_IMAGE_ROWS);
+                     boundary_count + BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS + boundary_count - 1U);
+
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#over-budget", 1, 4,
+                                   false, &error));
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(strstr(error.message, "aggregate image") != NULL);
+    TEST_ASSERT_SIZE(layout.image_extra_rows, BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS);
     baca_layout_free(&layout);
+    baca_document_close(&document);
+
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#too-tall", 1,
+                                   BACA_LAYOUT_MAX_IMAGE_ROWS * 2 + 1, false, &error));
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(strstr(error.message, "per-image row limit") != NULL);
+    baca_document_close(&document);
+    return BACA_TEST_PASS;
+}
+
+static BacaTestResult test_line_limit_and_cancellation(void) {
+    char *text = malloc(BACA_LAYOUT_MAX_LINES + 2U);
+    TEST_ASSERT(text != NULL);
+    memset(text, 'x', BACA_LAYOUT_MAX_LINES + 1U);
+    text[BACA_LAYOUT_MAX_LINES + 1U] = '\0';
+
+    BacaDocument document = {0};
+    BacaError error = {0};
+    TEST_ASSERT(append_text_block(&document, "limit.xhtml", text, 0U, false, NULL, 0U, &error));
+    free(text);
+    document.blocks[0].value.text.text[BACA_LAYOUT_MAX_LINES] = '\0';
+
+    BacaLayout layout = {0};
+    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error), "%s",
+                    error.message);
+    TEST_ASSERT_SIZE(layout.line_count, BACA_LAYOUT_MAX_LINES);
+    document.blocks[0].value.text.text[BACA_LAYOUT_MAX_LINES] = 'x';
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(strstr(error.message, "line limit") != NULL);
+    TEST_ASSERT_SIZE(layout.line_count, BACA_LAYOUT_MAX_LINES);
+    baca_layout_free(&layout);
+
+    atomic_bool cancel;
+    atomic_init(&cancel, true);
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_layout_build_presentation(&layout, &document, 1, BACA_JUSTIFY_LEFT,
+                                                BACA_PRESENTATION_DEFAULT, 1, 2, &cancel, &error));
+    TEST_ASSERT(!baca_error_is_set(&error));
+    TEST_ASSERT(layout.lines == NULL && layout.block_first_line == NULL);
     baca_document_close(&document);
     return BACA_TEST_PASS;
 }
@@ -312,8 +366,9 @@ const BacaTestCase *baca_layout_test_cases(size_t *count) {
         {.name = "progress_semantics", .function = test_progress_semantics},
         {.name = "image_aspect_rows_and_broken_placeholder",
          .function = test_image_aspect_rows_and_broken_placeholder},
-        {.name = "hostile_image_dimensions_are_bounded",
-         .function = test_hostile_image_dimensions_are_bounded},
+        {.name = "image_row_limits_fail_instead_of_crushing",
+         .function = test_image_row_limits_fail_instead_of_crushing},
+        {.name = "line_limit_and_cancellation", .function = test_line_limit_and_cancellation},
         {.name = "regex_valid_invalid_empty_and_casefold",
          .function = test_regex_valid_invalid_empty_and_casefold},
         {.name = "resize_stable_search_identity", .function = test_resize_stable_search_identity},

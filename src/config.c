@@ -42,6 +42,7 @@ static const char BACA_DEFAULT_CONFIG[] =
     "\n"
     "# auto, kitty, ansi, or placeholder\n"
     "# oversized, animated, or corrupt images are shown as placeholders\n"
+    "# PDF fixed-page rendering follows this mode; press v for reflowable text\n"
     "ImageMode = auto\n"
     "\n"
     "# colors accept #rgb, #rrggbb, or common names\n"
@@ -57,6 +58,7 @@ static const char BACA_DEFAULT_CONFIG[] =
     "\n"
     "[Keymaps]\n"
     "ToggleLightDark = c\n"
+    "TogglePdfView = v\n"
     "ScrollDown = down,j\n"
     "ScrollUp = up,k\n"
     "PageDown = ctrl+f,pagedown,l,space\n"
@@ -571,6 +573,8 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
                                     &result.page_scroll_duration, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ToggleLightDark", "c"),
                                     &result.keymaps.toggle_dark, error) ||
+        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "TogglePdfView", "v"),
+                                    &result.keymaps.toggle_pdf_view, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ScrollDown", "down,j"),
                                     &result.keymaps.scroll_down, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ScrollUp", "up,k"),
@@ -630,7 +634,7 @@ static bool baca_config_output_empty(const BacaConfig *config) {
         &config->keymaps.search_forward,   &config->keymaps.search_backward,
         &config->keymaps.next_match,       &config->keymaps.previous_match,
         &config->keymaps.confirm,          &config->keymaps.close,
-        &config->keymaps.screenshot,
+        &config->keymaps.screenshot,       &config->keymaps.toggle_pdf_view,
     };
     for (size_t index = 0U; index < BACA_ARRAY_LEN(lists); ++index) {
         if (lists[index]->items != nullptr || lists[index]->length != 0U) {
@@ -765,7 +769,7 @@ void baca_config_free(BacaConfig *config) {
         &config->keymaps.search_forward,   &config->keymaps.search_backward,
         &config->keymaps.next_match,       &config->keymaps.previous_match,
         &config->keymaps.confirm,          &config->keymaps.close,
-        &config->keymaps.screenshot,
+        &config->keymaps.screenshot,       &config->keymaps.toggle_pdf_view,
     };
     for (size_t index = 0U; index < BACA_ARRAY_LEN(lists); ++index) {
         baca_key_list_free(lists[index]);

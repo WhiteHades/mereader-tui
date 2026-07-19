@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,12 +12,26 @@
 
 #define BACA_DATA_URI_MAX (64U * 1024U * 1024U)
 
+static atomic_uint_least64_t document_instance_serial;
+
+static uint64_t next_document_instance_id(void) {
+    uint_least64_t instance_id = 0U;
+    while (instance_id == 0U) {
+        instance_id = atomic_fetch_add_explicit(&document_instance_serial, 1U, memory_order_relaxed) + 1U;
+    }
+    return (uint64_t) instance_id;
+}
+
 static void metadata_free(BacaMetadata *metadata) {
     free(metadata->title);
+    free(metadata->author);
     free(metadata->creator);
     free(metadata->description);
     free(metadata->publisher);
+    free(metadata->producer);
     free(metadata->date);
+    free(metadata->creation_date);
+    free(metadata->modification_date);
     free(metadata->language);
     free(metadata->format);
     free(metadata->identifier);
@@ -37,7 +52,7 @@ static void text_block_free(BacaTextBlock *text) {
     memset(text, 0, sizeof(*text));
 }
 
-static void block_free(BacaBlock *block) {
+void baca_document_block_free(BacaBlock *block) {
     free(block->section_id);
     if (block->kind == BACA_BLOCK_TEXT) {
         text_block_free(&block->value.text);
@@ -46,6 +61,10 @@ static void block_free(BacaBlock *block) {
         free(block->value.image.alt);
         free(block->value.image.anchor);
         free(block->value.image.link);
+        for (size_t index = 0; index < block->value.image.link_count; index++) {
+            free(block->value.image.links[index].target);
+        }
+        free(block->value.image.links);
     }
     memset(block, 0, sizeof(*block));
 }
@@ -107,12 +126,25 @@ static bool block_retained_size(const BacaBlock *block, size_t *size, BacaError 
             return false;
         }
     } else if (block->kind == BACA_BLOCK_IMAGE) {
+        if ((block->value.image.link_count > 0 && block->value.image.links == NULL) ||
+            block->value.image.link_count > BACA_DOCUMENT_MAX_LINKS_PER_IMAGE) {
+            baca_error_set(error, BACA_ERROR_CORRUPT, "image link map exceeds the supported count limit");
+            return false;
+        }
         if (!retained_add_string(&total, block->value.image.uri) ||
             !retained_add_string(&total, block->value.image.alt) ||
             !retained_add_string(&total, block->value.image.anchor) ||
-            !retained_add_string(&total, block->value.image.link)) {
+            !retained_add_string(&total, block->value.image.link) ||
+            block->value.image.link_count > SIZE_MAX / sizeof(*block->value.image.links) ||
+            !retained_add(&total, block->value.image.link_count * sizeof(*block->value.image.links))) {
             baca_error_set(error, BACA_ERROR_CORRUPT, "image block retained size overflow");
             return false;
+        }
+        for (size_t index = 0; index < block->value.image.link_count; index++) {
+            if (!retained_add_string(&total, block->value.image.links[index].target)) {
+                baca_error_set(error, BACA_ERROR_CORRUPT, "image link map retained size overflow");
+                return false;
+            }
         }
     }
     *size = total;
@@ -261,8 +293,10 @@ bool baca_document_account_metadata(BacaDocument *document, BacaError *error) {
         return false;
     }
     const char *const values[] = {
-        document->metadata.title,       document->metadata.creator,  document->metadata.description,
-        document->metadata.publisher,   document->metadata.date,     document->metadata.language,
+        document->metadata.title,       document->metadata.author,   document->metadata.creator,
+        document->metadata.description, document->metadata.publisher, document->metadata.producer,
+        document->metadata.date,        document->metadata.creation_date,
+        document->metadata.modification_date, document->metadata.language,
         document->metadata.format,      document->metadata.identifier,
         document->metadata.source,
     };
@@ -292,7 +326,7 @@ void baca_document_rollback_blocks(BacaDocument *document, size_t first_block) {
             retained_size <= document->retained_bytes) {
             document->retained_bytes -= retained_size;
         }
-        block_free(&document->blocks[document->block_count]);
+        baca_document_block_free(&document->blocks[document->block_count]);
     }
 }
 
@@ -875,6 +909,32 @@ bool baca_document_load_resource(BacaDocument *document, const char *uri, BacaRe
     return true;
 }
 
+bool baca_document_render_page(BacaDocument *document, int page_index, int width, int height,
+                               uint32_t background, BacaResource *resource, BacaError *error) {
+    if (error != NULL) {
+        baca_error_clear(error);
+    }
+    if (document == NULL || resource == NULL || page_index < 0 || width <= 0 || height <= 0) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "document, page, dimensions, and resource output are required");
+        return false;
+    }
+    if (!resource_output_is_empty(resource)) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "resource output must be zero-initialized");
+        return false;
+    }
+    if (document->ops == NULL || document->ops->render_page == NULL) {
+        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "page rendering is not supported for this document format");
+        return false;
+    }
+    BacaResource rendered = {0};
+    if (!document->ops->render_page(document, page_index, width, height, background, &rendered, error)) {
+        baca_resource_free(&rendered);
+        return false;
+    }
+    *resource = rendered;
+    return true;
+}
+
 static bool extension_is(const char *extension, const char *expected) {
     return extension != NULL && baca_casecmp(extension, expected) == 0;
 }
@@ -984,18 +1044,20 @@ static BacaDocumentFormat detect_format(const char *path, const char *extension,
 }
 
 static bool metadata_is_empty(const BacaMetadata *metadata) {
-    return metadata->title == NULL && metadata->creator == NULL && metadata->description == NULL &&
-           metadata->publisher == NULL && metadata->date == NULL && metadata->language == NULL &&
-           metadata->format == NULL && metadata->identifier == NULL && metadata->source == NULL;
+    return metadata->title == NULL && metadata->author == NULL && metadata->creator == NULL &&
+           metadata->description == NULL && metadata->publisher == NULL && metadata->producer == NULL &&
+           metadata->date == NULL && metadata->creation_date == NULL && metadata->modification_date == NULL &&
+           metadata->language == NULL && metadata->format == NULL && metadata->identifier == NULL &&
+           metadata->source == NULL;
 }
 
 static bool document_output_is_empty(const BacaDocument *document) {
-    return document->path == NULL && document->format == BACA_FORMAT_UNKNOWN &&
+    return document->path == NULL && document->instance_id == 0U && document->format == BACA_FORMAT_UNKNOWN &&
            metadata_is_empty(&document->metadata) && document->toc == NULL && document->toc_count == 0 &&
            document->toc_capacity == 0 && document->sections == NULL && document->section_count == 0 &&
-           document->section_capacity == 0 && document->blocks == NULL && document->block_count == 0 &&
-           document->block_capacity == 0 && document->retained_bytes == 0 && document->backend == NULL &&
-           document->ops == NULL;
+            document->section_capacity == 0 && document->blocks == NULL && document->block_count == 0 &&
+            document->block_capacity == 0 && document->retained_bytes == 0 && document->backend == NULL &&
+            document->default_presentation == BACA_PRESENTATION_DEFAULT && document->ops == NULL;
 }
 
 typedef struct BacaImageProbe {
@@ -1120,7 +1182,7 @@ void baca_document_probe_images(BacaDocument *document, bool enabled) {
     size_t image_count = 0U;
     for (size_t index = 0U; index < document->block_count; ++index) {
         BacaBlock *block = &document->blocks[index];
-        if (block->kind != BACA_BLOCK_IMAGE) {
+        if (block->kind != BACA_BLOCK_IMAGE || block->value.image.page_index >= 0) {
             continue;
         }
         ++image_count;
@@ -1150,7 +1212,8 @@ void baca_document_probe_images(BacaDocument *document, bool enabled) {
     size_t probe_bytes = 0U;
     for (size_t index = 0U; index < document->block_count; ++index) {
         BacaBlock *block = &document->blocks[index];
-        if (block->kind != BACA_BLOCK_IMAGE || block->value.image.uri == NULL) {
+        if (block->kind != BACA_BLOCK_IMAGE || block->value.image.page_index >= 0 ||
+            block->value.image.uri == NULL) {
             continue;
         }
         BacaImageBlock *image = &block->value.image;
@@ -1234,7 +1297,7 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
     } else if (opened.format == BACA_FORMAT_MOBI || opened.format == BACA_FORMAT_AZW) {
         success = baca_mobi_open(&opened, opened.path, error);
     } else if (opened.format == BACA_FORMAT_PDF) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "PDF support is not implemented yet");
+        success = baca_pdf_open(&opened, opened.path, error);
     } else if (opened.format == BACA_FORMAT_IMAGE) {
         baca_error_set(error, BACA_ERROR_UNSUPPORTED, "image document support is not implemented yet");
     } else if (opened.format == BACA_FORMAT_COMIC) {
@@ -1250,6 +1313,7 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
         baca_document_close(&opened);
         return false;
     }
+    opened.instance_id = next_document_instance_id();
     *document = opened;
     return true;
 }
@@ -1262,7 +1326,7 @@ void baca_document_close(BacaDocument *document) {
         document->ops->close(document);
     }
     for (size_t index = 0; index < document->block_count; index++) {
-        block_free(&document->blocks[index]);
+        baca_document_block_free(&document->blocks[index]);
     }
     free(document->blocks);
     for (size_t index = 0; index < document->section_count; index++) {

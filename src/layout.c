@@ -1,7 +1,17 @@
 #include "baca/layout.h"
+#include "baca/graphics.h"
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc2y-extensions"
+#endif
+#include <glib.h>
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #include <math.h>
 #include <limits.h>
@@ -20,6 +30,10 @@ static void layout_set_error(BacaError *error, BacaErrorCode code, const char *m
     if (error != NULL) {
         baca_error_set(error, code, "%s", message);
     }
+}
+
+static bool layout_cancelled(const BacaLayout *layout) {
+    return layout->cancel != NULL && atomic_load_explicit(layout->cancel, memory_order_relaxed);
 }
 
 static bool layout_is_control_byte(char value) {
@@ -47,11 +61,15 @@ static size_t layout_utf8_next(const char *text, size_t length, size_t offset, i
     return next;
 }
 
-static bool layout_slice_width(const char *text, size_t start, size_t end, size_t *width, BacaError *error) {
+static bool layout_slice_width(const BacaLayout *layout, const char *text, size_t start, size_t end,
+                               size_t *width, BacaError *error) {
     size_t offset = start;
     size_t columns = 0U;
 
     while (offset < end) {
+        if (layout_cancelled(layout)) {
+            return false;
+        }
         int cell_width = 0;
         size_t next = layout_utf8_next(text, end, offset, &cell_width);
         size_t added = (size_t)cell_width;
@@ -69,8 +87,12 @@ static bool layout_slice_width(const char *text, size_t start, size_t end, size_
 }
 
 static bool layout_add_line(BacaLayout *layout, BacaLayoutLine line, BacaError *error) {
-    if (layout->line_count == SIZE_MAX) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "layout line count overflow");
+    if (layout_cancelled(layout)) {
+        return false;
+    }
+    if (layout->line_count >= BACA_LAYOUT_MAX_LINES) {
+        layout_set_error(error, BACA_ERROR_CORRUPT,
+                         "layout exceeds the supported line limit of 262144");
         return false;
     }
 
@@ -124,7 +146,7 @@ static bool layout_add_text_line(BacaLayout *layout, size_t block_index, const c
     }
 
     size_t columns = 0U;
-    if (!layout_slice_width(text, start, end, &columns, error)) {
+    if (!layout_slice_width(layout, text, start, end, &columns, error)) {
         return false;
     }
 
@@ -165,8 +187,12 @@ static bool layout_is_horizontal_space(char value) {
     return value == ' ' || layout_is_control_byte(value);
 }
 
-static size_t layout_skip_horizontal_space(const char *text, size_t offset, size_t end) {
+static size_t layout_skip_horizontal_space(const BacaLayout *layout, const char *text, size_t offset,
+                                           size_t end) {
     while (offset < end && layout_is_horizontal_space(text[offset])) {
+        if (layout_cancelled(layout)) {
+            break;
+        }
         offset++;
     }
     return offset;
@@ -181,10 +207,16 @@ static bool layout_wrap_preformatted(BacaLayout *layout, size_t block_index, con
     size_t cursor = start;
     size_t target_width = (size_t)layout->width;
     while (cursor < end) {
+        if (layout_cancelled(layout)) {
+            return false;
+        }
         size_t line_start = cursor;
         size_t columns = 0U;
 
         while (cursor < end) {
+            if (layout_cancelled(layout)) {
+                return false;
+            }
             int cell_width = 0;
             size_t next = layout_utf8_next(text, end, cursor, &cell_width);
             size_t added = (size_t)cell_width;
@@ -220,7 +252,13 @@ static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const cha
     bool emitted = false;
 
     while (cursor < end) {
-        cursor = layout_skip_horizontal_space(text, cursor, end);
+        if (layout_cancelled(layout)) {
+            return false;
+        }
+        cursor = layout_skip_horizontal_space(layout, text, cursor, end);
+        if (layout_cancelled(layout)) {
+            return false;
+        }
         if (cursor == end) {
             break;
         }
@@ -235,6 +273,9 @@ static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const cha
         bool wrapped = false;
 
         while (scan < end) {
+            if (layout_cancelled(layout)) {
+                return false;
+            }
             int cell_width = 0;
             size_t next = layout_utf8_next(text, end, scan, &cell_width);
             size_t added = (size_t)cell_width;
@@ -256,7 +297,7 @@ static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const cha
                     next_cursor = next;
                 } else if (last_break != SIZE_MAX && last_break > line_start) {
                     line_end = last_break;
-                    next_cursor = layout_skip_horizontal_space(text, last_break, end);
+                    next_cursor = layout_skip_horizontal_space(layout, text, last_break, end);
                 } else {
                     line_end = scan;
                     next_cursor = scan;
@@ -316,8 +357,14 @@ static bool layout_add_text_block(BacaLayout *layout, size_t block_index, const 
 
     size_t start = 0U;
     for (;;) {
+        if (layout_cancelled(layout)) {
+            return false;
+        }
         size_t end = start;
         while (end < length && text[end] != '\n' && text[end] != '\r') {
+            if (layout_cancelled(layout)) {
+                return false;
+            }
             end++;
         }
 
@@ -348,26 +395,35 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
     int image_rows = 1;
     int indent = 0;
     if (!image->broken && image->intrinsic_width > 0 && image->intrinsic_height > 0) {
-        const long double rows = ceill((long double)image->intrinsic_height * (long double)layout->width /
-                                       ((long double)image->intrinsic_width * 2.0L));
-        if (isfinite(rows) && rows > 1.0L) {
-            image_rows = rows > (long double)BACA_LAYOUT_MAX_IMAGE_ROWS ? BACA_LAYOUT_MAX_IMAGE_ROWS : (int)rows;
+        const long double rows = ceill((long double)image->intrinsic_height * (long double)layout->width *
+                                       (long double)layout->cell_pixel_width /
+                                       ((long double)image->intrinsic_width *
+                                        (long double)layout->cell_pixel_height));
+        if (!isfinite(rows) || rows > (long double)BACA_LAYOUT_MAX_IMAGE_ROWS) {
+            layout_set_error(error, BACA_ERROR_CORRUPT,
+                             "image aspect ratio exceeds the supported per-image row limit of 1024");
+            return false;
+        }
+        if (rows > 1.0L) {
+            image_rows = (int)rows;
         }
     } else if (layout->width > 5) {
         indent = (layout->width - 5) / 2;
     }
 
     size_t extra_rows = (size_t)(image_rows - 1);
-    const size_t remaining_extra = layout->image_extra_rows < BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS
-                                       ? BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS - layout->image_extra_rows
-                                       : 0U;
-    if (extra_rows > remaining_extra) {
-        extra_rows = remaining_extra;
-        image_rows = (int)extra_rows + 1;
+    if (layout->image_extra_rows > BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS ||
+        extra_rows > BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS - layout->image_extra_rows) {
+        layout_set_error(error, BACA_ERROR_CORRUPT,
+                         "aggregate image layout exceeds the supported extra-row limit of 65536");
+        return false;
     }
     layout->image_extra_rows += extra_rows;
 
     for (int row = 0; row < image_rows; ++row) {
+        if (layout_cancelled(layout)) {
+            return false;
+        }
         BacaLayoutLine line = {
             .kind = BACA_LAYOUT_IMAGE,
             .block_index = block_index,
@@ -400,11 +456,55 @@ void baca_layout_free(BacaLayout *layout) {
 
     free(layout->lines);
     free(layout->block_first_line);
+    free(layout->section_first_line);
+    free(layout->block_section);
     *layout = (BacaLayout){0};
 }
 
-bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int width, BacaJustification justification,
-                       BacaError *error) {
+static bool layout_block_visible(const BacaBlock *block, BacaPresentation presentation) {
+    return block->presentation == BACA_PRESENTATION_DEFAULT || presentation == BACA_PRESENTATION_DEFAULT ||
+           block->presentation == presentation;
+}
+
+static bool layout_build_section_indexes(BacaLayout *layout, BacaError *error) {
+    const BacaDocument *document = layout->document;
+    size_t previous_end = 0U;
+    for (size_t section_index = 0U; section_index < document->section_count; ++section_index) {
+        if (layout_cancelled(layout)) {
+            return false;
+        }
+        const BacaSection *section = &document->sections[section_index];
+        if (section->first_block > document->block_count ||
+            section->block_count > document->block_count - section->first_block ||
+            section->first_block < previous_end) {
+            layout_set_error(error, BACA_ERROR_CORRUPT,
+                             "document sections are overlapping or out of range");
+            return false;
+        }
+        size_t first_line = layout->line_count;
+        if (section->first_block < document->block_count) {
+            first_line = layout->block_first_line[section->first_block];
+        }
+        if (layout->line_count > 0U && first_line >= layout->line_count) {
+            first_line = layout->line_count - 1U;
+        }
+        layout->section_first_line[section_index] = first_line;
+        const size_t end = section->first_block + section->block_count;
+        for (size_t block_index = section->first_block; block_index < end; ++block_index) {
+            if (layout_cancelled(layout)) {
+                return false;
+            }
+            layout->block_section[block_index] = section_index;
+        }
+        previous_end = end;
+    }
+    return true;
+}
+
+bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *document, int width,
+                                    BacaJustification justification, BacaPresentation presentation,
+                                    int cell_pixel_width, int cell_pixel_height,
+                                    const atomic_bool *cancel, BacaError *error) {
     if (layout == NULL || document == NULL) {
         layout_set_error(error, BACA_ERROR_ARGUMENT, "layout and document are required");
         return false;
@@ -417,6 +517,12 @@ bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int wid
         layout_set_error(error, BACA_ERROR_ARGUMENT, "invalid text justification");
         return false;
     }
+    if (presentation > BACA_PRESENTATION_REFLOW || cell_pixel_width <= 0 || cell_pixel_height <= 0 ||
+        cell_pixel_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        cell_pixel_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION) {
+        layout_set_error(error, BACA_ERROR_ARGUMENT, "invalid layout presentation or cell pixel dimensions");
+        return false;
+    }
     if (document->block_count > 0U && document->blocks == NULL) {
         layout_set_error(error, BACA_ERROR_CORRUPT, "document block array is missing");
         return false;
@@ -425,20 +531,68 @@ bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int wid
     BacaLayout built = {
         .document = document,
         .width = width > BACA_LAYOUT_MAX_WIDTH ? BACA_LAYOUT_MAX_WIDTH : width,
+        .cell_pixel_width = cell_pixel_width,
+        .cell_pixel_height = cell_pixel_height,
         .justification = justification,
+        .presentation = presentation,
+        .cancel = cancel,
     };
+
+    if (layout_cancelled(&built)) {
+        return false;
+    }
 
     if (document->block_count > 0U) {
         built.block_first_line =
             baca_reallocarray(NULL, document->block_count, sizeof(*built.block_first_line), error);
-        if (built.block_first_line == NULL) {
+        built.block_section = baca_reallocarray(NULL, document->block_count,
+                                                sizeof(*built.block_section), error);
+        if (built.block_first_line == NULL || built.block_section == NULL) {
+            baca_layout_free(&built);
+            return false;
+        }
+        for (size_t block_index = 0U; block_index < document->block_count; ++block_index) {
+            built.block_section[block_index] = SIZE_MAX;
+        }
+    }
+    if (document->section_count > 0U) {
+        if (document->sections == NULL) {
+            baca_layout_free(&built);
+            layout_set_error(error, BACA_ERROR_CORRUPT, "document section array is missing");
+            return false;
+        }
+        built.section_first_line = baca_reallocarray(
+            NULL, document->section_count, sizeof(*built.section_first_line), error);
+        if (built.section_first_line == NULL) {
+            baca_layout_free(&built);
             return false;
         }
     }
 
+    size_t previous_visible = SIZE_MAX;
     for (size_t block_index = 0U; block_index < document->block_count; block_index++) {
+        if (layout_cancelled(&built)) {
+            baca_layout_free(&built);
+            return false;
+        }
         const BacaBlock *block = &document->blocks[block_index];
         built.block_first_line[block_index] = built.line_count;
+        if (!layout_block_visible(block, presentation)) {
+            continue;
+        }
+
+        if (previous_visible != SIZE_MAX && built.line_count > 0U &&
+            built.lines[built.line_count - 1U].kind != BACA_LAYOUT_BLANK &&
+            block->kind != BACA_BLOCK_PAGE_BREAK) {
+            const BacaBlock *previous = &document->blocks[previous_visible];
+            const size_t byte_offset = layout_block_end_offset(previous);
+            if (!layout_add_blank(&built, previous_visible, byte_offset, built.logical_length, error) ||
+                !layout_advance(&built, 1U, error)) {
+                baca_layout_free(&built);
+                return false;
+            }
+            built.block_first_line[block_index] = built.line_count;
+        }
 
         bool ok = false;
         switch (block->kind) {
@@ -462,21 +616,26 @@ bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int wid
             baca_layout_free(&built);
             return false;
         }
-
-        if (block_index + 1U < document->block_count && built.lines[built.line_count - 1U].kind != BACA_LAYOUT_BLANK &&
-            document->blocks[block_index + 1U].kind != BACA_BLOCK_PAGE_BREAK) {
-            size_t byte_offset = layout_block_end_offset(block);
-            if (!layout_add_blank(&built, block_index, byte_offset, built.logical_length, error) ||
-                !layout_advance(&built, 1U, error)) {
-                baca_layout_free(&built);
-                return false;
-            }
-        }
+        previous_visible = block_index;
     }
 
+    if (!layout_build_section_indexes(&built, error)) {
+        baca_layout_free(&built);
+        return false;
+    }
+
+    built.cancel = NULL;
     baca_layout_free(layout);
     *layout = built;
     return true;
+}
+
+bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int width, BacaJustification justification,
+                       BacaError *error) {
+    const BacaPresentation presentation =
+        document == NULL ? BACA_PRESENTATION_DEFAULT : document->default_presentation;
+    return baca_layout_build_presentation(layout, document, width, justification, presentation, 1, 2,
+                                          NULL, error);
 }
 
 static char *layout_allocate_text(size_t length, BacaError *error) {
@@ -579,7 +738,7 @@ char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool ju
     if (justify && layout->justification == BACA_JUSTIFY_FULL && !line->paragraph_end &&
         !block->value.text.preformatted && block->value.text.heading_level == 0U && layout->width > 0) {
         size_t columns = 0U;
-        if (!layout_slice_width(source, 0U, source_length, &columns, error)) {
+        if (!layout_slice_width(layout, source, 0U, source_length, &columns, error)) {
             return NULL;
         }
         gaps = layout_count_gaps(source, source_length);
@@ -680,7 +839,7 @@ static bool layout_find_section(const BacaLayout *layout, const char *target, si
             if (section->first_block >= document->block_count) {
                 return false;
             }
-            *line = layout_clamp_line(layout, layout->block_first_line[section->first_block]);
+            *line = layout_clamp_line(layout, layout->section_first_line[index]);
             return true;
         }
     }
@@ -694,6 +853,63 @@ static bool layout_find_section(const BacaLayout *layout, const char *target, si
     return false;
 }
 
+static size_t layout_image_fraction_line(const BacaLayout *layout, size_t first, double fraction) {
+    first = layout_clamp_line(layout, first);
+    const BacaLayoutLine *line = &layout->lines[first];
+    if (line->kind != BACA_LAYOUT_IMAGE || line->image_rows <= 1 || !isfinite(fraction)) {
+        return first;
+    }
+    if (fraction < 0.0) {
+        fraction = 0.0;
+    } else if (fraction > 1.0) {
+        fraction = 1.0;
+    }
+    const size_t span = (size_t)line->image_rows - 1U;
+    const size_t offset = (size_t)llround(fraction * (double)span);
+    const size_t bounded = offset > span ? span : offset;
+    return layout_clamp_line(layout, bounded > SIZE_MAX - first ? SIZE_MAX : first + bounded);
+}
+
+static bool layout_pdf_target_y(const BacaLayout *layout, const char *target, size_t section_length, double *y) {
+    if (layout->document->format != BACA_FORMAT_PDF || layout->presentation != BACA_PRESENTATION_FIXED ||
+        strncmp(target + section_length, "#y=", 3U) != 0) {
+        return false;
+    }
+    char *end = NULL;
+    const double parsed = g_ascii_strtod(target + section_length + 3U, &end);
+    if (end == target + section_length + 3U || *end != '\0' || !isfinite(parsed) || parsed < 0.0 || parsed > 1.0) {
+        return false;
+    }
+    *y = parsed;
+    return true;
+}
+
+static bool layout_pdf_page_target(const BacaLayout *layout, const char *target, size_t *page,
+                                   size_t *section_length) {
+    static const char prefix[] = "pdf://page/";
+    if (layout->document->format != BACA_FORMAT_PDF ||
+        strncmp(target, prefix, sizeof(prefix) - 1U) != 0) {
+        return false;
+    }
+    size_t value = 0U;
+    size_t offset = sizeof(prefix) - 1U;
+    const size_t first_digit = offset;
+    while (target[offset] >= '0' && target[offset] <= '9') {
+        const size_t digit = (size_t)(target[offset] - '0');
+        if (value > (SIZE_MAX - digit) / 10U) {
+            return false;
+        }
+        value = value * 10U + digit;
+        ++offset;
+    }
+    if (offset == first_digit || (target[offset] != '\0' && target[offset] != '#' && target[offset] != '?')) {
+        return false;
+    }
+    *page = value;
+    *section_length = offset;
+    return true;
+}
+
 size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
     if (layout == NULL || layout->document == NULL || target == NULL || target[0] == '\0' ||
         layout->line_count == 0U ||
@@ -704,6 +920,18 @@ size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
     }
 
     const BacaDocument *document = layout->document;
+    size_t pdf_page = 0U;
+    size_t pdf_section_length = 0U;
+    if (layout_pdf_page_target(layout, target, &pdf_page, &pdf_section_length)) {
+        if (pdf_page >= document->section_count || layout->section_first_line == NULL) {
+            return SIZE_MAX;
+        }
+        const size_t line = layout_clamp_line(layout, layout->section_first_line[pdf_page]);
+        double y = 0.0;
+        return layout_pdf_target_y(layout, target, pdf_section_length, &y)
+                   ? layout_image_fraction_line(layout, line, y)
+                   : line;
+    }
     for (size_t block_index = 0U; block_index < document->block_count; block_index++) {
         const BacaBlock *block = &document->blocks[block_index];
         if (block->kind == BACA_BLOCK_TEXT && block->value.text.anchors != NULL) {
@@ -728,9 +956,39 @@ size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
     size_t section_length = strcspn(target, "#?");
     if (section_length < target_length && section_length > 0U &&
         layout_find_section(layout, target, section_length, &line)) {
+        double y = 0.0;
+        if (layout_pdf_target_y(layout, target, section_length, &y)) {
+            return layout_image_fraction_line(layout, line, y);
+        }
         return line;
     }
     return SIZE_MAX;
+}
+
+size_t baca_layout_section_for_line(const BacaLayout *layout, size_t line, size_t *comparison_count) {
+    if (comparison_count != NULL) {
+        *comparison_count = 0U;
+    }
+    if (layout == NULL || layout->document == NULL || layout->document->section_count == 0U ||
+        layout->section_first_line == NULL || layout->line_count == 0U ||
+        line < layout->section_first_line[0]) {
+        return SIZE_MAX;
+    }
+
+    size_t low = 0U;
+    size_t high = layout->document->section_count;
+    while (low < high) {
+        const size_t middle = low + (high - low) / 2U;
+        if (comparison_count != NULL) {
+            ++*comparison_count;
+        }
+        if (layout->section_first_line[middle] <= line) {
+            low = middle + 1U;
+        } else {
+            high = middle;
+        }
+    }
+    return low == 0U ? SIZE_MAX : low - 1U;
 }
 
 double baca_layout_progress(size_t scroll_line, size_t maximum_scroll) {
@@ -801,6 +1059,76 @@ static bool layout_add_match(BacaSearchMatch **matches, size_t *count, size_t *c
     return true;
 }
 
+static bool layout_search_subject(pcre2_code *regex, pcre2_match_data *match_data,
+                                  pcre2_match_context *match_context, const char *subject,
+                                  size_t subject_length, size_t line, size_t display_prefix,
+                                  size_t block_index, size_t block_base, size_t *attempt_count,
+                                  BacaSearchMatch **matches, size_t *match_count, size_t *match_capacity,
+                                  BacaError *error) {
+    PCRE2_SIZE start_offset = 0U;
+    uint32_t options = 0U;
+    for (;;) {
+        if (*attempt_count >= BACA_SEARCH_ATTEMPT_LIMIT) {
+            layout_set_error(error, BACA_ERROR_ARGUMENT, "search work limit exceeded");
+            return false;
+        }
+        ++*attempt_count;
+        const int result = pcre2_match(regex, (PCRE2_SPTR)subject, (PCRE2_SIZE)subject_length, start_offset,
+                                       options, match_data, match_context);
+        if (result == PCRE2_ERROR_NOMATCH && options != 0U) {
+            options = 0U;
+            if ((size_t)start_offset >= subject_length) {
+                return true;
+            }
+            int ignored_width = 0;
+            start_offset = (PCRE2_SIZE)layout_utf8_next(subject, subject_length, (size_t)start_offset,
+                                                       &ignored_width);
+            continue;
+        }
+        if (result == PCRE2_ERROR_NOMATCH) {
+            return true;
+        }
+        if (result < 0) {
+            BacaErrorCode code = BACA_ERROR_CORRUPT;
+            if (result == PCRE2_ERROR_NOMEMORY) {
+                code = BACA_ERROR_MEMORY;
+            } else if (result == PCRE2_ERROR_MATCHLIMIT || result == PCRE2_ERROR_DEPTHLIMIT) {
+                code = BACA_ERROR_ARGUMENT;
+            }
+            layout_set_pcre_error(error, code, "regex matching failed", result, (size_t)start_offset);
+            return false;
+        }
+
+        PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
+        const size_t match_start = (size_t)ovector[0];
+        const size_t match_end = (size_t)ovector[1];
+        if (!layout_add_match(matches, match_count, match_capacity, line, display_prefix + match_start,
+                              display_prefix + match_end, block_index, block_base + match_start, error)) {
+            return false;
+        }
+        start_offset = ovector[1];
+        options = ovector[0] == ovector[1] ? PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED : 0U;
+    }
+}
+
+static size_t layout_section_line_for_block_offset(const BacaLayout *layout, size_t block_index,
+                                                    size_t block_offset, size_t block_length) {
+    const BacaDocument *document = layout->document;
+    if (block_index < document->block_count && layout->block_section != NULL &&
+        layout->section_first_line != NULL) {
+        const size_t section_index = layout->block_section[block_index];
+        if (section_index < document->section_count) {
+            const size_t first = layout_clamp_line(layout, layout->section_first_line[section_index]);
+            const double fraction = block_length == 0U
+                                        ? 0.0
+                                        : (double)(block_offset > block_length ? block_length : block_offset) /
+                                              (double)block_length;
+            return layout_image_fraction_line(layout, first, fraction);
+        }
+    }
+    return layout_clamp_line(layout, layout->block_first_line[block_index]);
+}
+
 bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearchMatch **matches,
                         size_t *match_count, BacaError *error) {
     if (matches == NULL || match_count == NULL) {
@@ -854,6 +1182,10 @@ bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearc
 
     for (size_t line_index = 0U; line_index < layout->line_count; line_index++) {
         const BacaLayoutLine *line = &layout->lines[line_index];
+        if (layout->document != NULL && layout->document->format == BACA_FORMAT_PDF &&
+            line->kind != BACA_LAYOUT_TEXT) {
+            continue;
+        }
         line_text = baca_layout_line_text(layout, line_index, false, error);
         if (line_text == NULL) {
             goto fail;
@@ -866,60 +1198,37 @@ bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearc
         }
         const char *subject = line_text + prefix;
         size_t subject_length = line_length - prefix;
-        PCRE2_SIZE start_offset = 0U;
-        uint32_t options = 0U;
-        for (;;) {
-            if (attempt_count >= BACA_SEARCH_ATTEMPT_LIMIT) {
-                layout_set_error(error, BACA_ERROR_ARGUMENT, "search work limit exceeded");
-                goto fail;
-            }
-            ++attempt_count;
-            int result = pcre2_match(regex, (PCRE2_SPTR)subject, (PCRE2_SIZE)subject_length, start_offset, options,
-                                     match_data, match_context);
-            if (result == PCRE2_ERROR_NOMATCH && options != 0U) {
-                options = 0U;
-                if ((size_t)start_offset >= subject_length) {
-                    break;
-                }
-                int ignored_width = 0;
-                start_offset = (PCRE2_SIZE)layout_utf8_next(subject, subject_length, (size_t)start_offset,
-                                                             &ignored_width);
-                continue;
-            }
-            if (result == PCRE2_ERROR_NOMATCH) {
-                break;
-            }
-            if (result < 0) {
-                BacaErrorCode code = BACA_ERROR_CORRUPT;
-                if (result == PCRE2_ERROR_NOMEMORY) {
-                    code = BACA_ERROR_MEMORY;
-                } else if (result == PCRE2_ERROR_MATCHLIMIT || result == PCRE2_ERROR_DEPTHLIMIT) {
-                    code = BACA_ERROR_ARGUMENT;
-                }
-                layout_set_pcre_error(error, code, "regex matching failed", result, (size_t)start_offset);
-                goto fail;
-            }
-
-            PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
-            size_t match_start = (size_t)ovector[0];
-            size_t match_end = (size_t)ovector[1];
-            size_t block_offset = 0U;
-            if (line->kind == BACA_LAYOUT_TEXT) {
-                size_t source_length = line->byte_end - line->byte_start;
-                size_t relative = match_start < source_length ? match_start : source_length;
-                block_offset = line->byte_start + relative;
-            }
-            if (!layout_add_match(&found, &found_count, &found_capacity, line_index, prefix + match_start,
-                                  prefix + match_end, line->block_index, block_offset, error)) {
-                goto fail;
-            }
-
-            start_offset = ovector[1];
-            options = ovector[0] == ovector[1] ? PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED : 0U;
+        if (!layout_search_subject(regex, match_data, match_context, subject, subject_length, line_index, prefix,
+                                   line->block_index, line->byte_start, &attempt_count, &found, &found_count,
+                                   &found_capacity, error)) {
+            goto fail;
         }
 
         free(line_text);
         line_text = NULL;
+    }
+
+    if (layout->document != NULL && layout->document->format == BACA_FORMAT_PDF &&
+        layout->presentation == BACA_PRESENTATION_FIXED) {
+        for (size_t block_index = 0U; block_index < layout->document->block_count; ++block_index) {
+            const BacaBlock *block = &layout->document->blocks[block_index];
+            if (block->kind != BACA_BLOCK_TEXT || layout_block_visible(block, layout->presentation)) {
+                continue;
+            }
+            const char *subject = block->value.text.text == NULL ? "" : block->value.text.text;
+            const size_t subject_length = strlen(subject);
+            const size_t first_match = found_count;
+            const size_t line = layout_section_line_for_block_offset(layout, block_index, 0U, subject_length);
+            if (!layout_search_subject(regex, match_data, match_context, subject, subject_length, line, 0U,
+                                        block_index, 0U, &attempt_count, &found, &found_count, &found_capacity,
+                                        error)) {
+                goto fail;
+            }
+            for (size_t match_index = first_match; match_index < found_count; ++match_index) {
+                found[match_index].line = layout_section_line_for_block_offset(
+                    layout, block_index, found[match_index].block_offset, subject_length);
+            }
+        }
     }
 
     pcre2_match_context_free(match_context);

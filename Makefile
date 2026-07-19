@@ -21,12 +21,15 @@ SOURCES = \
 	src/layout.c \
 	src/library.c \
 	src/mobi.c \
+	src/pdf.c \
 	src/platform.c \
 	src/tui.c \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_config.c tests/test_database.c \
 	tests/test_document.c tests/test_graphics.c tests/test_layout.c tests/test_library.c tests/test_support.c
+
+TEST_SOURCES += tests/test_pdf.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)
 LIB_OBJECTS = $(filter-out build/main.o,$(OBJECTS))
 

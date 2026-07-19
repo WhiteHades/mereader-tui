@@ -54,6 +54,11 @@ typedef struct FdWriter {
   int fd;
 } FdWriter;
 
+typedef struct ColorPageRenderer {
+  const char *color;
+  size_t renders;
+} ColorPageRenderer;
+
 static bool capture_write(void *user_data, const void *data, size_t length) {
   Capture *capture = user_data;
   if (capture->fail_writes) {
@@ -368,6 +373,48 @@ static bool append_cache_svg(BacaDocument *document, const char *color,
       color);
   return length > 0 && (size_t)length < sizeof(uri) &&
          append_image_uri(document, uri, color, error);
+}
+
+static bool render_color_page(BacaDocument *document, int page_index, int width,
+                              int height, uint32_t background,
+                              BacaResource *resource, BacaError *error) {
+  (void)background;
+  ColorPageRenderer *renderer = document->backend;
+  char svg[256] = {0};
+  const int length = snprintf(
+      svg, sizeof(svg),
+      "<svg xmlns='http://www.w3.org/2000/svg' width='%d' height='%d'>"
+      "<rect width='100%%' height='100%%' fill='%s'/></svg>",
+      width, height, renderer->color);
+  if (page_index != 0 || length <= 0 || (size_t)length >= sizeof(svg)) {
+    baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid color page render");
+    return false;
+  }
+  resource->data = (unsigned char *)baca_strndup(svg, (size_t)length, error);
+  resource->mime_type = baca_strdup("image/svg+xml", error);
+  if (resource->data == NULL || resource->mime_type == NULL) {
+    baca_resource_free(resource);
+    return false;
+  }
+  resource->length = (size_t)length;
+  ++renderer->renders;
+  return true;
+}
+
+static const BacaDocumentOps color_page_ops = {
+    .render_page = render_color_page,
+};
+
+static bool append_color_page(BacaDocument *document,
+                              ColorPageRenderer *renderer,
+                              BacaError *error) {
+  if (!append_image_uri(document, "page://0", renderer->color, error)) {
+    return false;
+  }
+  document->blocks[0].value.image.page_index = 0;
+  document->backend = renderer;
+  document->ops = &color_page_ops;
+  return true;
 }
 
 static BacaTestResult test_mode_selection(void) {
@@ -727,6 +774,56 @@ static BacaTestResult test_repeated_uri_dedupe_and_context_ids(void) {
   baca_graphics_free(second_context);
   baca_graphics_free(first_context);
   baca_document_close(&document);
+  return BACA_TEST_PASS;
+}
+
+static BacaTestResult test_cache_is_scoped_to_document_address_and_identity(void) {
+  BacaDocument red_document = {0};
+  BacaDocument blue_document = {0};
+  ColorPageRenderer red_renderer = {.color = "red"};
+  ColorPageRenderer blue_renderer = {.color = "blue"};
+  BacaError error = {0};
+  TEST_ASSERT(append_color_page(&red_document, &red_renderer, &error));
+  TEST_ASSERT(append_color_page(&blue_document, &blue_renderer, &error));
+
+  BacaGraphicsContext *context = baca_graphics_create(
+      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  TEST_ASSERT(context != NULL);
+  BacaGraphicsSurface red = {0};
+  BacaGraphicsSurface blue = {0};
+  TEST_ASSERT_MSG(baca_graphics_prepare(context, &red_document, 0U, 1, 1,
+                                        &red, &error),
+                  "%s", error.message);
+  TEST_ASSERT_MSG(baca_graphics_prepare(context, &blue_document, 0U, 1, 1,
+                                        &blue, &error),
+                  "%s", error.message);
+  TEST_ASSERT(red.pixels[0] > 200U && red.pixels[1] < 50U &&
+              red.pixels[2] < 50U);
+  TEST_ASSERT(blue.pixels[0] < 50U && blue.pixels[1] < 50U &&
+              blue.pixels[2] > 200U);
+  TEST_ASSERT_SIZE(red_renderer.renders, 1U);
+  TEST_ASSERT_SIZE(blue_renderer.renders, 1U);
+  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 2U);
+  TEST_ASSERT(red.image_id != blue.image_id);
+
+  red_document.instance_id = 1U;
+  red_renderer.color = "#00ff00";
+  BacaGraphicsSurface reopened = {0};
+  TEST_ASSERT_MSG(baca_graphics_prepare(context, &red_document, 0U, 1, 1,
+                                        &reopened, &error),
+                  "%s", error.message);
+  TEST_ASSERT(reopened.pixels[0] < 50U && reopened.pixels[1] > 200U &&
+              reopened.pixels[2] < 50U);
+  TEST_ASSERT_SIZE(red_renderer.renders, 2U);
+  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 3U);
+  TEST_ASSERT(reopened.image_id != red.image_id);
+
+  baca_graphics_surface_release(&reopened);
+  baca_graphics_surface_release(&blue);
+  baca_graphics_surface_release(&red);
+  baca_graphics_free(context);
+  baca_document_close(&blue_document);
+  baca_document_close(&red_document);
   return BACA_TEST_PASS;
 }
 
@@ -1093,6 +1190,8 @@ const BacaTestCase *baca_graphics_test_cases(size_t *count) {
        .function = test_cache_resize_lru_memory_and_pairs},
       {.name = "repeated_uri_dedupe_and_context_ids",
        .function = test_repeated_uri_dedupe_and_context_ids},
+      {.name = "cache_is_scoped_to_document_address_and_identity",
+       .function = test_cache_is_scoped_to_document_address_and_identity},
       {.name = "bounded_decode_and_hostile_geometry",
        .function = test_bounded_decode_and_hostile_geometry},
       {.name = "palette_bounds_and_local_error_isolation",
