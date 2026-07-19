@@ -8,8 +8,8 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Features
 
-- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, PNG, JPEG, GIF, WebP, BMP,
-  and SVG
+- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, CBZ, CBR, CB7, PNG, JPEG,
+  GIF, WebP, BMP, and SVG
 - Remembers last reading position
 - Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
@@ -23,8 +23,8 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 ## Requirements
 
 - A C23 compiler
-- `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, PCRE2, GdkPixbuf,
-  Poppler GLib, and Cairo
+- `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, libarchive, PCRE2,
+  GdkPixbuf, Poppler GLib, and Cairo
 - `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
   MOBI and AZW-family books
 
@@ -89,6 +89,20 @@ files above the 16 MiB snapshot limit are streamed in bounded chunks. Exports ar
 limited to 256 MiB to prevent temporary-storage exhaustion. A non-PDF image whose
 aspect ratio would exceed 1,024 terminal rows is shown as a one-row `IMAGE`
 placeholder rather than failing or being squashed.
+
+## Reading Comics
+
+CBZ (ZIP), CBR (RAR/RAR5), and CB7 (7-Zip) archives are read directly through
+libarchive without extracting the book to disk. Image pages use a case-insensitive
+natural filename order, so `2.png` precedes `10.png`. Directories, links, unsafe
+paths, and non-image members are ignored. The table of contents uses the original
+page filenames.
+
+Comic archives are limited to 20,000 members, 10,000 image pages, 16 MiB per page,
+1 GiB of declared image data, and 8 MiB of retained member names. Encrypted archives
+are not supported. The opened archive descriptor remains authoritative for the
+reading session, so replacing or deleting the path does not redirect page loads to
+another file.
 
 ## Reading PDFs
 

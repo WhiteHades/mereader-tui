@@ -1129,6 +1129,11 @@ static BacaDocumentFormat detect_format(const char *path, const char *extension,
     if (magic_length >= 5 && memcmp(magic, "%PDF-", 5) == 0) {
         return BACA_FORMAT_PDF;
     }
+    if ((magic_length >= 7U && memcmp(magic, "Rar!\032\007\000", 7U) == 0) ||
+        (magic_length >= 8U && memcmp(magic, "Rar!\032\007\001\000", 8U) == 0) ||
+        (magic_length >= 6U && memcmp(magic, "7z\274\257\047\034", 6U) == 0)) {
+        return BACA_FORMAT_COMIC;
+    }
     if ((magic_length >= 8U && memcmp(magic, "\211PNG\r\n\032\n", 8U) == 0) ||
         (magic_length >= 3U && memcmp(magic, "\377\330\377", 3U) == 0) ||
         (magic_length >= 6U &&
@@ -1370,7 +1375,7 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
     } else if (opened.format == BACA_FORMAT_IMAGE) {
         success = baca_image_open(&opened, opened.path, &detected_identity, error);
     } else if (opened.format == BACA_FORMAT_COMIC) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "comic archive support is not implemented yet");
+        success = baca_comic_open(&opened, opened.path, &detected_identity, error);
     } else if (opened.format == BACA_FORMAT_TEXT || opened.format == BACA_FORMAT_FB2) {
         baca_error_set(error, BACA_ERROR_UNSUPPORTED, "%s support is not implemented yet",
                        baca_document_format_name(opened.format));
