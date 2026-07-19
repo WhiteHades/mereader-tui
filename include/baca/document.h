@@ -142,6 +142,7 @@ struct BacaDocument;
 typedef struct BacaDocumentOps {
     bool (*load_resource)(struct BacaDocument *document, const char *uri, BacaResource *resource,
                           BacaError *error);
+    bool (*resource_size)(const struct BacaDocument *document, const char *uri, size_t *size);
     bool (*render_page)(struct BacaDocument *document, int page_index, int width, int height,
                         uint32_t background, BacaResource *resource, BacaError *error);
     void (*close)(struct BacaDocument *document);

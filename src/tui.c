@@ -1,4 +1,5 @@
 #include "baca/app.h"
+#include "baca/document_backend.h"
 #include "baca/graphics.h"
 #include "baca/platform.h"
 
@@ -1342,6 +1343,7 @@ static bool image_has_visible_render(const BacaTuiState *state,
                                      const BacaLayoutLine *line) {
   if (line->kind != BACA_LAYOUT_IMAGE ||
       line->block_index >= state->app->document.block_count ||
+      line->image_placeholder ||
       state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
       state->graphics == NULL) {
     return false;
@@ -1401,7 +1403,8 @@ static bool prepare_image_placement(BacaTuiState *state,
                                     BacaGraphicsSurface *surface,
                                     BacaGraphicsPlacement *placement,
                                     BacaError *error) {
-  if (state->graphics == NULL || line->block_index >= state->app->document.block_count) {
+  if (state->graphics == NULL || line->image_placeholder ||
+      line->block_index >= state->app->document.block_count) {
     return false;
   }
   if (pdf_render_failure_matches(state, line->block_index, line)) {
@@ -1574,7 +1577,7 @@ static void draw_document_line(BacaTuiState *state, int row,
         line->block_index < state->app->document.block_count
             ? &state->app->document.blocks[line->block_index].value.image
             : NULL;
-    if (image != NULL && !image->broken &&
+    if (image != NULL && !image->broken && !line->image_placeholder &&
         state->image_mode == BACA_IMAGE_MODE_ANSI &&
         !state->raw_truecolor &&
         first_visible_image_line(state, row, line_index)) {
@@ -1586,7 +1589,7 @@ static void draw_document_line(BacaTuiState *state, int row,
         }
       }
     }
-    if (image == NULL || image->broken ||
+    if (image == NULL || image->broken || line->image_placeholder ||
         state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
         state->image_mode == BACA_IMAGE_MODE_KITTY) {
       draw_image_placeholder(state, line, row, line_index);
@@ -1957,6 +1960,7 @@ static void draw_terminal_graphics(BacaTuiState *state) {
     }
     const BacaLayoutLine *line = &state->app->layout.lines[line_index];
     if (line->kind != BACA_LAYOUT_IMAGE ||
+        line->image_placeholder ||
         !first_visible_image_line(state, row, line_index) ||
         line->block_index >= state->app->document.block_count ||
         state->app->document.blocks[line->block_index].value.image.broken) {
@@ -2402,10 +2406,46 @@ static void open_image(BacaTuiState *state, size_t block_index) {
   const BacaImageBlock *image =
       &state->app->document.blocks[block_index].value.image;
   BacaError error = {0};
-  if (image->page_index >= 0 && state->app->document.format == BACA_FORMAT_PDF) {
+  const bool standalone_image =
+      state->app->document.format == BACA_FORMAT_IMAGE && image->uri != NULL &&
+      state->app->document.path != NULL &&
+      strcmp(image->uri, state->app->document.path) == 0;
+  if (image->page_index >= 0 &&
+      state->app->document.format == BACA_FORMAT_PDF) {
     if (!open_external(state, state->app->document.path, NULL, &error)) {
       open_alert(state, error.message);
     }
+    return;
+  }
+  if (standalone_image) {
+    BacaResource empty_resource = {0};
+    char *directory = baca_make_temp_directory("baca-image-", &error);
+    char *filename = directory == NULL
+                         ? NULL
+                         : resource_filename(image, &empty_resource, &error);
+    char *path = filename == NULL ? NULL
+                                  : baca_path_join(directory, filename, &error);
+    if (path == NULL ||
+        !baca_image_export_original(&state->app->document, path, &error)) {
+      open_alert(state, error.message[0] != '\0'
+                            ? error.message
+                            : "Cannot export the original image");
+    } else if (!remember_temp_directory(state, directory, &error)) {
+      open_alert(state, error.message);
+    } else {
+      directory = NULL;
+      if (!open_external(state, path,
+                         state->app->config.preferred_image_viewer, &error)) {
+        open_alert(state, error.message);
+      }
+    }
+    if (directory != NULL) {
+      BacaError ignored = {0};
+      (void)baca_remove_tree(directory, &ignored);
+    }
+    free(directory);
+    free(filename);
+    free(path);
     return;
   }
   BacaResource resource = {0};

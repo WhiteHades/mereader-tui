@@ -18,6 +18,7 @@ SOURCES = \
 	src/epub.c \
 	src/graphics.c \
 	src/html.c \
+	src/image.c \
 	src/layout.c \
 	src/library.c \
 	src/mobi.c \

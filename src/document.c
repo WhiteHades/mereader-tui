@@ -3,10 +3,13 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <zip.h>
 
@@ -940,20 +943,55 @@ static bool extension_is(const char *extension, const char *expected) {
 }
 
 static bool read_magic(const char *path, unsigned char *buffer, size_t capacity, size_t *length,
-                       BacaError *error) {
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
-        baca_error_set(error, BACA_ERROR_IO, "could not open %s: %s", path, strerror(errno));
+                       struct stat *identity, BacaError *error) {
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    if (descriptor < 0) {
+        const int saved_errno = errno;
+        const BacaErrorCode code = saved_errno == ENOENT || saved_errno == ENOTDIR
+                                       ? BACA_ERROR_NOT_FOUND
+                                       : BACA_ERROR_IO;
+        baca_error_set(error, code, "could not open %s: %s", path, strerror(saved_errno));
         return false;
     }
-    size_t bytes = fread(buffer, 1, capacity, file);
-    if (ferror(file) != 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not read %s: %s", path, strerror(errno));
-        fclose(file);
+
+    struct stat status;
+    if (fstat(descriptor, &status) != 0) {
+        const int saved_errno = errno;
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_IO, "could not inspect %s: %s", path, strerror(saved_errno));
         return false;
     }
-    fclose(file);
-    *length = bytes;
+    if (!S_ISREG(status.st_mode)) {
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "input is not a regular file: %s", path);
+        return false;
+    }
+
+    size_t offset = 0U;
+    while (offset < capacity) {
+        const ssize_t count = read(descriptor, buffer + offset, capacity - offset);
+        if (count > 0) {
+            offset += (size_t)count;
+            continue;
+        }
+        if (count == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        const int saved_errno = errno;
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_IO, "could not read %s: %s", path, strerror(saved_errno));
+        return false;
+    }
+    if (close(descriptor) != 0) {
+        const int saved_errno = errno;
+        baca_error_set(error, BACA_ERROR_IO, "could not close %s: %s", path, strerror(saved_errno));
+        return false;
+    }
+    *length = offset;
+    *identity = status;
     return true;
 }
 
@@ -1020,8 +1058,64 @@ static BacaDocumentFormat extension_format(const char *extension) {
     return BACA_FORMAT_UNKNOWN;
 }
 
+static bool magic_starts_with(const unsigned char *magic, size_t magic_length, size_t offset,
+                              const char *value, size_t value_length) {
+    return offset <= magic_length && value_length <= magic_length - offset &&
+           memcmp(magic + offset, value, value_length) == 0;
+}
+
+static size_t magic_find(const unsigned char *magic, size_t magic_length, size_t offset,
+                         const char *value, size_t value_length) {
+    if (value_length == 0U || offset > magic_length || value_length > magic_length - offset) {
+        return SIZE_MAX;
+    }
+    for (size_t index = offset; index <= magic_length - value_length; ++index) {
+        if (memcmp(magic + index, value, value_length) == 0) {
+            return index;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static bool magic_svg(const unsigned char *magic, size_t magic_length) {
+    size_t offset = 0U;
+    if (magic_length >= 3U && memcmp(magic, "\xef\xbb\xbf", 3U) == 0) {
+        offset = 3U;
+    }
+    for (;;) {
+        while (offset < magic_length &&
+               (magic[offset] == ' ' || magic[offset] == '\t' || magic[offset] == '\r' ||
+                magic[offset] == '\n' || magic[offset] == '\f')) {
+            ++offset;
+        }
+        if (magic_starts_with(magic, magic_length, offset, "<?xml", 5U)) {
+            const size_t end = magic_find(magic, magic_length, offset + 5U, "?>", 2U);
+            if (end == SIZE_MAX) {
+                return false;
+            }
+            offset = end + 2U;
+            continue;
+        }
+        if (magic_starts_with(magic, magic_length, offset, "<!--", 4U)) {
+            const size_t end = magic_find(magic, magic_length, offset + 4U, "-->", 3U);
+            if (end == SIZE_MAX) {
+                return false;
+            }
+            offset = end + 3U;
+            continue;
+        }
+        break;
+    }
+    if (!magic_starts_with(magic, magic_length, offset, "<svg", 4U) || offset + 4U >= magic_length) {
+        return false;
+    }
+    const unsigned char delimiter = magic[offset + 4U];
+    return delimiter == ' ' || delimiter == '\t' || delimiter == '\r' || delimiter == '\n' ||
+           delimiter == '\f' || delimiter == '>' || delimiter == '/' || delimiter == ':';
+}
+
 static BacaDocumentFormat detect_format(const char *path, const char *extension, const unsigned char *magic,
-                                         size_t magic_length) {
+                                          size_t magic_length) {
     if (magic_length >= 68 && (memcmp(magic + 60, "BOOKMOBI", 8) == 0 ||
                                memcmp(magic + 60, "TEXtREAd", 8) == 0)) {
         return extension_is(extension, ".azw") || extension_is(extension, ".azw3") ||
@@ -1035,9 +1129,13 @@ static BacaDocumentFormat detect_format(const char *path, const char *extension,
     if (magic_length >= 5 && memcmp(magic, "%PDF-", 5) == 0) {
         return BACA_FORMAT_PDF;
     }
-    if ((magic_length >= 8 && memcmp(magic, "\211PNG\r\n\032\n", 8) == 0) ||
-        (magic_length >= 3 && memcmp(magic, "\377\330\377", 3) == 0) ||
-        (magic_length >= 6 && (memcmp(magic, "GIF87a", 6) == 0 || memcmp(magic, "GIF89a", 6) == 0))) {
+    if ((magic_length >= 8U && memcmp(magic, "\211PNG\r\n\032\n", 8U) == 0) ||
+        (magic_length >= 3U && memcmp(magic, "\377\330\377", 3U) == 0) ||
+        (magic_length >= 6U &&
+         (memcmp(magic, "GIF87a", 6U) == 0 || memcmp(magic, "GIF89a", 6U) == 0)) ||
+        (magic_length >= 12U && memcmp(magic, "RIFF", 4U) == 0 &&
+         memcmp(magic + 8U, "WEBP", 4U) == 0) ||
+        (magic_length >= 2U && memcmp(magic, "BM", 2U) == 0) || magic_svg(magic, magic_length)) {
         return BACA_FORMAT_IMAGE;
     }
     return extension_format(extension);
@@ -1145,34 +1243,12 @@ static bool data_uri_probe_size(const char *uri, size_t *size) {
     return true;
 }
 
-static bool archive_probe_size(zip_t *archive, const char *uri, size_t *size) {
-    if (archive == NULL) {
-        return false;
+static bool image_probe_size(const BacaDocument *document, const char *uri, size_t *size) {
+    if (strlen(uri) >= 5U && ascii_case_equal_n(uri, 5U, "data:")) {
+        return data_uri_probe_size(uri, size);
     }
-    BacaError ignored = {0};
-    char *member_path = baca_document_uri_path(uri, &ignored);
-    if (member_path == NULL) {
-        return false;
-    }
-    zip_int64_t member_index = zip_name_locate(archive, member_path, ZIP_FL_ENC_GUESS);
-    free(member_path);
-    if (member_index < 0) {
-        return false;
-    }
-    zip_stat_t stat;
-    zip_stat_init(&stat);
-    if (zip_stat_index(archive, (zip_uint64_t) member_index, ZIP_FL_ENC_GUESS, &stat) != 0 ||
-        (stat.valid & ZIP_STAT_SIZE) == 0 || stat.size > (zip_uint64_t) SIZE_MAX) {
-        return false;
-    }
-    *size = (size_t) stat.size;
-    return true;
-}
-
-static bool image_probe_size(zip_t *archive, const char *uri, size_t *size) {
-    return strlen(uri) >= 5U && ascii_case_equal_n(uri, 5U, "data:") ?
-               data_uri_probe_size(uri, size) :
-               archive_probe_size(archive, uri, size);
+    return document->ops != NULL && document->ops->resource_size != NULL &&
+           document->ops->resource_size(document, uri, size);
 }
 
 void baca_document_probe_images(BacaDocument *document, bool enabled) {
@@ -1203,11 +1279,6 @@ void baca_document_probe_images(BacaDocument *document, bool enabled) {
     if (probes == NULL) {
         return;
     }
-    zip_t *archive = NULL;
-    if (document->path != NULL) {
-        int zip_error = 0;
-        archive = zip_open(document->path, ZIP_RDONLY, &zip_error);
-    }
     size_t probe_count = 0U;
     size_t probe_bytes = 0U;
     for (size_t index = 0U; index < document->block_count; ++index) {
@@ -1234,7 +1305,7 @@ void baca_document_probe_images(BacaDocument *document, bool enabled) {
         BacaError ignored = {0};
         BacaResource resource = {0};
         size_t resource_size = 0U;
-        if (image_probe_size(archive, image->uri, &resource_size) &&
+        if (image_probe_size(document, image->uri, &resource_size) &&
             resource_size <= BACA_GRAPHICS_MAX_INPUT_BYTES &&
             resource_size <= BACA_GRAPHICS_MAX_PROBE_BYTES - probe_bytes) {
             probe_bytes += resource_size;
@@ -1256,9 +1327,6 @@ void baca_document_probe_images(BacaDocument *document, bool enabled) {
             .height = image->intrinsic_height,
             .broken = image->broken,
         };
-    }
-    if (archive != NULL) {
-        zip_discard(archive);
     }
     free(probes);
 }
@@ -1282,9 +1350,10 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
         return false;
     }
 
-    unsigned char magic[80] = {0};
+    unsigned char magic[1024] = {0};
     size_t magic_length = 0;
-    if (!read_magic(opened.path, magic, sizeof(magic), &magic_length, error)) {
+    struct stat detected_identity;
+    if (!read_magic(opened.path, magic, sizeof(magic), &magic_length, &detected_identity, error)) {
         baca_document_close(&opened);
         return false;
     }
@@ -1299,7 +1368,7 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
     } else if (opened.format == BACA_FORMAT_PDF) {
         success = baca_pdf_open(&opened, opened.path, error);
     } else if (opened.format == BACA_FORMAT_IMAGE) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "image document support is not implemented yet");
+        success = baca_image_open(&opened, opened.path, &detected_identity, error);
     } else if (opened.format == BACA_FORMAT_COMIC) {
         baca_error_set(error, BACA_ERROR_UNSUPPORTED, "comic archive support is not implemented yet");
     } else if (opened.format == BACA_FORMAT_TEXT || opened.format == BACA_FORMAT_FB2) {

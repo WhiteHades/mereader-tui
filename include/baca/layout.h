@@ -26,6 +26,7 @@ typedef struct BacaLayoutLine {
     int indent;
     int image_row;
     int image_rows;
+    bool image_placeholder;
     bool paragraph_end;
 } BacaLayoutLine;
 

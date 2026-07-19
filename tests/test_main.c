@@ -5,6 +5,11 @@
 #include <stdlib.h>
 
 int main(void) {
+    if (getenv("BACA_IMAGE_PTY_CHILD") != NULL) {
+        const int result = baca_image_pty_child();
+        cairo_debug_reset_static_data();
+        return result;
+    }
     if (getenv("BACA_PDF_PTY_CHILD") != NULL) {
         const int result = baca_pdf_pty_child();
         cairo_debug_reset_static_data();

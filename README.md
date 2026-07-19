@@ -8,7 +8,8 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Features
 
-- Formats supported: EPUB, EPUB3, MOBI, AZW, and PDF
+- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, PNG, JPEG, GIF, WebP, BMP,
+  and SVG
 - Remembers last reading position
 - Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
@@ -40,7 +41,7 @@ sudo make PREFIX=/usr/local install
 # open the library
 baca
 
-# open an ebook or PDF directly
+# open an ebook, PDF, or image directly
 baca path/to/your/ebook.epub
 
 # print reading history without opening the TUI
@@ -63,14 +64,31 @@ Quitting a reader opened from the library returns to the refreshed library.
 
 ## Opening an Image
 
+PNG, JPEG, GIF, WebP, BMP, and SVG files can be opened directly as one-image
+documents when the corresponding GdkPixbuf loader is available. PNG, JPEG, GIF,
+WebP, and BMP signatures are recognized from file contents. SVG markup is
+recognized within a bounded 1 KiB prefix after an optional UTF-8 BOM, whitespace,
+XML declaration, and comments. The extension is retained as a fallback. The
+filename is used as the document title in reading history.
+
 `ImageMode=auto` uses the Kitty graphics protocol in Ghostty and Kitty, true-color
 ANSI half blocks in other color terminals, and a text placeholder when neither is
 available. Images are clipped as they scroll, so partially visible images do not
 break the reading flow.
 
 Click a visible image or its `IMAGE` fallback to open the original resource with
-the configured system viewer. Corrupt, oversized, or unsupported images remain a
-placeholder instead of preventing the book from opening.
+the configured system viewer. Corrupt, oversized, animated, or otherwise
+undecodable files in a supported format remain a placeholder instead of preventing
+the document from opening. A direct image up to the 16 MiB decode limit is captured
+at open and decoded from an immutable in-session compressed-byte snapshot, so
+replacing its path or editing the file in place does not change later probes or
+renders. Larger files do not retain compressed bytes and remain placeholders, but
+their original descriptor stays open. Opening any direct image writes a stable,
+private named copy under Baca's temporary directory for the configured viewer;
+files above the 16 MiB snapshot limit are streamed in bounded chunks. Exports are
+limited to 256 MiB to prevent temporary-storage exhaustion. A non-PDF image whose
+aspect ratio would exceed 1,024 terminal rows is shown as a one-row `IMAGE`
+placeholder rather than failing or being squashed.
 
 ## Reading PDFs
 
@@ -120,7 +138,7 @@ Pretty = no
 PageScrollDuration = 0.2
 
 # auto, kitty, ansi, or placeholder
-# oversized, animated, or corrupt images are shown as placeholders
+# oversized, over-tall, animated, or corrupt images are shown as placeholders
 # PDF fixed-page rendering follows this mode; press v for reflowable text
 ImageMode = auto
 

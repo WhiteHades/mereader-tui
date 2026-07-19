@@ -391,23 +391,29 @@ static bool layout_add_text_block(BacaLayout *layout, size_t block_index, const 
 }
 
 static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const BacaImageBlock *image,
-                                   BacaError *error) {
+                                    BacaError *error) {
     int image_rows = 1;
     int indent = 0;
-    if (!image->broken && image->intrinsic_width > 0 && image->intrinsic_height > 0) {
+    bool image_placeholder =
+        image->broken || image->intrinsic_width <= 0 || image->intrinsic_height <= 0;
+    if (!image_placeholder) {
         const long double rows = ceill((long double)image->intrinsic_height * (long double)layout->width *
                                        (long double)layout->cell_pixel_width /
                                        ((long double)image->intrinsic_width *
-                                        (long double)layout->cell_pixel_height));
+                                         (long double)layout->cell_pixel_height));
         if (!isfinite(rows) || rows > (long double)BACA_LAYOUT_MAX_IMAGE_ROWS) {
-            layout_set_error(error, BACA_ERROR_CORRUPT,
-                             "image aspect ratio exceeds the supported per-image row limit of 1024");
-            return false;
+            if (layout->document->format == BACA_FORMAT_PDF) {
+                layout_set_error(error, BACA_ERROR_CORRUPT,
+                                 "image aspect ratio exceeds the supported per-image row limit of 1024");
+                return false;
+            }
+            image_placeholder = true;
         }
-        if (rows > 1.0L) {
+        if (!image_placeholder && rows > 1.0L) {
             image_rows = (int)rows;
         }
-    } else if (layout->width > 5) {
+    }
+    if (image_placeholder && layout->width > 5) {
         indent = (layout->width - 5) / 2;
     }
 
@@ -433,6 +439,7 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
             .indent = indent,
             .image_row = row,
             .image_rows = image_rows,
+            .image_placeholder = image_placeholder,
             .paragraph_end = row + 1 == image_rows,
         };
         if (!layout_add_line(layout, line, error)) {

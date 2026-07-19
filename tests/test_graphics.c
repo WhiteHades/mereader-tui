@@ -1,7 +1,9 @@
 #include "test_support.h"
 
+#include "baca/app.h"
 #include "baca/graphics.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -9,6 +11,7 @@
 #include <pty.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -34,6 +37,14 @@ static const unsigned char graphics_two_frame_gif[] = {
     0x2cU, 0x00U, 0x00U, 0x00U, 0x00U, 0x01U, 0x00U, 0x01U, 0x00U, 0x00U,
     0x02U, 0x02U, 0x44U, 0x01U, 0x00U, 0x3bU,
 };
+
+static const char graphics_tall_svg[] =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='1' height='32768'>"
+    "<rect width='100%' height='100%' fill='red'/></svg>";
+
+static const char graphics_wide_svg[] =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='32768' height='1'>"
+    "<rect width='100%' height='100%' fill='red'/></svg>";
 
 typedef struct Capture {
   BacaString output;
@@ -101,6 +112,64 @@ static bool fd_write_all(void *user_data, const void *data, size_t length) {
     }
   }
   return true;
+}
+
+static bool image_test_opener(void *user_data, const char *target,
+                              const char *preferred, BacaError *error) {
+  FdWriter writer = {.fd = *(const int *)user_data};
+  const char *viewer = preferred == NULL ? "" : preferred;
+  if (!fd_write_all(&writer, target, strlen(target)) ||
+      !fd_write_all(&writer, "\n", 1U) ||
+      !fd_write_all(&writer, viewer, strlen(viewer)) ||
+      !fd_write_all(&writer, "\n", 1U)) {
+    baca_error_set(error, BACA_ERROR_IO,
+                   "could not capture standalone image opener target");
+    return false;
+  }
+  return true;
+}
+
+int baca_image_pty_child(void) {
+  const char *path = getenv("BACA_IMAGE_PTY_PATH");
+  const char *held_path = getenv("BACA_IMAGE_PTY_HELD_PATH");
+  const char *screenshot_directory = getenv("BACA_IMAGE_PTY_SCREENSHOT_DIR");
+  const char *descriptor_value = getenv("BACA_IMAGE_PTY_OPEN_FD");
+  if (path == NULL || held_path == NULL || screenshot_directory == NULL ||
+      descriptor_value == NULL ||
+      sizeof(graphics_tall_svg) != sizeof(graphics_wide_svg)) {
+    return 131;
+  }
+  char *end = NULL;
+  const long parsed = strtol(descriptor_value, &end, 10);
+  if (end == descriptor_value || *end != '\0' || parsed < 0 ||
+      parsed > INT_MAX) {
+    return 132;
+  }
+  const int descriptor = (int)parsed;
+  BacaApp app = {0};
+  BacaError error = {0};
+  if (!baca_app_init(&app, path, true, &error)) {
+    (void)fprintf(stderr, "image PTY init: %s\n", error.message);
+    return 133;
+  }
+  if (rename(path, held_path) != 0 ||
+      !baca_write_file(path, graphics_wide_svg,
+                       sizeof(graphics_wide_svg) - 1U, &error) ||
+      chdir(screenshot_directory) != 0) {
+    (void)fprintf(stderr, "image PTY replacement: %s\n",
+                  error.message[0] == '\0' ? strerror(errno) : error.message);
+    (void)baca_app_free(&app, NULL);
+    return 134;
+  }
+  app.external_opener = image_test_opener;
+  app.external_opener_data = (void *)&descriptor;
+  const int run_result = baca_app_run(&app, &error);
+  BacaError free_error = {0};
+  if (!baca_app_free(&app, &free_error)) {
+    (void)fprintf(stderr, "image PTY save: %s\n", free_error.message);
+    return 135;
+  }
+  return run_result;
 }
 
 static bool zip_add_fixture(zip_t *archive, const char *name, const void *data,
@@ -221,6 +290,87 @@ static bool drain_pty(int fd, BacaString *output) {
       return length == 0;
     }
   }
+}
+
+static bool graphics_wait_for(int descriptor, BacaString *output, size_t start,
+                              const char *needle) {
+  for (unsigned attempt = 0U; attempt < 300U; ++attempt) {
+    struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
+    const int ready = poll(&poll_descriptor, 1U, 20);
+    if (ready < 0 && errno != EINTR) {
+      return false;
+    }
+    if (!drain_pty(descriptor, output)) {
+      return false;
+    }
+    if (output->data != NULL && start <= output->length &&
+        strstr(output->data + start, needle) != NULL) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool graphics_drain_until_idle(int descriptor, BacaString *output) {
+  for (unsigned attempt = 0U; attempt < 30U; ++attempt) {
+    struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
+    const int ready = poll(&poll_descriptor, 1U, 50);
+    if (ready < 0 && errno != EINTR) {
+      return false;
+    }
+    if (!drain_pty(descriptor, output)) {
+      return false;
+    }
+    if (ready == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool graphics_send_mouse_click(int descriptor, int x, int y) {
+  char sequence[96] = {0};
+  const int length = snprintf(sequence, sizeof(sequence),
+                              "\033[<0;%d;%dM\033[<0;%d;%dm", x + 1,
+                              y + 1, x + 1, y + 1);
+  FdWriter writer = {.fd = descriptor};
+  return length > 0 && (size_t)length < sizeof(sequence) &&
+         fd_write_all(&writer, sequence, (size_t)length);
+}
+
+static bool graphics_screenshot_contains(const char *directory,
+                                         const char *needle) {
+  DIR *opened = opendir(directory);
+  if (opened == NULL) {
+    return false;
+  }
+  bool found = false;
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(opened);
+    if (entry == NULL) {
+      break;
+    }
+    const size_t length = strlen(entry->d_name);
+    if (length < 9U || strncmp(entry->d_name, "baca_", 5U) != 0 ||
+        strcmp(entry->d_name + length - 4U, ".svg") != 0) {
+      continue;
+    }
+    BacaError error = {0};
+    char *path = baca_path_join(directory, entry->d_name, &error);
+    BacaBuffer contents = {0};
+    if (path != NULL && baca_read_file(path, &contents, &error) &&
+        contents.data != NULL &&
+        strstr((const char *)contents.data, needle) != NULL) {
+      found = true;
+    }
+    baca_buffer_free(&contents);
+    free(path);
+    break;
+  }
+  const int saved_errno = errno;
+  const bool closed = closedir(opened) == 0;
+  return found && saved_errno == 0 && closed;
 }
 
 static bool run_tui_pty_capture(BacaImageMode mode, unsigned short columns,
@@ -1176,6 +1326,210 @@ static BacaTestResult test_tui_pty_fallback_and_protocol_capture(void) {
   return BACA_TEST_PASS;
 }
 
+static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void) {
+  TEST_ASSERT_SIZE(sizeof(graphics_tall_svg), sizeof(graphics_wide_svg));
+  TEST_ASSERT(baca_test_write("tui-tall/image @.svg", graphics_tall_svg,
+                              sizeof(graphics_tall_svg) - 1U));
+  TEST_ASSERT(baca_test_write_text(
+      "tui-tall/config/baca/config.ini",
+      "[General]\nImageMode=kitty\nPreferredImageViewer=capture-viewer\n"
+      "MaxTextWidth=80\nPageScrollDuration=0\n"
+      "[Keymaps]\nScreenshot=s\n"));
+  TEST_ASSERT(baca_test_mkdir("tui-tall/screenshots"));
+  char *path = baca_test_path("tui-tall/image @.svg");
+  char *held_path = baca_test_path("tui-tall/image @.svg.held");
+  char *config_root = baca_test_path("tui-tall/config");
+  char *screenshot_directory = baca_test_path("tui-tall/screenshots");
+  TEST_ASSERT(path != NULL && held_path != NULL && config_root != NULL &&
+              screenshot_directory != NULL);
+  (void)unlink(held_path);
+
+  int opener_pipe[2] = {-1, -1};
+  TEST_ASSERT(pipe(opener_pipe) == 0);
+  const struct winsize size = {
+      .ws_row = 12U,
+      .ws_col = 40U,
+      .ws_xpixel = 400U,
+      .ws_ypixel = 192U,
+  };
+  int master = -1;
+  (void)fflush(NULL);
+  const pid_t child = forkpty(&master, NULL, NULL, &size);
+  TEST_ASSERT(child >= 0);
+  if (child == 0) {
+    (void)close(opener_pipe[0]);
+    (void)setenv("TERM", "xterm-256color", 1);
+    (void)setenv("COLORTERM", "truecolor", 1);
+    (void)setenv("TERM_PROGRAM", "kitty", 1);
+    (void)setenv("KITTY_WINDOW_ID", "1", 1);
+    (void)unsetenv("TMUX");
+    (void)unsetenv("STY");
+    (void)setenv("XDG_CONFIG_HOME", config_root, 1);
+    char descriptor[32] = {0};
+    (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
+    (void)setenv("BACA_IMAGE_PTY_CHILD", "1", 1);
+    (void)setenv("BACA_IMAGE_PTY_PATH", path, 1);
+    (void)setenv("BACA_IMAGE_PTY_HELD_PATH", held_path, 1);
+    (void)setenv("BACA_IMAGE_PTY_SCREENSHOT_DIR", screenshot_directory, 1);
+    (void)setenv("BACA_IMAGE_PTY_OPEN_FD", descriptor, 1);
+    (void)execl("./build/tests/test_baca", "test_baca", (char *)NULL);
+    _exit(127);
+  }
+
+  (void)close(opener_pipe[1]);
+  BacaString output = {0};
+  BacaString opened = {0};
+  unsigned stage = 0U;
+  bool completed = false;
+  int status = 0;
+  bool ok = fcntl(master, F_SETFL, O_NONBLOCK) == 0 &&
+            fcntl(opener_pipe[0], F_SETFL, O_NONBLOCK) == 0 &&
+            graphics_wait_for(master, &output, 0U, "IMAGE") &&
+            graphics_drain_until_idle(master, &output) &&
+            output.data != NULL && strstr(output.data, "a=t,f=100") == NULL;
+  if (ok) {
+    stage = 1U;
+  }
+
+  FdWriter master_writer = {.fd = master};
+  size_t start = output.length;
+  ok = ok && fd_write_all(&master_writer, "s", 1U) &&
+       graphics_wait_for(master, &output, start, "Saved screenshot:") &&
+       graphics_screenshot_contains(screenshot_directory, "IMAGE");
+  if (ok) {
+    stage = 2U;
+  }
+
+  ok = ok && fd_write_all(&master_writer, "q", 1U) &&
+       graphics_drain_until_idle(master, &output) &&
+       graphics_send_mouse_click(master, 2, 0) &&
+       graphics_drain_until_idle(master, &output) &&
+       graphics_drain_until_idle(opener_pipe[0], &opened) &&
+       opened.length == 0U;
+  if (ok) {
+    stage = 3U;
+  }
+
+  ok = ok && graphics_send_mouse_click(master, 19, 0) &&
+       graphics_wait_for(opener_pipe[0], &opened, 0U, "capture-viewer\n");
+  if (ok) {
+    stage = 4U;
+  }
+
+  char *target = NULL;
+  char *viewer = NULL;
+  if (ok && opened.data != NULL) {
+    char *target_end = strchr(opened.data, '\n');
+    char *viewer_end = target_end == NULL ? NULL : strchr(target_end + 1, '\n');
+    if (target_end != NULL && viewer_end != NULL) {
+      *target_end = '\0';
+      *viewer_end = '\0';
+      target = opened.data;
+      viewer = target_end + 1;
+    }
+  }
+  const char *temporary_root = getenv("TMPDIR");
+  char export_prefix[PATH_MAX] = {0};
+  const int export_prefix_length = temporary_root == NULL
+                                       ? -1
+                                       : snprintf(export_prefix,
+                                                  sizeof(export_prefix),
+                                                  "%s/baca-image-",
+                                                  temporary_root);
+  const char *target_basename = target == NULL ? NULL : strrchr(target, '/');
+  target_basename = target_basename == NULL ? target : target_basename + 1;
+  struct stat target_status;
+  struct stat held_status;
+  struct stat replacement_status;
+  BacaError error = {0};
+  BacaBuffer target_bytes = {0};
+  BacaBuffer replacement_bytes = {0};
+  ok = ok && target != NULL && viewer != NULL &&
+       strcmp(viewer, "capture-viewer") == 0 && export_prefix_length > 0 &&
+       (size_t)export_prefix_length < sizeof(export_prefix) &&
+       strncmp(target, export_prefix, (size_t)export_prefix_length) == 0 &&
+       target_basename != NULL && strcmp(target_basename, "image__.svg") == 0 &&
+       strcmp(target, path) != 0 && stat(target, &target_status) == 0 &&
+       S_ISREG(target_status.st_mode) &&
+       (target_status.st_mode & (S_IRWXG | S_IRWXO)) == 0 &&
+       stat(held_path, &held_status) == 0 &&
+       stat(path, &replacement_status) == 0 &&
+       (target_status.st_dev != held_status.st_dev ||
+        target_status.st_ino != held_status.st_ino) &&
+       (target_status.st_dev != replacement_status.st_dev ||
+        target_status.st_ino != replacement_status.st_ino) &&
+       baca_read_file(target, &target_bytes, &error) &&
+       baca_read_file(path, &replacement_bytes, &error) &&
+       target_bytes.length == sizeof(graphics_tall_svg) - 1U &&
+       replacement_bytes.length == sizeof(graphics_wide_svg) - 1U &&
+       memcmp(target_bytes.data, graphics_tall_svg,
+              sizeof(graphics_tall_svg) - 1U) == 0 &&
+       memcmp(replacement_bytes.data, graphics_wide_svg,
+              sizeof(graphics_wide_svg) - 1U) == 0;
+  if (ok) {
+    stage = 5U;
+  }
+  baca_buffer_free(&target_bytes);
+  baca_buffer_free(&replacement_bytes);
+
+  ok = ok && output.data != NULL && strstr(output.data, "a=t,f=100") == NULL &&
+       fd_write_all(&master_writer, "qq", 2U);
+  for (unsigned attempt = 0U; attempt < 300U && ok; ++attempt) {
+    struct pollfd poll_descriptor = {.fd = master, .events = POLLIN};
+    const int ready = poll(&poll_descriptor, 1U, 20);
+    if (ready < 0 && errno != EINTR) {
+      ok = false;
+      break;
+    }
+    if (!drain_pty(master, &output)) {
+      ok = false;
+      break;
+    }
+    const pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) {
+      completed = true;
+      break;
+    }
+    if (waited < 0) {
+      ok = false;
+      break;
+    }
+  }
+  if (!completed) {
+    (void)kill(child, SIGKILL);
+    (void)waitpid(child, &status, 0);
+  }
+  if (ok && completed && target != NULL) {
+    errno = 0;
+    ok = stat(target, &target_status) != 0 && errno == ENOENT;
+    if (ok) {
+      stage = 6U;
+    }
+  }
+  (void)drain_pty(master, &output);
+  (void)drain_pty(opener_pipe[0], &opened);
+  (void)close(master);
+  (void)close(opener_pipe[0]);
+  baca_string_free(&opened);
+  const size_t output_length = output.length;
+  char output_excerpt[512] = {0};
+  if (output.data != NULL) {
+    (void)snprintf(output_excerpt, sizeof(output_excerpt), "%.480s", output.data);
+  }
+  baca_string_free(&output);
+  free(screenshot_directory);
+  free(config_root);
+  free(held_path);
+  free(path);
+  if (!ok || !completed || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    return baca_test_fail_at(
+        __FILE__, __LINE__,
+        "tall standalone PTY failed at stage %u after %zu bytes (status=%d): %s",
+        stage, output_length, status, output_excerpt);
+  }
+  return BACA_TEST_PASS;
+}
+
 const BacaTestCase *baca_graphics_test_cases(size_t *count) {
   static const BacaTestCase cases[] = {
       {.name = "mode_selection", .function = test_mode_selection},
@@ -1200,6 +1554,8 @@ const BacaTestCase *baca_graphics_test_cases(size_t *count) {
        .function = test_pty_ansi_and_kitty_capture},
       {.name = "tui_pty_fallback_and_protocol_capture",
        .function = test_tui_pty_fallback_and_protocol_capture},
+      {.name = "tui_tall_standalone_placeholder_and_stable_click",
+       .function = test_tui_tall_standalone_placeholder_and_stable_click},
   };
   *count = BACA_ARRAY_LEN(cases);
   return cases;

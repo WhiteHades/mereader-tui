@@ -49,10 +49,12 @@ typedef struct EpubBackend {
 
 static bool epub_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
                                BacaError *error);
+static bool epub_resource_size(const BacaDocument *document, const char *uri, size_t *size);
 static void epub_close(BacaDocument *document);
 
 static const BacaDocumentOps EPUB_OPS = {
     .load_resource = epub_load_resource,
+    .resource_size = epub_resource_size,
     .render_page = NULL,
     .close = epub_close,
 };
@@ -1120,6 +1122,60 @@ static const char *mime_from_extension(const char *path) {
     return "application/octet-stream";
 }
 
+static bool epub_resource_paths(EpubBackend *backend, const char *uri, char **path,
+                                char **member_path, BacaError *error) {
+    if (uri == NULL || baca_is_external_uri(uri) || strncmp(uri, "//", 2) == 0) {
+        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "external EPUB resources are not fetched: %s",
+                       uri == NULL ? "(null)" : uri);
+        return false;
+    }
+    char *resolved = member_path_from_reference("/", uri, error);
+    if (resolved == NULL) {
+        return false;
+    }
+    EpubManifestItem *item = manifest_by_path(backend, resolved);
+    char *member = item == NULL ? archive_member_path(resolved, error) :
+                                 baca_strdup(item->member_path, error);
+    if (member == NULL) {
+        free(resolved);
+        return false;
+    }
+    *path = resolved;
+    *member_path = member;
+    return true;
+}
+
+static bool epub_resource_size(const BacaDocument *document, const char *uri, size_t *size) {
+    if (document == NULL || size == NULL) {
+        return false;
+    }
+    EpubBackend *backend = document->backend;
+    if (backend == NULL || backend->archive == NULL) {
+        return false;
+    }
+    BacaError ignored = {0};
+    char *path = NULL;
+    char *member_path = NULL;
+    if (!epub_resource_paths(backend, uri, &path, &member_path, &ignored)) {
+        return false;
+    }
+    zip_int64_t member_index = zip_name_locate(backend->archive, member_path, ZIP_FL_ENC_GUESS);
+    zip_stat_t stat;
+    zip_stat_init(&stat);
+    const bool found = member_index >= 0 &&
+                       zip_stat_index(backend->archive, (zip_uint64_t)member_index,
+                                      ZIP_FL_ENC_GUESS, &stat) == 0 &&
+                       (stat.valid & ZIP_STAT_SIZE) != 0 && stat.size <= EPUB_MAX_MEMBER &&
+                       stat.size <= (zip_uint64_t)SIZE_MAX;
+    free(member_path);
+    free(path);
+    if (!found) {
+        return false;
+    }
+    *size = (size_t)stat.size;
+    return true;
+}
+
 static bool epub_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
                                 BacaError *error) {
     EpubBackend *backend = document->backend;
@@ -1127,21 +1183,12 @@ static bool epub_load_resource(BacaDocument *document, const char *uri, BacaReso
         baca_error_set(error, BACA_ERROR_INTERNAL, "EPUB backend is closed");
         return false;
     }
-    if (baca_is_external_uri(uri) || strncmp(uri, "//", 2) == 0) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "external EPUB resources are not fetched: %s", uri);
-        return false;
-    }
-    char *path = member_path_from_reference("/", uri, error);
-    if (path == NULL) {
+    char *path = NULL;
+    char *member_path = NULL;
+    if (!epub_resource_paths(backend, uri, &path, &member_path, error)) {
         return false;
     }
     EpubManifestItem *item = manifest_by_path(backend, path);
-    char *member_path = item == NULL ? archive_member_path(path, error) :
-                                      baca_strdup(item->member_path, error);
-    if (member_path == NULL) {
-        free(path);
-        return false;
-    }
     BacaBuffer data = {0};
     if (!read_member(backend, member_path, EPUB_MAX_MEMBER, &data, error)) {
         free(member_path);

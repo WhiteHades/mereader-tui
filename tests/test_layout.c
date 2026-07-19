@@ -192,11 +192,16 @@ static BacaTestResult test_image_aspect_rows_and_broken_placeholder(void) {
     BacaError error = {0};
     TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#valid", 8, 4, false, &error));
     TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#broken", 0, 0, true, &error));
+    TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#unprobed", 0, 0, false, &error));
     BacaLayout layout = {0};
     TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 10, BACA_JUSTIFY_LEFT, &error), "%s", error.message);
     TEST_ASSERT_INT(layout.lines[layout.block_first_line[0]].image_rows, 3);
+    TEST_ASSERT(!layout.lines[layout.block_first_line[0]].image_placeholder);
     TEST_ASSERT_INT(layout.lines[layout.block_first_line[0] + 2U].image_row, 2);
     TEST_ASSERT_INT(layout.lines[layout.block_first_line[1]].image_rows, 1);
+    TEST_ASSERT(layout.lines[layout.block_first_line[1]].image_placeholder);
+    TEST_ASSERT_INT(layout.lines[layout.block_first_line[2]].image_rows, 1);
+    TEST_ASSERT(layout.lines[layout.block_first_line[2]].image_placeholder);
     char *placeholder = baca_layout_line_text(&layout, layout.block_first_line[1], false, &error);
     TEST_ASSERT_STR(placeholder, "  IMAGE");
     free(placeholder);
@@ -209,7 +214,7 @@ static BacaTestResult test_image_aspect_rows_and_broken_placeholder(void) {
     return BACA_TEST_PASS;
 }
 
-static BacaTestResult test_image_row_limits_fail_instead_of_crushing(void) {
+static BacaTestResult test_image_row_limits_and_tall_placeholder(void) {
     BacaDocument document = {0};
     BacaError error = {0};
     const size_t full_images = BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS /
@@ -246,10 +251,29 @@ static BacaTestResult test_image_row_limits_fail_instead_of_crushing(void) {
     baca_layout_free(&layout);
     baca_document_close(&document);
 
+    document.format = BACA_FORMAT_IMAGE;
     TEST_ASSERT(append_image_block(&document, "images.xhtml", "images.xhtml#too-tall", 1,
                                    BACA_LAYOUT_MAX_IMAGE_ROWS * 2 + 1, false, &error));
     baca_error_clear(&error);
-    TEST_ASSERT(!baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error));
+    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 1, BACA_JUSTIFY_LEFT, &error), "%s",
+                    error.message);
+    TEST_ASSERT_SIZE(layout.line_count, 1U);
+    TEST_ASSERT_INT(layout.lines[0].image_rows, 1);
+    TEST_ASSERT_INT(layout.lines[0].image_row, 0);
+    TEST_ASSERT(layout.lines[0].image_placeholder);
+    char *placeholder = baca_layout_line_text(&layout, 0U, false, &error);
+    TEST_ASSERT_STR(placeholder, "IMAGE");
+    free(placeholder);
+    baca_layout_free(&layout);
+    baca_document_close(&document);
+
+    document.format = BACA_FORMAT_PDF;
+    TEST_ASSERT(append_image_block(&document, "pdf://page/0", "pdf://page/0", 1,
+                                   BACA_LAYOUT_MAX_IMAGE_ROWS * 2 + 1, false, &error));
+    document.blocks[0].value.image.page_index = 0;
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_layout_build_presentation(&layout, &document, 1, BACA_JUSTIFY_LEFT,
+                                                BACA_PRESENTATION_FIXED, 1, 2, NULL, &error));
     TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "per-image row limit") != NULL);
     baca_document_close(&document);
@@ -366,8 +390,8 @@ const BacaTestCase *baca_layout_test_cases(size_t *count) {
         {.name = "progress_semantics", .function = test_progress_semantics},
         {.name = "image_aspect_rows_and_broken_placeholder",
          .function = test_image_aspect_rows_and_broken_placeholder},
-        {.name = "image_row_limits_fail_instead_of_crushing",
-         .function = test_image_row_limits_fail_instead_of_crushing},
+        {.name = "image_row_limits_and_tall_placeholder",
+         .function = test_image_row_limits_and_tall_placeholder},
         {.name = "line_limit_and_cancellation", .function = test_line_limit_and_cancellation},
         {.name = "regex_valid_invalid_empty_and_casefold",
          .function = test_regex_valid_invalid_empty_and_casefold},
