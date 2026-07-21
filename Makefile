@@ -1,7 +1,7 @@
 .POSIX:
 
 CC = cc
-PKGS = ncursesw sqlite3 glib-2.0 libxml-2.0 libzip libarchive libpcre2-8 gdk-pixbuf-2.0 poppler-glib cairo
+PKGS = ncursesw sqlite3 glib-2.0 libxml-2.0 libzip libarchive libpcre2-8 gdk-pixbuf-2.0 poppler-glib cairo libcurl
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -Iinclude $(shell pkg-config --cflags $(PKGS))
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
@@ -26,13 +26,14 @@ SOURCES = \
 	src/mobi.c \
 	src/pdf.c \
 	src/platform.c \
+	src/remote.c \
 	src/text.c \
 	src/tui.c \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_comic.c tests/test_config.c tests/test_database.c \
 	tests/test_document.c tests/test_fb2.c tests/test_graphics.c tests/test_layout.c tests/test_library.c \
-	tests/test_support.c tests/test_text.c
+	tests/test_remote.c tests/test_support.c tests/test_text.c
 
 TEST_SOURCES += tests/test_pdf.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)
