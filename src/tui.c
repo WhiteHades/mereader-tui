@@ -26,8 +26,8 @@ enum {
   BACA_PAIR_ALERT,
   BACA_PAIR_IMAGE_FIRST,
   BACA_JUMP_HISTORY_LIMIT = 100,
-  BACA_HELP_LINE_COUNT = 19,
-  BACA_PDF_HELP_LINE_COUNT = 20,
+  BACA_HELP_LINE_COUNT = 21,
+  BACA_PDF_HELP_LINE_COUNT = 22,
   BACA_KEY_CTRL_I = KEY_MAX + 1,
 };
 
@@ -38,6 +38,7 @@ static volatile sig_atomic_t baca_exit_signal = 0;
 typedef enum BacaOverlayKind {
   BACA_OVERLAY_NONE = 0,
   BACA_OVERLAY_TOC,
+  BACA_OVERLAY_BOOKMARKS,
   BACA_OVERLAY_METADATA,
   BACA_OVERLAY_HELP,
   BACA_OVERLAY_ALERT,
@@ -136,6 +137,8 @@ typedef struct BacaTuiState {
   BacaOverlayKind overlay;
   size_t overlay_scroll;
   size_t toc_index;
+  BacaBookmarks bookmarks;
+  size_t bookmark_index;
   char alert[512];
   BacaPdfRenderFailure *pdf_render_failures;
   size_t pdf_render_failure_count;
@@ -617,6 +620,12 @@ static BacaCommand normalize_command(const BacaConfig *config,
   }
   if (key_list_matches(&maps->open_toc, key)) {
     return BACA_COMMAND_TOC;
+  }
+  if (key_list_matches(&maps->add_bookmark, key)) {
+    return BACA_COMMAND_ADD_BOOKMARK;
+  }
+  if (key_list_matches(&maps->open_bookmarks, key)) {
+    return BACA_COMMAND_BOOKMARKS;
   }
   if (key_list_matches(&maps->open_metadata, key)) {
     return BACA_COMMAND_METADATA;
@@ -1757,6 +1766,8 @@ static const char *overlay_title(BacaOverlayKind overlay) {
   switch (overlay) {
   case BACA_OVERLAY_TOC:
     return "Table of Contents";
+  case BACA_OVERLAY_BOOKMARKS:
+    return "Bookmarks (Delete removes)";
   case BACA_OVERLAY_METADATA:
     return "Metadata";
   case BACA_OVERLAY_HELP:
@@ -1806,6 +1817,42 @@ static void draw_toc_overlay(BacaTuiState *state, WINDOW *window, int height,
     add_clipped(window, row + 1, x, entry->label != NULL ? entry->label : "",
                 width - x - 1);
     if (index == state->toc_index) {
+      (void)wattroff(window,
+                     state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+    }
+  }
+}
+
+static void draw_bookmarks_overlay(BacaTuiState *state, WINDOW *window,
+                                   int height, int width) {
+  const int visible = height > 2 ? height - 2 : 0;
+  if (visible <= 0) {
+    return;
+  }
+  if (state->bookmark_index < state->overlay_scroll) {
+    state->overlay_scroll = state->bookmark_index;
+  } else if (state->bookmark_index >=
+             state->overlay_scroll + (size_t)visible) {
+    state->overlay_scroll = state->bookmark_index - (size_t)visible + 1U;
+  }
+
+  for (int row = 0; row < visible; ++row) {
+    const size_t index = state->overlay_scroll + (size_t)row;
+    if (index >= state->bookmarks.length) {
+      break;
+    }
+    const BacaBookmark *bookmark = &state->bookmarks.items[index];
+    char label[96] = {0};
+    (void)snprintf(label, sizeof(label), "%6.2f%%  %s",
+                   bookmark->reading_progress * 100.0,
+                   bookmark->created_at != NULL ? bookmark->created_at : "");
+    if (index == state->bookmark_index) {
+      (void)wattron(window,
+                    state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+      (void)mvwhline(window, row + 1, 1, ' ', width > 2 ? width - 2 : 0);
+    }
+    add_clipped(window, row + 1, 2, label, width - 3);
+    if (index == state->bookmark_index) {
       (void)wattroff(window,
                      state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
     }
@@ -1880,6 +1927,8 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
       "Home",
       "End",
       "Open TOC",
+      "Add bookmark",
+      "Open bookmarks",
       "Open metadata",
       "Open help",
       "Search forward",
@@ -1895,13 +1944,17 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
   };
   const BacaKeymaps *maps = &state->app->config.keymaps;
   const BacaKeyList *const lists[] = {
-      &maps->toggle_dark, &maps->scroll_down,    &maps->scroll_up,
-      &maps->page_down,   &maps->page_up,        &maps->home,
-      &maps->end,         &maps->open_toc,       &maps->open_metadata,
-      &maps->open_help,   &maps->search_forward, &maps->search_backward,
-      &maps->next_match,  &maps->previous_match, &maps->confirm,
-      &maps->close,       &jump_back,             &jump_forward,
-      &maps->screenshot,  &maps->toggle_pdf_view,
+      &maps->toggle_dark,      &maps->scroll_down,
+      &maps->scroll_up,        &maps->page_down,
+      &maps->page_up,          &maps->home,
+      &maps->end,              &maps->open_toc,
+      &maps->add_bookmark,     &maps->open_bookmarks,
+      &maps->open_metadata,    &maps->open_help,
+      &maps->search_forward,   &maps->search_backward,
+      &maps->next_match,       &maps->previous_match,
+      &maps->confirm,          &maps->close,
+      &jump_back,              &jump_forward,
+      &maps->screenshot,       &maps->toggle_pdf_view,
   };
   const size_t count = state->app->document.format == BACA_FORMAT_PDF
                            ? BACA_ARRAY_LEN(names)
@@ -1949,6 +2002,9 @@ static void draw_overlay(BacaTuiState *state) {
   switch (state->overlay) {
   case BACA_OVERLAY_TOC:
     draw_toc_overlay(state, window, box_size.height, box_size.width);
+    break;
+  case BACA_OVERLAY_BOOKMARKS:
+    draw_bookmarks_overlay(state, window, box_size.height, box_size.width);
     break;
   case BACA_OVERLAY_METADATA:
     draw_metadata_overlay(state, window, box_size.height, box_size.width);
@@ -2160,10 +2216,59 @@ static void open_toc(BacaTuiState *state) {
   state->dirty = true;
 }
 
+static void add_bookmark(BacaTuiState *state) {
+  remember_progress(state);
+  BacaError error = {0};
+  if (!baca_database_add_bookmark(&state->app->database,
+                                  state->app->document.path,
+                                  state->app->saved_progress, &error)) {
+    open_alert(state, error.message);
+    return;
+  }
+  char message[96] = {0};
+  (void)snprintf(message, sizeof(message), "Bookmark saved at %.2f%%",
+                 state->app->saved_progress * 100.0);
+  open_alert(state, message);
+}
+
+static void open_bookmarks(BacaTuiState *state) {
+  baca_bookmarks_free(&state->bookmarks);
+  BacaError error = {0};
+  if (!baca_database_bookmarks(&state->app->database,
+                               state->app->document.path,
+                               &state->bookmarks, &error)) {
+    open_alert(state, error.message);
+    return;
+  }
+  if (state->bookmarks.length == 0U) {
+    open_alert(state, "No bookmarks for this document");
+    return;
+  }
+
+  remember_progress(state);
+  state->bookmark_index = 0U;
+  double nearest = fabs(state->bookmarks.items[0].reading_progress -
+                        state->app->saved_progress);
+  for (size_t index = 1U; index < state->bookmarks.length; ++index) {
+    const double distance =
+        fabs(state->bookmarks.items[index].reading_progress -
+             state->app->saved_progress);
+    if (distance < nearest) {
+      nearest = distance;
+      state->bookmark_index = index;
+    }
+  }
+  state->overlay_scroll = state->bookmark_index;
+  state->overlay = BACA_OVERLAY_BOOKMARKS;
+  state->dirty = true;
+}
+
 static size_t overlay_line_count(const BacaTuiState *state) {
   switch (state->overlay) {
   case BACA_OVERLAY_TOC:
     return state->app->document.toc_count;
+  case BACA_OVERLAY_BOOKMARKS:
+    return state->bookmarks.length;
   case BACA_OVERLAY_METADATA:
     return 13U;
   case BACA_OVERLAY_HELP:
@@ -2214,6 +2319,49 @@ static void move_toc_selection(BacaTuiState *state, int amount) {
         state->toc_index + 1U >= count ? 0U : state->toc_index + 1U;
   }
   state->dirty = true;
+}
+
+static void move_bookmark_selection(BacaTuiState *state, int amount) {
+  const size_t count = state->bookmarks.length;
+  if (count == 0U) {
+    return;
+  }
+  if (amount < 0) {
+    state->bookmark_index = state->bookmark_index == 0U
+                                ? count - 1U
+                                : state->bookmark_index - 1U;
+  } else {
+    state->bookmark_index = state->bookmark_index + 1U >= count
+                                ? 0U
+                                : state->bookmark_index + 1U;
+  }
+  state->dirty = true;
+}
+
+static void follow_bookmark_selection(BacaTuiState *state) {
+  if (state->bookmark_index >= state->bookmarks.length) {
+    return;
+  }
+  const double progress =
+      state->bookmarks.items[state->bookmark_index].reading_progress;
+  (void)jump_to_line(state, restore_progress_line(state, progress));
+  state->overlay = BACA_OVERLAY_NONE;
+  state->overlay_scroll = 0U;
+  state->dirty = true;
+}
+
+static void remove_bookmark_selection(BacaTuiState *state) {
+  if (state->bookmark_index >= state->bookmarks.length) {
+    return;
+  }
+  const int64_t id = state->bookmarks.items[state->bookmark_index].id;
+  BacaError error = {0};
+  if (!baca_database_remove_bookmark(&state->app->database,
+                                     state->app->document.path, id, &error)) {
+    open_alert(state, error.message);
+    return;
+  }
+  open_bookmarks(state);
 }
 
 static void follow_toc_selection(BacaTuiState *state) {
@@ -2707,6 +2855,8 @@ static void handle_overlay_mouse(BacaTuiState *state, const MEVENT *event) {
   if ((event->bstate & BUTTON4_PRESSED) != 0U) {
     if (state->overlay == BACA_OVERLAY_TOC) {
       move_toc_selection(state, -1);
+    } else if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+      move_bookmark_selection(state, -1);
     } else {
       scroll_overlay(state, -1);
     }
@@ -2715,12 +2865,15 @@ static void handle_overlay_mouse(BacaTuiState *state, const MEVENT *event) {
   if ((event->bstate & BUTTON5_PRESSED) != 0U) {
     if (state->overlay == BACA_OVERLAY_TOC) {
       move_toc_selection(state, 1);
+    } else if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+      move_bookmark_selection(state, 1);
     } else {
       scroll_overlay(state, 1);
     }
     return;
   }
-  if (state->overlay != BACA_OVERLAY_TOC ||
+  if ((state->overlay != BACA_OVERLAY_TOC &&
+       state->overlay != BACA_OVERLAY_BOOKMARKS) ||
       (event->bstate & BUTTON1_CLICKED) == 0U) {
     return;
   }
@@ -2731,9 +2884,14 @@ static void handle_overlay_mouse(BacaTuiState *state, const MEVENT *event) {
   }
   const size_t index =
       state->overlay_scroll + (size_t)(event->y - box_size.y - 1);
-  if (index < state->app->document.toc_count) {
+  if (state->overlay == BACA_OVERLAY_TOC &&
+      index < state->app->document.toc_count) {
     state->toc_index = index;
     follow_toc_selection(state);
+  } else if (state->overlay == BACA_OVERLAY_BOOKMARKS &&
+             index < state->bookmarks.length) {
+    state->bookmark_index = index;
+    follow_bookmark_selection(state);
   }
 }
 
@@ -2763,7 +2921,9 @@ static void handle_overlay_key(BacaTuiState *state,
   }
   if (key->command == BACA_COMMAND_QUIT ||
       (state->overlay == BACA_OVERLAY_TOC &&
-       key->command == BACA_COMMAND_TOC)) {
+       key->command == BACA_COMMAND_TOC) ||
+      (state->overlay == BACA_OVERLAY_BOOKMARKS &&
+       key->command == BACA_COMMAND_BOOKMARKS)) {
     state->overlay = BACA_OVERLAY_NONE;
     state->overlay_scroll = 0U;
     state->dirty = true;
@@ -2787,6 +2947,34 @@ static void handle_overlay_key(BacaTuiState *state,
       break;
     case BACA_COMMAND_CONFIRM:
       follow_toc_selection(state);
+      break;
+    default:
+      break;
+    }
+    return;
+  }
+  if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+    if (key->key_code && key->code == KEY_DC) {
+      remove_bookmark_selection(state);
+      return;
+    }
+    switch (key->command) {
+    case BACA_COMMAND_SCROLL_DOWN:
+      move_bookmark_selection(state, 1);
+      break;
+    case BACA_COMMAND_SCROLL_UP:
+      move_bookmark_selection(state, -1);
+      break;
+    case BACA_COMMAND_HOME:
+      state->bookmark_index = 0U;
+      state->dirty = true;
+      break;
+    case BACA_COMMAND_END:
+      state->bookmark_index = state->bookmarks.length - 1U;
+      state->dirty = true;
+      break;
+    case BACA_COMMAND_CONFIRM:
+      follow_bookmark_selection(state);
       break;
     default:
       break;
@@ -2957,6 +3145,12 @@ static void handle_reader_key(BacaTuiState *state,
     break;
   case BACA_COMMAND_TOC:
     open_toc(state);
+    break;
+  case BACA_COMMAND_ADD_BOOKMARK:
+    add_bookmark(state);
+    break;
+  case BACA_COMMAND_BOOKMARKS:
+    open_bookmarks(state);
     break;
   case BACA_COMMAND_METADATA:
     state->overlay = BACA_OVERLAY_METADATA;
@@ -3980,6 +4174,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
 cleanup:
   remember_progress(&state);
   clear_search(&state.search);
+  baca_bookmarks_free(&state.bookmarks);
   free(state.pdf_render_failures);
   cleanup_temp_directories(&state);
   delete_kitty_images(&state);

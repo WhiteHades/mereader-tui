@@ -23,6 +23,18 @@ typedef struct BacaHistory {
     size_t capacity;
 } BacaHistory;
 
+typedef struct BacaBookmark {
+    int64_t id;
+    double reading_progress;
+    char *created_at;
+} BacaBookmark;
+
+typedef struct BacaBookmarks {
+    BacaBookmark *items;
+    size_t length;
+    size_t capacity;
+} BacaBookmarks;
+
 [[nodiscard]] bool baca_database_open(BacaDatabase *database, const char *path, BacaError *error);
 [[nodiscard]] bool baca_database_open_default(BacaDatabase *database, BacaError *error);
 void baca_database_close(BacaDatabase *database);
@@ -35,3 +47,10 @@ void baca_database_close(BacaDatabase *database);
 void baca_history_free(BacaHistory *history);
 [[nodiscard]] const BacaHistoryEntry *baca_history_nth(const BacaHistory *history, size_t one_based_index);
 [[nodiscard]] const BacaHistoryEntry *baca_history_best_match(const BacaHistory *history, const char *query);
+[[nodiscard]] bool baca_database_add_bookmark(BacaDatabase *database, const char *filepath, double reading_progress,
+                                              BacaError *error);
+[[nodiscard]] bool baca_database_bookmarks(BacaDatabase *database, const char *filepath, BacaBookmarks *bookmarks,
+                                           BacaError *error);
+[[nodiscard]] bool baca_database_remove_bookmark(BacaDatabase *database, const char *filepath, int64_t id,
+                                                 BacaError *error);
+void baca_bookmarks_free(BacaBookmarks *bookmarks);

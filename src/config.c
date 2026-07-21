@@ -66,6 +66,8 @@ static const char BACA_DEFAULT_CONFIG[] =
     "Home = home,gg\n"
     "End = end,G\n"
     "OpenToc = tab\n"
+    "AddBookmark = b\n"
+    "OpenBookmarks = B\n"
     "OpenMetadata = M\n"
     "OpenHelp = f1\n"
     "SearchForward = slash\n"
@@ -589,6 +591,10 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
                                     error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenToc", "tab"),
                                     &result.keymaps.open_toc, error) ||
+        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "AddBookmark", "b"),
+                                    &result.keymaps.add_bookmark, error) ||
+        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenBookmarks", "B"),
+                                    &result.keymaps.open_bookmarks, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenMetadata", "M"),
                                     &result.keymaps.open_metadata, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenHelp", "f1"),
@@ -630,6 +636,7 @@ static bool baca_config_output_empty(const BacaConfig *config) {
         &config->keymaps.scroll_up,        &config->keymaps.page_down,
         &config->keymaps.page_up,          &config->keymaps.home,
         &config->keymaps.end,              &config->keymaps.open_toc,
+        &config->keymaps.add_bookmark,     &config->keymaps.open_bookmarks,
         &config->keymaps.open_metadata,    &config->keymaps.open_help,
         &config->keymaps.search_forward,   &config->keymaps.search_backward,
         &config->keymaps.next_match,       &config->keymaps.previous_match,
@@ -765,6 +772,7 @@ void baca_config_free(BacaConfig *config) {
         &config->keymaps.scroll_up,        &config->keymaps.page_down,
         &config->keymaps.page_up,          &config->keymaps.home,
         &config->keymaps.end,              &config->keymaps.open_toc,
+        &config->keymaps.add_bookmark,     &config->keymaps.open_bookmarks,
         &config->keymaps.open_metadata,    &config->keymaps.open_help,
         &config->keymaps.search_forward,   &config->keymaps.search_backward,
         &config->keymaps.next_match,       &config->keymaps.previous_match,

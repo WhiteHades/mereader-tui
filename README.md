@@ -69,6 +69,7 @@ Quitting a reader opened from the library returns to the refreshed library.
 - Numeric prefixes repeat scrolling, paging, and `n`/`N` search motions, such as `12j` or `3n`
 - Ctrl-o goes back through jumps; Ctrl-i goes forward. Tab opens the TOC when there is no forward jump
 - `/` and `?` search; `n`/`N` repeat; Enter clears highlights; `q` or Esc cancels a search or quits
+- `b` saves the current position; `B` lists bookmarks; Enter jumps and Delete removes
 - `M` opens metadata; F1 opens all configured keys
 
 ## Opening an Image
@@ -203,6 +204,8 @@ PageUp = ctrl+b,pageup,h
 Home = home,gg
 End = end,G
 OpenToc = tab
+AddBookmark = b
+OpenBookmarks = B
 OpenMetadata = M
 OpenHelp = f1
 SearchForward = slash
@@ -241,7 +244,6 @@ Screenshot = f12
 - Compared to [epy](https://github.com/wustho/epy), currently `baca` has some missing features.
   But these are planned to be implemented to `baca` in the near future:
 
-  - [ ] **TODO** Bookmarks
   - [ ] **TODO** URL reading support
 
 ## Credits

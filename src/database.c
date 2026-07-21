@@ -139,16 +139,28 @@ bool baca_database_migrate(BacaDatabase *database, BacaError *error) {
         "\"author\" VARCHAR(255), "
         "\"reading_progress\" REAL NOT NULL, "
         "\"last_read\" DATETIME NOT NULL)";
-    static const char migration_sql[] =
+    static const char bookmarks_sql[] =
+        "CREATE TABLE IF NOT EXISTS \"bookmarks\" ("
+        "\"id\" INTEGER NOT NULL PRIMARY KEY, "
+        "\"filepath\" TEXT NOT NULL, "
+        "\"reading_progress\" REAL NOT NULL CHECK(\"reading_progress\" >= 0.0 AND \"reading_progress\" <= 1.0), "
+        "\"created_at\" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "UNIQUE(\"filepath\", \"reading_progress\"))";
+    static const char migration_zero_sql[] =
         "INSERT INTO \"metadata\" (\"version\", \"migrated_at\") "
         "VALUES (0, CURRENT_TIMESTAMP) ON CONFLICT(\"version\") DO NOTHING";
+    static const char migration_one_sql[] =
+        "INSERT INTO \"metadata\" (\"version\", \"migrated_at\") "
+        "VALUES (1, CURRENT_TIMESTAMP) ON CONFLICT(\"version\") DO NOTHING";
 
     if (!baca_database_exec(database, "BEGIN IMMEDIATE", "could not begin database migration", error)) {
         return false;
     }
     if (!baca_database_exec(database, metadata_sql, "could not create metadata table", error) ||
         !baca_database_exec(database, reading_history_sql, "could not create reading history table", error) ||
-        !baca_database_exec(database, migration_sql, "could not record database migration", error) ||
+        !baca_database_exec(database, migration_zero_sql, "could not record database migration", error) ||
+        !baca_database_exec(database, bookmarks_sql, "could not create bookmarks table", error) ||
+        !baca_database_exec(database, migration_one_sql, "could not record bookmark migration", error) ||
         !baca_database_exec(database, "COMMIT", "could not commit database migration", error)) {
         (void)sqlite3_exec(database->handle, "ROLLBACK", nullptr, nullptr, nullptr);
         return false;
@@ -577,4 +589,174 @@ const BacaHistoryEntry *baca_history_best_match(const BacaHistory *history, cons
         }
     }
     return best;
+}
+
+void baca_bookmarks_free(BacaBookmarks *bookmarks) {
+    if (bookmarks == nullptr) {
+        return;
+    }
+    for (size_t index = 0U; index < bookmarks->length; ++index) {
+        free(bookmarks->items[index].created_at);
+    }
+    free(bookmarks->items);
+    *bookmarks = (BacaBookmarks){0};
+}
+
+bool baca_database_add_bookmark(BacaDatabase *database, const char *filepath, double reading_progress,
+                                BacaError *error) {
+    if (!baca_database_ready(database, error) || filepath == nullptr || filepath[0] == '\0' ||
+        !isfinite(reading_progress) || reading_progress < 0.0 || reading_progress > 1.0) {
+        if (!baca_error_is_set(error)) {
+            baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid bookmark");
+        }
+        return false;
+    }
+
+    static const char sql[] =
+        "INSERT INTO \"bookmarks\" (\"filepath\", \"reading_progress\") VALUES (?1, ?2) "
+        "ON CONFLICT(\"filepath\", \"reading_progress\") DO NOTHING";
+    sqlite3_stmt *statement = nullptr;
+    int status = sqlite3_prepare_v2(database->handle, sql, -1, &statement, nullptr);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not prepare bookmark update", status, error);
+        return false;
+    }
+    status = sqlite3_bind_text(statement, 1, filepath, -1, SQLITE_TRANSIENT);
+    if (status == SQLITE_OK) {
+        status = sqlite3_bind_double(statement, 2, reading_progress);
+    }
+    if (status == SQLITE_OK) {
+        status = sqlite3_step(statement);
+    }
+    if (status != SQLITE_DONE) {
+        baca_database_set_error(database, "could not save bookmark", status, error);
+        (void)sqlite3_finalize(statement);
+        return false;
+    }
+    status = sqlite3_finalize(statement);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not finish bookmark update", status, error);
+        return false;
+    }
+    return true;
+}
+
+bool baca_database_bookmarks(BacaDatabase *database, const char *filepath, BacaBookmarks *bookmarks,
+                             BacaError *error) {
+    if (!baca_database_ready(database, error) || filepath == nullptr || filepath[0] == '\0' || bookmarks == nullptr) {
+        if (!baca_error_is_set(error)) {
+            baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid bookmark query");
+        }
+        return false;
+    }
+    if (bookmarks->items != nullptr || bookmarks->length != 0U || bookmarks->capacity != 0U) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "bookmark output is not empty");
+        return false;
+    }
+
+    static const char sql[] =
+        "SELECT \"id\", \"reading_progress\", \"created_at\" FROM \"bookmarks\" "
+        "WHERE \"filepath\" = ?1 ORDER BY \"reading_progress\", \"id\"";
+    sqlite3_stmt *statement = nullptr;
+    int status = sqlite3_prepare_v2(database->handle, sql, -1, &statement, nullptr);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not prepare bookmark query", status, error);
+        return false;
+    }
+    status = sqlite3_bind_text(statement, 1, filepath, -1, SQLITE_TRANSIENT);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not bind bookmark path", status, error);
+        (void)sqlite3_finalize(statement);
+        return false;
+    }
+
+    BacaBookmarks result = {0};
+    for (;;) {
+        status = sqlite3_step(statement);
+        if (status == SQLITE_DONE) {
+            break;
+        }
+        if (status != SQLITE_ROW) {
+            baca_database_set_error(database, "could not read bookmarks", status, error);
+            (void)sqlite3_finalize(statement);
+            baca_bookmarks_free(&result);
+            return false;
+        }
+
+        BacaBookmark bookmark = {
+            .id = sqlite3_column_int64(statement, 0),
+            .reading_progress = sqlite3_column_double(statement, 1),
+        };
+        if (bookmark.id <= 0 || !isfinite(bookmark.reading_progress) || bookmark.reading_progress < 0.0 ||
+            bookmark.reading_progress > 1.0 ||
+            !baca_database_column_string(statement, 2, true, &bookmark.created_at, error)) {
+            free(bookmark.created_at);
+            (void)sqlite3_finalize(statement);
+            baca_bookmarks_free(&result);
+            if (!baca_error_is_set(error)) {
+                baca_error_set(error, BACA_ERROR_DATABASE, "database contains an invalid bookmark");
+            }
+            return false;
+        }
+
+        BacaError reserve_error = {0};
+        BacaBookmark *items = baca_array_reserve(result.items, &result.capacity, sizeof(*result.items),
+                                                 result.length + 1U, &reserve_error);
+        if (baca_error_is_set(&reserve_error)) {
+            if (error != nullptr) {
+                *error = reserve_error;
+            }
+            free(bookmark.created_at);
+            (void)sqlite3_finalize(statement);
+            baca_bookmarks_free(&result);
+            return false;
+        }
+        result.items = items;
+        result.items[result.length++] = bookmark;
+    }
+
+    status = sqlite3_finalize(statement);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not finish bookmark query", status, error);
+        baca_bookmarks_free(&result);
+        return false;
+    }
+    *bookmarks = result;
+    return true;
+}
+
+bool baca_database_remove_bookmark(BacaDatabase *database, const char *filepath, int64_t id, BacaError *error) {
+    if (!baca_database_ready(database, error) || filepath == nullptr || filepath[0] == '\0' || id <= 0) {
+        if (!baca_error_is_set(error)) {
+            baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid bookmark removal");
+        }
+        return false;
+    }
+
+    sqlite3_stmt *statement = nullptr;
+    int status = sqlite3_prepare_v2(database->handle,
+                                    "DELETE FROM \"bookmarks\" WHERE \"filepath\" = ?1 AND \"id\" = ?2", -1,
+                                    &statement, nullptr);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not prepare bookmark removal", status, error);
+        return false;
+    }
+    status = sqlite3_bind_text(statement, 1, filepath, -1, SQLITE_TRANSIENT);
+    if (status == SQLITE_OK) {
+        status = sqlite3_bind_int64(statement, 2, id);
+    }
+    if (status == SQLITE_OK) {
+        status = sqlite3_step(statement);
+    }
+    if (status != SQLITE_DONE) {
+        baca_database_set_error(database, "could not remove bookmark", status, error);
+        (void)sqlite3_finalize(statement);
+        return false;
+    }
+    status = sqlite3_finalize(statement);
+    if (status != SQLITE_OK) {
+        baca_database_set_error(database, "could not finish bookmark removal", status, error);
+        return false;
+    }
+    return true;
 }

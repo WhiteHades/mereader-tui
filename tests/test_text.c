@@ -189,9 +189,23 @@ static bool run_vim_navigation_pty(BacaString *output, unsigned *stage) {
     }
     start = output->length;
     ok = ok && text_pty_write(master, "2n", 2U) && text_pty_wait_for(master, output, start, "ZZZZZZZZ") &&
-         text_pty_write(master, "\nq", 2U);
+         text_pty_write(master, "\nb", 2U) && text_pty_wait_for(master, output, start, "Bookmark saved");
     if (ok) {
         *stage = 10U;
+    }
+    start = output->length;
+    ok = ok && text_pty_write(master, "qggB", 4U) && text_pty_wait_for(master, output, start, "Bookmarks") &&
+         text_pty_write(master, "\n", 1U) && text_pty_wait_for(master, output, start, "ZZZZZZZZ");
+    if (ok) {
+        *stage = 11U;
+    }
+    start = output->length;
+    static const char delete_bookmark[] = "B\033[3~";
+    ok = ok && text_pty_write(master, delete_bookmark, sizeof(delete_bookmark) - 1U) &&
+         text_pty_wait_for(master, output, start, "No bookmarks for this") &&
+         text_pty_write(master, "qq", 2U);
+    if (ok) {
+        *stage = 12U;
     }
 
     int status = 0;

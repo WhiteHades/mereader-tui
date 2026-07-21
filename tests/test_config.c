@@ -53,6 +53,10 @@ static BacaTestResult test_defaults(void) {
     TEST_ASSERT_STR(config.keymaps.page_down.items[3], "space");
     TEST_ASSERT_SIZE(config.keymaps.home.length, 2U);
     TEST_ASSERT_STR(config.keymaps.home.items[1], "gg");
+    TEST_ASSERT_SIZE(config.keymaps.add_bookmark.length, 1U);
+    TEST_ASSERT_STR(config.keymaps.add_bookmark.items[0], "b");
+    TEST_ASSERT_SIZE(config.keymaps.open_bookmarks.length, 1U);
+    TEST_ASSERT_STR(config.keymaps.open_bookmarks.items[0], "B");
     TEST_ASSERT_INT(baca_config_content_width(&config, 120), 80);
     baca_config_free(&config);
     return BACA_TEST_PASS;
@@ -224,6 +228,8 @@ static BacaTestResult test_default_file_creation_is_isolated(void) {
     TEST_ASSERT(strstr(baca_config_default_text(), "MaxTextWidth = 80") != NULL);
     TEST_ASSERT(strstr(baca_config_default_text(), "ImageMode = auto") != NULL);
     TEST_ASSERT(strstr(baca_config_default_text(), "TogglePdfView = v") != NULL);
+    TEST_ASSERT(strstr(baca_config_default_text(), "AddBookmark = b") != NULL);
+    TEST_ASSERT(strstr(baca_config_default_text(), "OpenBookmarks = B") != NULL);
     baca_config_free(&config);
     free(path);
     return BACA_TEST_PASS;

@@ -23,6 +23,8 @@ typedef struct BacaKeymaps {
     BacaKeyList home;
     BacaKeyList end;
     BacaKeyList open_toc;
+    BacaKeyList add_bookmark;
+    BacaKeyList open_bookmarks;
     BacaKeyList open_metadata;
     BacaKeyList open_help;
     BacaKeyList search_forward;

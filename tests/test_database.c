@@ -57,14 +57,14 @@ static BacaTestResult test_open_and_migrate_idempotently(void) {
     TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
     int metadata_count = -1;
     int table_count = -1;
-    TEST_ASSERT(sqlite_scalar_int(database.handle, "SELECT count(*) FROM metadata WHERE version = 0",
+    TEST_ASSERT(sqlite_scalar_int(database.handle, "SELECT count(*) FROM metadata WHERE version IN (0, 1)",
                                   &metadata_count));
     TEST_ASSERT(sqlite_scalar_int(database.handle,
                                   "SELECT count(*) FROM sqlite_master WHERE type='table' AND "
-                                  "name IN ('metadata', 'reading_history')",
+                                  "name IN ('metadata', 'reading_history', 'bookmarks')",
                                   &table_count));
-    TEST_ASSERT_INT(metadata_count, 1);
-    TEST_ASSERT_INT(table_count, 2);
+    TEST_ASSERT_INT(metadata_count, 2);
+    TEST_ASSERT_INT(table_count, 3);
     baca_database_close(&database);
     TEST_ASSERT(database.handle == NULL && database.path == NULL);
     return BACA_TEST_PASS;
@@ -220,6 +220,61 @@ static BacaTestResult test_progress_values(void) {
     return BACA_TEST_PASS;
 }
 
+static BacaTestResult test_bookmark_crud(void) {
+    BacaDatabase database = {0};
+    BacaError error = {0};
+    TEST_ASSERT_MSG(open_test_database("database/bookmarks.db", true, &database, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.75, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/two.epub", 0.5, &error), "%s", error.message);
+    char *database_path = baca_strdup(database.path, &error);
+    TEST_ASSERT_MSG(database_path != NULL, "%s", error.message);
+    baca_database_close(&database);
+    TEST_ASSERT_MSG(baca_database_open(&database, database_path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
+    free(database_path);
+
+    BacaBookmarks bookmarks = {0};
+    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+                    error.message);
+    TEST_ASSERT_SIZE(bookmarks.length, 2U);
+    TEST_ASSERT(bookmarks.items[0].id > 0);
+    TEST_ASSERT(bookmarks.items[1].id > 0 && bookmarks.items[1].id != bookmarks.items[0].id);
+    TEST_ASSERT_DOUBLE(bookmarks.items[0].reading_progress, 0.25, 1e-12);
+    TEST_ASSERT_DOUBLE(bookmarks.items[1].reading_progress, 0.75, 1e-12);
+    TEST_ASSERT(bookmarks.items[0].created_at != NULL && bookmarks.items[0].created_at[0] != '\0');
+    int64_t first_id = bookmarks.items[0].id;
+    baca_bookmarks_free(&bookmarks);
+
+    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/two.epub", first_id, &error), "%s",
+                    error.message);
+    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+                    error.message);
+    TEST_ASSERT_SIZE(bookmarks.length, 2U);
+    baca_bookmarks_free(&bookmarks);
+    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
+                    error.message);
+    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
+                    error.message);
+    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+                    error.message);
+    TEST_ASSERT_SIZE(bookmarks.length, 1U);
+    TEST_ASSERT_DOUBLE(bookmarks.items[0].reading_progress, 0.75, 1e-12);
+    baca_bookmarks_free(&bookmarks);
+
+    TEST_ASSERT(!baca_database_add_bookmark(&database, "/books/one.epub", NAN, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_database_add_bookmark(&database, "/books/one.epub", -0.1, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+    baca_error_clear(&error);
+    TEST_ASSERT(!baca_database_remove_bookmark(&database, "/books/one.epub", 0, &error));
+    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+    baca_database_close(&database);
+    return BACA_TEST_PASS;
+}
+
 static BacaTestResult test_control_and_embedded_nul_values(void) {
     BacaDatabase database = {0};
     BacaError error = {0};
@@ -328,6 +383,7 @@ const BacaTestCase *baca_database_test_cases(size_t *count) {
         {.name = "legacy_peewee_schema", .function = test_legacy_peewee_schema},
         {.name = "save_list_order_nth_fuzzy_and_stale", .function = test_save_list_order_nth_fuzzy_and_stale},
         {.name = "progress_values", .function = test_progress_values},
+        {.name = "bookmark_crud", .function = test_bookmark_crud},
         {.name = "control_and_embedded_nul_values", .function = test_control_and_embedded_nul_values},
         {.name = "concurrent_first_migration", .function = test_concurrent_first_migration},
     };
