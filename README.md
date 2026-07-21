@@ -8,8 +8,8 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Features
 
-- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, CBZ, CBR, CB7, PNG, JPEG,
-  GIF, WebP, BMP, and SVG
+- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, FB2, TXT, Markdown, CBZ, CBR,
+  CB7, PNG, JPEG, GIF, WebP, BMP, and SVG
 - Remembers last reading position
 - Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
@@ -41,7 +41,7 @@ sudo make PREFIX=/usr/local install
 # open the library
 baca
 
-# open an ebook, PDF, or image directly
+# open an ebook, document, comic, or image directly
 baca path/to/your/ebook.epub
 
 # print reading history without opening the TUI
@@ -103,6 +103,24 @@ Comic archives are limited to 20,000 members, 10,000 image pages, 16 MiB per pag
 are not supported. The opened archive descriptor remains authoritative for the
 reading session, so replacing or deleting the path does not redirect page loads to
 another file.
+
+## Reading Text and FictionBook
+
+TXT files are decoded as UTF-8, UTF-8 with a byte-order mark, or BOM-marked
+UTF-16LE/UTF-16BE. CRLF and CR line endings are normalized to LF. Markdown files
+use the same reader and remain literal plain text; Baca does not render Markdown
+syntax. Text input and decoded output are each limited to 64 MiB. Invalid text,
+embedded null characters, and incomplete UTF-16 code units are rejected.
+
+FictionBook 2 (`.fb2`) files provide book and document metadata, nested section
+navigation, inline emphasis/strong/code styles, internal and external links,
+additional bodies such as notes, cover images, and lazy embedded image decoding.
+FB2 files are limited to 64 MiB of XML and 64 MiB of generated markup. Metadata
+fields are limited to 1 MiB. Up to 10,000 supported embedded images may be retained,
+with 16 MiB per image, 1 GiB of declared image data, and 8 MiB of image identifiers.
+DTD subsets are rejected and XML parsing never loads network resources. Missing or
+unsupported image references remain placeholders instead of preventing the book
+from opening.
 
 ## Reading PDFs
 
@@ -215,13 +233,13 @@ Screenshot = f12
   But these are planned to be implemented to `baca` in the near future:
 
   - [ ] **TODO** Bookmarks
-  - [ ] **TODO** FictionBook support
   - [ ] **TODO** URL reading support
 
 ## Credits
 
 - [ncurses](https://invisible-island.net/ncurses/)
 - [libmobi](https://github.com/bfabiszewski/libmobi)
+- [libarchive](https://www.libarchive.org/)
 - [libxml2](https://gitlab.gnome.org/GNOME/libxml2)
 
 ## License

@@ -17,6 +17,7 @@ SOURCES = \
 	src/database.c \
 	src/document.c \
 	src/epub.c \
+	src/fb2.c \
 	src/graphics.c \
 	src/html.c \
 	src/image.c \
@@ -25,11 +26,13 @@ SOURCES = \
 	src/mobi.c \
 	src/pdf.c \
 	src/platform.c \
+	src/text.c \
 	src/tui.c \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_comic.c tests/test_config.c tests/test_database.c \
-	tests/test_document.c tests/test_graphics.c tests/test_layout.c tests/test_library.c tests/test_support.c
+	tests/test_document.c tests/test_fb2.c tests/test_graphics.c tests/test_layout.c tests/test_library.c \
+	tests/test_support.c tests/test_text.c
 
 TEST_SOURCES += tests/test_pdf.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)

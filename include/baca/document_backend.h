@@ -17,9 +17,13 @@
                                               BacaError *error);
 [[nodiscard]] bool baca_comic_open(BacaDocument *document, const char *path,
                                     const struct stat *expected_identity, BacaError *error);
+[[nodiscard]] bool baca_text_open(BacaDocument *document, const char *path,
+                                  const struct stat *expected_identity, BacaError *error);
+[[nodiscard]] bool baca_fb2_open(BacaDocument *document, const char *path,
+                                 const struct stat *expected_identity, BacaError *error);
 
 [[nodiscard]] char *baca_document_resolve_uri(const char *base, const char *reference, bool allow_external,
-                                              BacaError *error);
+                                               BacaError *error);
 [[nodiscard]] char *baca_document_uri_path(const char *uri, BacaError *error);
 [[nodiscard]] char *baca_document_fragment_target(const char *base, const char *fragment, BacaError *error);
 [[nodiscard]] bool baca_document_account_metadata(BacaDocument *document, BacaError *error);
@@ -27,3 +31,5 @@
 void baca_document_block_free(BacaBlock *block);
 void baca_document_rollback_blocks(BacaDocument *document, size_t first_block);
 void baca_document_rollback_toc(BacaDocument *document, size_t first_entry);
+[[nodiscard]] bool baca_document_read_snapshot(const char *path, const struct stat *expected_identity,
+                                                size_t maximum, BacaBuffer *output, BacaError *error);

@@ -995,6 +995,97 @@ static bool read_magic(const char *path, unsigned char *buffer, size_t capacity,
     return true;
 }
 
+static bool snapshot_identity_matches(const struct stat *expected, const struct stat *actual) {
+    return expected->st_dev == actual->st_dev && expected->st_ino == actual->st_ino &&
+           expected->st_mode == actual->st_mode && expected->st_size == actual->st_size &&
+           expected->st_mtim.tv_sec == actual->st_mtim.tv_sec &&
+           expected->st_mtim.tv_nsec == actual->st_mtim.tv_nsec &&
+           expected->st_ctim.tv_sec == actual->st_ctim.tv_sec &&
+           expected->st_ctim.tv_nsec == actual->st_ctim.tv_nsec;
+}
+
+bool baca_document_read_snapshot(const char *path, const struct stat *expected_identity, size_t maximum,
+                                 BacaBuffer *output, BacaError *error) {
+    if (path == NULL || path[0] == '\0' || expected_identity == NULL || output == NULL || maximum == 0U) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "path, identity, limit, and snapshot output are required");
+        return false;
+    }
+    if (output->data != NULL || output->length != 0U || output->capacity != 0U) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "snapshot output must be zero-initialized");
+        return false;
+    }
+
+    const int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    if (descriptor < 0) {
+        const int saved_errno = errno;
+        const BacaErrorCode code = saved_errno == ENOENT || saved_errno == ENOTDIR ?
+                                       BACA_ERROR_NOT_FOUND :
+                                       BACA_ERROR_IO;
+        baca_error_set(error, code, "could not open %s: %s", path, strerror(saved_errno));
+        return false;
+    }
+    struct stat before;
+    if (fstat(descriptor, &before) != 0) {
+        const int saved_errno = errno;
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_IO, "could not inspect %s: %s", path, strerror(saved_errno));
+        return false;
+    }
+    if (!S_ISREG(before.st_mode) || before.st_size < 0 ||
+        !snapshot_identity_matches(expected_identity, &before)) {
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_CORRUPT, "document changed between format detection and open: %s", path);
+        return false;
+    }
+    if ((uintmax_t)before.st_size > maximum || (uintmax_t)before.st_size > SIZE_MAX - 1U) {
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_CORRUPT, "document exceeds the supported input size limit: %s", path);
+        return false;
+    }
+
+    const size_t length = (size_t)before.st_size;
+    unsigned char *data = malloc(length + 1U);
+    if (data == NULL) {
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate document snapshot");
+        return false;
+    }
+    size_t offset = 0U;
+    while (offset < length) {
+        const ssize_t count = read(descriptor, data + offset, length - offset);
+        if (count > 0) {
+            offset += (size_t)count;
+        } else if (count == 0) {
+            free(data);
+            (void)close(descriptor);
+            baca_error_set(error, BACA_ERROR_CORRUPT, "document was truncated while opening: %s", path);
+            return false;
+        } else if (errno != EINTR) {
+            const int saved_errno = errno;
+            free(data);
+            (void)close(descriptor);
+            baca_error_set(error, BACA_ERROR_IO, "could not read %s: %s", path, strerror(saved_errno));
+            return false;
+        }
+    }
+    data[length] = '\0';
+    struct stat after;
+    if (fstat(descriptor, &after) != 0 || !snapshot_identity_matches(&before, &after)) {
+        free(data);
+        (void)close(descriptor);
+        baca_error_set(error, BACA_ERROR_CORRUPT, "document changed while opening: %s", path);
+        return false;
+    }
+    if (close(descriptor) != 0) {
+        const int saved_errno = errno;
+        free(data);
+        baca_error_set(error, BACA_ERROR_IO, "could not close %s: %s", path, strerror(saved_errno));
+        return false;
+    }
+    *output = (BacaBuffer){.data = data, .length = length, .capacity = length + 1U};
+    return true;
+}
+
 static bool has_epub_mimetype(const char *path) {
     int zip_error = 0;
     zip_t *archive = zip_open(path, ZIP_RDONLY, &zip_error);
@@ -1077,7 +1168,7 @@ static size_t magic_find(const unsigned char *magic, size_t magic_length, size_t
     return SIZE_MAX;
 }
 
-static bool magic_svg(const unsigned char *magic, size_t magic_length) {
+static size_t magic_xml_root_offset(const unsigned char *magic, size_t magic_length) {
     size_t offset = 0U;
     if (magic_length >= 3U && memcmp(magic, "\xef\xbb\xbf", 3U) == 0) {
         offset = 3U;
@@ -1091,7 +1182,7 @@ static bool magic_svg(const unsigned char *magic, size_t magic_length) {
         if (magic_starts_with(magic, magic_length, offset, "<?xml", 5U)) {
             const size_t end = magic_find(magic, magic_length, offset + 5U, "?>", 2U);
             if (end == SIZE_MAX) {
-                return false;
+                return SIZE_MAX;
             }
             offset = end + 2U;
             continue;
@@ -1099,12 +1190,20 @@ static bool magic_svg(const unsigned char *magic, size_t magic_length) {
         if (magic_starts_with(magic, magic_length, offset, "<!--", 4U)) {
             const size_t end = magic_find(magic, magic_length, offset + 4U, "-->", 3U);
             if (end == SIZE_MAX) {
-                return false;
+                return SIZE_MAX;
             }
             offset = end + 3U;
             continue;
         }
         break;
+    }
+    return offset;
+}
+
+static bool magic_svg(const unsigned char *magic, size_t magic_length) {
+    const size_t offset = magic_xml_root_offset(magic, magic_length);
+    if (offset == SIZE_MAX) {
+        return false;
     }
     if (!magic_starts_with(magic, magic_length, offset, "<svg", 4U) || offset + 4U >= magic_length) {
         return false;
@@ -1112,6 +1211,18 @@ static bool magic_svg(const unsigned char *magic, size_t magic_length) {
     const unsigned char delimiter = magic[offset + 4U];
     return delimiter == ' ' || delimiter == '\t' || delimiter == '\r' || delimiter == '\n' ||
            delimiter == '\f' || delimiter == '>' || delimiter == '/' || delimiter == ':';
+}
+
+static bool magic_fb2(const unsigned char *magic, size_t magic_length) {
+    const size_t offset = magic_xml_root_offset(magic, magic_length);
+    static const char root[] = "<FictionBook";
+    if (offset == SIZE_MAX || !magic_starts_with(magic, magic_length, offset, root, sizeof(root) - 1U) ||
+        offset + sizeof(root) - 1U >= magic_length) {
+        return false;
+    }
+    const unsigned char delimiter = magic[offset + sizeof(root) - 1U];
+    return delimiter == ' ' || delimiter == '\t' || delimiter == '\r' || delimiter == '\n' ||
+           delimiter == '\f' || delimiter == '>' || delimiter == '/';
 }
 
 static BacaDocumentFormat detect_format(const char *path, const char *extension, const unsigned char *magic,
@@ -1133,6 +1244,9 @@ static BacaDocumentFormat detect_format(const char *path, const char *extension,
         (magic_length >= 8U && memcmp(magic, "Rar!\032\007\001\000", 8U) == 0) ||
         (magic_length >= 6U && memcmp(magic, "7z\274\257\047\034", 6U) == 0)) {
         return BACA_FORMAT_COMIC;
+    }
+    if (magic_fb2(magic, magic_length)) {
+        return BACA_FORMAT_FB2;
     }
     if ((magic_length >= 8U && memcmp(magic, "\211PNG\r\n\032\n", 8U) == 0) ||
         (magic_length >= 3U && memcmp(magic, "\377\330\377", 3U) == 0) ||
@@ -1376,9 +1490,10 @@ bool baca_document_open(BacaDocument *document, const char *path, BacaError *err
         success = baca_image_open(&opened, opened.path, &detected_identity, error);
     } else if (opened.format == BACA_FORMAT_COMIC) {
         success = baca_comic_open(&opened, opened.path, &detected_identity, error);
-    } else if (opened.format == BACA_FORMAT_TEXT || opened.format == BACA_FORMAT_FB2) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "%s support is not implemented yet",
-                       baca_document_format_name(opened.format));
+    } else if (opened.format == BACA_FORMAT_TEXT) {
+        success = baca_text_open(&opened, opened.path, &detected_identity, error);
+    } else if (opened.format == BACA_FORMAT_FB2) {
+        success = baca_fb2_open(&opened, opened.path, &detected_identity, error);
     } else {
         baca_error_set(error, BACA_ERROR_UNSUPPORTED, "unsupported document format: %s", path);
     }
