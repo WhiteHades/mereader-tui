@@ -922,7 +922,7 @@ static bool run_pdf_pty(PdfPtyResult *result) {
     start = result->output.length;
     ok = ok && ioctl(master, TIOCSWINSZ, &size) == 0 &&
          pdf_wait_for(master, &result->output, start, "c=36,") &&
-         pdf_write_all(master, "g", 1U);
+         pdf_write_all(master, "gg", 2U);
     start = result->output.length;
     ok = ok && pdf_wait_for(master, &result->output, start, "a=p,");
 
@@ -942,7 +942,7 @@ static bool run_pdf_pty(PdfPtyResult *result) {
     ok = result->internal_link_reached_page && pdf_write_all(master, "\030", 1U) &&
          pdf_wait_for(master, &result->output, start, "c=36,");
     start = result->output.length;
-    ok = ok && pdf_write_all(master, "g", 1U) &&
+    ok = ok && pdf_write_all(master, "gg", 2U) &&
          pdf_wait_for(master, &result->output, start, "a=p,") &&
          pdf_drain_until_idle(master, &result->output);
     const size_t external_output = result->output.length;
@@ -975,7 +975,7 @@ static bool run_pdf_pty(PdfPtyResult *result) {
                            "https://example.test/pdf-outline");
 
     start = result->output.length;
-    ok = result->external_toc_opened && pdf_write_all(master, "g\030", 2U) &&
+    ok = result->external_toc_opened && pdf_write_all(master, "gg\030", 3U) &&
          pdf_wait_for(master, &result->output, start, "First page alpha");
     start = result->output.length;
     ok = ok && pdf_write_all(master, "\030", 1U) &&

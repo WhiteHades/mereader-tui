@@ -62,6 +62,15 @@ baca alice wonder lewis carroll
 
 Quitting a reader opened from the library returns to the refreshed library.
 
+### Reader keys
+
+- `j`/`k` or arrows scroll; Ctrl-f/Ctrl-b, `l`/`h`, or Page keys move by pages
+- `gg`/`G` or Home/End jump to the start/end; `{count}gg` and `{count}G` jump to a 1-based layout line
+- Numeric prefixes repeat scrolling, paging, and `n`/`N` search motions, such as `12j` or `3n`
+- Ctrl-o goes back through jumps; Ctrl-i goes forward. Tab opens the TOC when there is no forward jump
+- `/` and `?` search; `n`/`N` repeat; Enter clears highlights; `q` or Esc cancels a search or quits
+- `M` opens metadata; F1 opens all configured keys
+
 ## Opening an Image
 
 PNG, JPEG, GIF, WebP, BMP, and SVG files can be opened directly as one-image
@@ -191,7 +200,7 @@ ScrollDown = down,j
 ScrollUp = up,k
 PageDown = ctrl+f,pagedown,l,space
 PageUp = ctrl+b,pageup,h
-Home = home,g
+Home = home,gg
 End = end,G
 OpenToc = tab
 OpenMetadata = M

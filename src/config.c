@@ -63,7 +63,7 @@ static const char BACA_DEFAULT_CONFIG[] =
     "ScrollUp = up,k\n"
     "PageDown = ctrl+f,pagedown,l,space\n"
     "PageUp = ctrl+b,pageup,h\n"
-    "Home = home,g\n"
+    "Home = home,gg\n"
     "End = end,G\n"
     "OpenToc = tab\n"
     "OpenMetadata = M\n"
@@ -583,7 +583,7 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
                                     &result.keymaps.page_down, error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "PageUp", "ctrl+b,pageup,h"),
                                     &result.keymaps.page_up, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "Home", "home,g"), &result.keymaps.home,
+        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "Home", "home,gg"), &result.keymaps.home,
                                     error) ||
         !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "End", "end,G"), &result.keymaps.end,
                                     error) ||

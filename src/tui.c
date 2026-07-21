@@ -25,6 +25,9 @@ enum {
   BACA_PAIR_SEARCH,
   BACA_PAIR_ALERT,
   BACA_PAIR_IMAGE_FIRST,
+  BACA_JUMP_HISTORY_LIMIT = 100,
+  BACA_HELP_LINE_COUNT = 19,
+  BACA_PDF_HELP_LINE_COUNT = 20,
 };
 
 static const char BACA_IMAGE_PLACEHOLDER[] = "IMAGE";
@@ -65,6 +68,19 @@ typedef struct BacaPromptState {
   bool active;
   bool forward;
 } BacaPromptState;
+
+typedef struct BacaReaderCommandState {
+  size_t count;
+  bool count_active;
+  bool g_pending;
+} BacaReaderCommandState;
+
+typedef struct BacaJumpHistory {
+  double backward[BACA_JUMP_HISTORY_LIMIT];
+  size_t backward_count;
+  double forward[BACA_JUMP_HISTORY_LIMIT];
+  size_t forward_count;
+} BacaJumpHistory;
 
 typedef struct BacaAnimation {
   double from;
@@ -124,6 +140,8 @@ typedef struct BacaTuiState {
   size_t pdf_render_failure_count;
   BacaSearchState search;
   BacaPromptState prompt;
+  BacaReaderCommandState reader_command;
+  BacaJumpHistory jumps;
   BacaAnimation animation;
   char **temp_directories;
   size_t temp_directory_count;
@@ -755,6 +773,52 @@ static void cancel_animation(BacaTuiState *state) {
   state->animation.active = false;
 }
 
+static void jump_stack_push(double positions[BACA_JUMP_HISTORY_LIMIT],
+                            size_t *count, double progress) {
+  if (*count > 0U && positions[*count - 1U] == progress) {
+    return;
+  }
+  if (*count == BACA_JUMP_HISTORY_LIMIT) {
+    memmove(positions, positions + 1U,
+            (BACA_JUMP_HISTORY_LIMIT - 1U) * sizeof(*positions));
+    --*count;
+  }
+  positions[(*count)++] = progress;
+}
+
+static bool jump_to_line(BacaTuiState *state, size_t line) {
+  const size_t target = minimum_size(line, maximum_scroll(state));
+  if (target == state->app->scroll_line) {
+    return false;
+  }
+  remember_progress(state);
+  jump_stack_push(state->jumps.backward, &state->jumps.backward_count,
+                  state->app->saved_progress);
+  state->jumps.forward_count = 0U;
+  cancel_animation(state);
+  set_scroll_line(state, target);
+  return true;
+}
+
+static bool traverse_jump_history(BacaTuiState *state, bool forward) {
+  double *source = forward ? state->jumps.forward : state->jumps.backward;
+  size_t *source_count =
+      forward ? &state->jumps.forward_count : &state->jumps.backward_count;
+  double *destination =
+      forward ? state->jumps.backward : state->jumps.forward;
+  size_t *destination_count =
+      forward ? &state->jumps.backward_count : &state->jumps.forward_count;
+  if (*source_count == 0U) {
+    return false;
+  }
+  remember_progress(state);
+  jump_stack_push(destination, destination_count, state->app->saved_progress);
+  const double progress = source[--*source_count];
+  cancel_animation(state);
+  set_scroll_line(state, restore_progress_line(state, progress));
+  return true;
+}
+
 static void scroll_lines(BacaTuiState *state, int lines) {
   cancel_animation(state);
   size_t target = state->app->scroll_line;
@@ -789,15 +853,17 @@ static void start_scroll_animation(BacaTuiState *state, size_t target) {
   state->animation.active = true;
 }
 
-static void page_scroll(BacaTuiState *state, bool down) {
+static void page_scroll(BacaTuiState *state, bool down, size_t count) {
   const size_t amount = state->rows > 1 ? (size_t)(state->rows - 1) : 1U;
+  const size_t maximum = maximum_scroll(state);
+  const size_t distance = amount > maximum / count ? maximum : amount * count;
   size_t target = state->app->scroll_line;
   if (down) {
-    const size_t maximum = maximum_scroll(state);
-    target = amount > maximum - minimum_size(target, maximum) ? maximum
-                                                              : target + amount;
+    target = distance > maximum - minimum_size(target, maximum)
+                 ? maximum
+                 : target + distance;
   } else {
-    target = amount > target ? 0U : target - amount;
+    target = distance > target ? 0U : target - distance;
   }
   start_scroll_animation(state, target);
 }
@@ -851,7 +917,7 @@ static bool select_initial_match(BacaTuiState *state, bool forward) {
   return false;
 }
 
-static void reveal_current_match(BacaTuiState *state) {
+static void reveal_current_match(BacaTuiState *state, bool record_jump) {
   if (!state->search.active ||
       state->search.current_match >= state->search.match_count) {
     return;
@@ -859,9 +925,18 @@ static void reveal_current_match(BacaTuiState *state) {
   const size_t line = state->search.matches[state->search.current_match].line;
   const size_t visible = state->rows > 0 ? (size_t)state->rows : 1U;
   if (line < state->app->scroll_line) {
-    set_scroll_line(state, line);
+    if (record_jump) {
+      (void)jump_to_line(state, line);
+    } else {
+      set_scroll_line(state, line);
+    }
   } else if (line >= state->app->scroll_line + visible) {
-    set_scroll_line(state, line >= visible ? line - visible + 1U : 0U);
+    const size_t target = line >= visible ? line - visible + 1U : 0U;
+    if (record_jump) {
+      (void)jump_to_line(state, target);
+    } else {
+      set_scroll_line(state, target);
+    }
   }
 }
 
@@ -897,29 +972,30 @@ static void submit_search(BacaTuiState *state) {
     open_alert(state, message);
     return;
   }
-  reveal_current_match(state);
+  reveal_current_match(state, true);
 }
 
-static void repeat_search(BacaTuiState *state, bool same_direction) {
+static bool repeat_search(BacaTuiState *state, bool same_direction) {
   if (!state->search.active || state->search.match_count == 0U) {
-    return;
+    return false;
   }
   const bool forward =
       same_direction ? state->search.forward : !state->search.forward;
   if (forward) {
     if (state->search.current_match + 1U >= state->search.match_count) {
       open_alert(state, "No further match");
-      return;
+      return false;
     }
     ++state->search.current_match;
   } else {
     if (state->search.current_match == 0U) {
       open_alert(state, "No further match");
-      return;
+      return false;
     }
     --state->search.current_match;
   }
-  reveal_current_match(state);
+  reveal_current_match(state, true);
+  return true;
 }
 
 static void cancel_search(BacaTuiState *state) {
@@ -976,7 +1052,7 @@ static bool refresh_search_after_layout(BacaTuiState *state) {
     clear_search(&state->search);
     return false;
   }
-  reveal_current_match(state);
+  reveal_current_match(state, false);
   return true;
 }
 
@@ -1778,6 +1854,16 @@ static void draw_key_list(WINDOW *window, int row, int width, const char *name,
 
 static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
                               int width) {
+  char *jump_back_items[] = {"ctrl+o"};
+  char *jump_forward_items[] = {"ctrl+i"};
+  const BacaKeyList jump_back = {
+      .items = jump_back_items,
+      .length = BACA_ARRAY_LEN(jump_back_items),
+  };
+  const BacaKeyList jump_forward = {
+      .items = jump_forward_items,
+      .length = BACA_ARRAY_LEN(jump_forward_items),
+  };
   static const char *const names[] = {
       "Toggle light/dark",
       "Scroll down",
@@ -1795,6 +1881,8 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
       "Previous match",
       "Confirm",
       "Close or quit",
+      "Jump back",
+      "Jump forward",
       "Screenshot",
       "Toggle PDF view",
   };
@@ -1805,7 +1893,8 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
       &maps->end,         &maps->open_toc,       &maps->open_metadata,
       &maps->open_help,   &maps->search_forward, &maps->search_backward,
       &maps->next_match,  &maps->previous_match, &maps->confirm,
-      &maps->close,       &maps->screenshot,      &maps->toggle_pdf_view,
+      &maps->close,       &jump_back,             &jump_forward,
+      &maps->screenshot,  &maps->toggle_pdf_view,
   };
   const size_t count = state->app->document.format == BACA_FORMAT_PDF
                            ? BACA_ARRAY_LEN(names)
@@ -2071,7 +2160,9 @@ static size_t overlay_line_count(const BacaTuiState *state) {
   case BACA_OVERLAY_METADATA:
     return 13U;
   case BACA_OVERLAY_HELP:
-    return state->app->document.format == BACA_FORMAT_PDF ? 18U : 17U;
+    return state->app->document.format == BACA_FORMAT_PDF
+               ? BACA_PDF_HELP_LINE_COUNT
+               : BACA_HELP_LINE_COUNT;
   case BACA_OVERLAY_ALERT:
     return 1U;
   case BACA_OVERLAY_NONE:
@@ -2318,8 +2409,7 @@ static bool follow_link(BacaTuiState *state, const char *link,
     open_alert(state, missing_target_message);
     return false;
   }
-  cancel_animation(state);
-  set_scroll_line(state, line);
+  (void)jump_to_line(state, line);
   return true;
 }
 
@@ -2751,8 +2841,82 @@ static void toggle_pdf_view(BacaTuiState *state) {
   }
 }
 
+static void reset_reader_command(BacaTuiState *state) {
+  state->reader_command = (BacaReaderCommandState){0};
+}
+
+static bool collect_reader_count(BacaTuiState *state,
+                                 const BacaNormalizedKey *key) {
+  if (key->key_code || key->character < L'0' || key->character > L'9') {
+    return false;
+  }
+  const size_t digit = (size_t)(key->character - L'0');
+  if (!state->reader_command.count_active && digit == 0U) {
+    return false;
+  }
+  state->reader_command.count_active = true;
+  if (state->reader_command.count > (SIZE_MAX - digit) / 10U) {
+    state->reader_command.count = SIZE_MAX;
+  } else {
+    state->reader_command.count = state->reader_command.count * 10U + digit;
+  }
+  return true;
+}
+
+static size_t take_reader_count(BacaTuiState *state, bool *explicit_count) {
+  *explicit_count = state->reader_command.count_active;
+  const size_t count = *explicit_count ? state->reader_command.count : 1U;
+  state->reader_command.count = 0U;
+  state->reader_command.count_active = false;
+  return count;
+}
+
+static void scroll_reader_lines(BacaTuiState *state, bool down,
+                                size_t count) {
+  const size_t maximum = maximum_scroll(state);
+  const size_t current = minimum_size(state->app->scroll_line, maximum);
+  const size_t target = down
+                            ? (count > maximum - current ? maximum
+                                                         : current + count)
+                            : (count > current ? 0U : current - count);
+  cancel_animation(state);
+  set_scroll_line(state, target);
+}
+
 static void handle_reader_key(BacaTuiState *state,
                               const BacaNormalizedKey *key) {
+  if (key->command == BACA_COMMAND_QUIT &&
+      (state->reader_command.count_active ||
+       state->reader_command.g_pending)) {
+    reset_reader_command(state);
+    return;
+  }
+  if (collect_reader_count(state, key)) {
+    return;
+  }
+  if (!key->key_code && key->character == L'g') {
+    if (!state->reader_command.g_pending) {
+      state->reader_command.g_pending = true;
+      return;
+    }
+    bool explicit_count = false;
+    const size_t count = take_reader_count(state, &explicit_count);
+    state->reader_command.g_pending = false;
+    (void)jump_to_line(state, explicit_count ? count - 1U : 0U);
+    return;
+  }
+  if (state->reader_command.g_pending) {
+    reset_reader_command(state);
+  }
+  if (!key->key_code && key->character == L'\t' &&
+      state->jumps.forward_count > 0U) {
+    state->reader_command.count = 0U;
+    state->reader_command.count_active = false;
+    (void)traverse_jump_history(state, true);
+    return;
+  }
+  bool explicit_count = false;
+  const size_t count = take_reader_count(state, &explicit_count);
   switch (key->command) {
   case BACA_COMMAND_QUIT:
     if (state->search.active) {
@@ -2762,24 +2926,23 @@ static void handle_reader_key(BacaTuiState *state,
     }
     break;
   case BACA_COMMAND_SCROLL_DOWN:
-    scroll_lines(state, 1);
+    scroll_reader_lines(state, true, count);
     break;
   case BACA_COMMAND_SCROLL_UP:
-    scroll_lines(state, -1);
+    scroll_reader_lines(state, false, count);
     break;
   case BACA_COMMAND_PAGE_DOWN:
-    page_scroll(state, true);
+    page_scroll(state, true, count);
     break;
   case BACA_COMMAND_PAGE_UP:
-    page_scroll(state, false);
+    page_scroll(state, false, count);
     break;
   case BACA_COMMAND_HOME:
-    cancel_animation(state);
-    set_scroll_line(state, 0U);
+    (void)jump_to_line(state, 0U);
     break;
   case BACA_COMMAND_END:
-    cancel_animation(state);
-    set_scroll_line(state, maximum_scroll(state));
+    (void)jump_to_line(state,
+                       explicit_count ? count - 1U : maximum_scroll(state));
     break;
   case BACA_COMMAND_TOC:
     open_toc(state);
@@ -2805,10 +2968,18 @@ static void handle_reader_key(BacaTuiState *state,
     begin_search_prompt(state, false);
     break;
   case BACA_COMMAND_NEXT_MATCH:
-    repeat_search(state, true);
+    for (size_t index = 0U; index < count; ++index) {
+      if (!repeat_search(state, true)) {
+        break;
+      }
+    }
     break;
   case BACA_COMMAND_PREVIOUS_MATCH:
-    repeat_search(state, false);
+    for (size_t index = 0U; index < count; ++index) {
+      if (!repeat_search(state, false)) {
+        break;
+      }
+    }
     break;
   case BACA_COMMAND_TOGGLE_PDF_VIEW:
     toggle_pdf_view(state);
@@ -2821,6 +2992,9 @@ static void handle_reader_key(BacaTuiState *state,
     save_screenshot(state);
     break;
   case BACA_COMMAND_NONE:
+    if (!key->key_code && key->character == 15) {
+      (void)traverse_jump_history(state, false);
+    }
     break;
   }
 }
@@ -2830,7 +3004,7 @@ static bool initialize_curses(BacaTuiState *state, BacaError *error) {
     baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot initialize terminal");
     return false;
   }
-  (void)cbreak();
+  (void)raw();
   (void)noecho();
   (void)keypad(stdscr, true);
   (void)set_escdelay(25);
@@ -3766,6 +3940,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
       continue;
     }
     if (key.key_code && key.code == KEY_RESIZE) {
+      reset_reader_command(&state);
       update_dimensions(&state);
       BacaError resize_error = {0};
       if (!rebuild_layout(&state, &resize_error) && !state.quit) {
@@ -3774,12 +3949,15 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
       continue;
     }
     if (key.key_code && key.code == KEY_MOUSE) {
+      reset_reader_command(&state);
       handle_mouse(&state);
       continue;
     }
     if (state.prompt.active) {
+      reset_reader_command(&state);
       handle_prompt_key(&state, &key);
     } else if (state.overlay != BACA_OVERLAY_NONE) {
+      reset_reader_command(&state);
       handle_overlay_key(&state, &key);
     } else {
       handle_reader_key(&state, &key);

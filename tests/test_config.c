@@ -51,6 +51,8 @@ static BacaTestResult test_defaults(void) {
     TEST_ASSERT_SIZE(config.keymaps.page_down.length, 4U);
     TEST_ASSERT_STR(config.keymaps.page_down.items[0], "ctrl+f");
     TEST_ASSERT_STR(config.keymaps.page_down.items[3], "space");
+    TEST_ASSERT_SIZE(config.keymaps.home.length, 2U);
+    TEST_ASSERT_STR(config.keymaps.home.items[1], "gg");
     TEST_ASSERT_INT(baca_config_content_width(&config, 120), 80);
     baca_config_free(&config);
     return BACA_TEST_PASS;
