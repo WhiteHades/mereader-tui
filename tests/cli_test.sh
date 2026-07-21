@@ -4,8 +4,13 @@ set -eu
 
 binary=${1:?usage: cli_test.sh /path/to/baca}
 root=$PWD/build/test-tmp/cli
+server_pid=
 
 cleanup() {
+    if [ -n "$server_pid" ]; then
+        kill "$server_pid" 2>/dev/null || :
+        wait "$server_pid" 2>/dev/null || :
+    fi
     rm -rf "$root"
     rmdir "$PWD/build/test-tmp" 2>/dev/null || :
 }
@@ -96,6 +101,54 @@ if command -v sqlite3 >/dev/null 2>&1; then
     pass unsafe_history
 else
     printf 'SKIP cli.unsafe_history: sqlite3 CLI unavailable\n'
+fi
+
+if command -v python3 >/dev/null 2>&1 && command -v sqlite3 >/dev/null 2>&1 &&
+    command -v timeout >/dev/null 2>&1; then
+    mkdir -p "$root/server"
+    printf 'Remote document\n' >"$root/server/remote.txt"
+    port_file="$root/server.port"
+    python3 - "$root/server" >"$port_file" 2>"$root/server.log" <<'PY' &
+import http.server
+import os
+import sys
+
+os.chdir(sys.argv[1])
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
+print(server.server_port, flush=True)
+server.serve_forever()
+PY
+    server_pid=$!
+    attempts=0
+    while [ ! -s "$port_file" ]; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 100 ] || ! kill -0 "$server_pid" 2>/dev/null; then
+            fail remote_server
+        fi
+        sleep 0.1
+    done
+    IFS= read -r port <"$port_file"
+    canonical_url="http://127.0.0.1:$port/remote.txt"
+    remote_url="$canonical_url#chapter"
+    (sleep 2; printf b; sleep 1; printf qq) |
+        TERM=xterm-256color timeout 15s "$binary" "$remote_url" >/dev/null 2>&1 || fail remote_open
+    [ "$(sqlite3 "$XDG_CACHE_HOME/baca/baca.db" "SELECT filepath FROM reading_history WHERE filepath = '$canonical_url'")" = "$canonical_url" ] ||
+        fail remote_history_identity
+    [ "$(sqlite3 "$XDG_CACHE_HOME/baca/baca.db" "SELECT filepath FROM bookmarks WHERE filepath = '$canonical_url'")" = "$canonical_url" ] ||
+        fail remote_bookmark_identity
+    kill "$server_pid" 2>/dev/null || :
+    wait "$server_pid" 2>/dev/null || :
+    server_pid=
+    printf q | TERM=xterm-256color timeout 15s "$binary" 1 >/dev/null 2>&1 || fail remote_offline_history
+    remote_library_output=$((sleep 2; printf '\n'; sleep 2; printf q; sleep 1; printf q) |
+        TERM=xterm-256color timeout 20s "$binary" 2>&1) || fail remote_offline_library
+    case $remote_library_output in
+        *"Remote document"*) ;;
+        *) fail remote_offline_library ;;
+    esac
+    pass remote_open_history_bookmark_and_offline_cache
+else
+    printf 'SKIP cli.remote_open_history_bookmark_and_offline_cache: python3, sqlite3, or timeout unavailable\n'
 fi
 
 printf 'SUMMARY cli passed\n'

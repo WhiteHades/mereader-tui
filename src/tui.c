@@ -2220,7 +2220,7 @@ static void add_bookmark(BacaTuiState *state) {
   remember_progress(state);
   BacaError error = {0};
   if (!baca_database_add_bookmark(&state->app->database,
-                                  state->app->document.path,
+                                  state->app->source,
                                   state->app->saved_progress, &error)) {
     open_alert(state, error.message);
     return;
@@ -2235,7 +2235,7 @@ static void open_bookmarks(BacaTuiState *state) {
   baca_bookmarks_free(&state->bookmarks);
   BacaError error = {0};
   if (!baca_database_bookmarks(&state->app->database,
-                               state->app->document.path,
+                               state->app->source,
                                &state->bookmarks, &error)) {
     open_alert(state, error.message);
     return;
@@ -2357,7 +2357,7 @@ static void remove_bookmark_selection(BacaTuiState *state) {
   const int64_t id = state->bookmarks.items[state->bookmark_index].id;
   BacaError error = {0};
   if (!baca_database_remove_bookmark(&state->app->database,
-                                     state->app->document.path, id, &error)) {
+                                     state->app->source, id, &error)) {
     open_alert(state, error.message);
     return;
   }

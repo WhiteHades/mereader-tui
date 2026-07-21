@@ -1,4 +1,5 @@
 #include "baca/app.h"
+#include "baca/remote.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -20,7 +21,7 @@ static double normalized_progress(double progress) {
 
 static bool save_progress(BacaApp *app, BacaError *error) {
   baca_error_clear(error);
-  if (app->database.handle == NULL || app->document.path == NULL ||
+  if (app->database.handle == NULL || app->source == NULL ||
       app->document.format == BACA_FORMAT_UNKNOWN) {
     return true;
   }
@@ -30,7 +31,7 @@ static bool save_progress(BacaApp *app, BacaError *error) {
     return false;
   }
   const BacaHistoryEntry entry = {
-      .filepath = app->document.path,
+      .filepath = app->source,
       .title = app->document.metadata.title,
       .author = app->document.metadata.author != NULL
                     ? app->document.metadata.author
@@ -52,6 +53,7 @@ static void dispose_app(BacaApp *app) {
   baca_document_close(&app->document);
   baca_database_close(&app->database);
   baca_config_free(&app->config);
+  free(app->source);
   memset(app, 0, sizeof(*app));
 }
 
@@ -67,12 +69,33 @@ bool baca_app_init(BacaApp *app, const char *path, bool direct_open,
   app->dark_mode = true;
   app->direct_open = direct_open;
 
+  BacaRemoteFile remote = {0};
+  const char *document_path = path;
+  if (baca_remote_is_url(path)) {
+    if (!baca_remote_fetch(path, &remote, error)) {
+      dispose_app(app);
+      return false;
+    }
+    app->source = remote.url;
+    remote.url = NULL;
+    document_path = remote.path;
+  }
+
   if (!baca_config_load(&app->config, error) ||
       !baca_database_open_default(&app->database, error) ||
       !baca_database_migrate(&app->database, error) ||
-      !baca_document_open(&app->document, path, error)) {
+      !baca_document_open(&app->document, document_path, error)) {
+    baca_remote_file_free(&remote);
     dispose_app(app);
     return false;
+  }
+  baca_remote_file_free(&remote);
+  if (app->source == NULL) {
+    app->source = baca_strdup(app->document.path, error);
+    if (app->source == NULL) {
+      dispose_app(app);
+      return false;
+    }
   }
 
   BacaHistory history = {0};
@@ -83,7 +106,7 @@ bool baca_app_init(BacaApp *app, const char *path, bool direct_open,
   for (size_t index = 0; index < history.length; ++index) {
     const BacaHistoryEntry *entry = &history.items[index];
     if (entry->filepath != NULL &&
-        strcmp(entry->filepath, app->document.path) == 0) {
+        strcmp(entry->filepath, app->source) == 0) {
       app->saved_progress = normalized_progress(entry->reading_progress);
       break;
     }
@@ -113,7 +136,7 @@ int baca_app_run(BacaApp *app, BacaError *error) {
 
 static void print_help(FILE *stream) {
   fprintf(stream,
-          "usage: %s [-h] [-v] [-r] [PATH | # | PATTERN ...]\n"
+          "usage: %s [-h] [-v] [-r] [PATH | URL | # | PATTERN ...]\n"
           "\n"
           "TUI ebook reader and library\n"
           "\n"
@@ -125,9 +148,10 @@ static void print_help(FILE *stream) {
           "examples:\n"
           "  %s\n"
           "  %s /path/to/ebook.epub\n"
+          "  %s https://example.com/ebook.epub\n"
           "  %s 3\n"
           "  %s count monte\n",
-          BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME);
+          BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME, BACA_NAME);
 }
 
 static int report_error(const BacaError *error) {
@@ -453,6 +477,15 @@ static int run_library(void) {
     }
 
     char *requested_path = action.path;
+    if (baca_remote_is_url(requested_path)) {
+      free(selected_filepath);
+      selected_filepath = requested_path;
+      result = run_library_reader(requested_path, context);
+      if (result != EXIT_SUCCESS) {
+        break;
+      }
+      continue;
+    }
     BacaError path_error = {0};
     char *resolved_path = baca_realpath(requested_path, &path_error);
     if (resolved_path == NULL) {
@@ -524,7 +557,10 @@ int baca_cli_main(int argc, char **argv) {
   char *path = NULL;
 
   if (argument_count == 1) {
-    if (!is_decimal_string(arguments[0]) && baca_file_exists(arguments[0])) {
+    if (baca_remote_is_url(arguments[0])) {
+      path = baca_strdup(arguments[0], &error);
+      direct_open = path != NULL;
+    } else if (!is_decimal_string(arguments[0]) && baca_file_exists(arguments[0])) {
       path = baca_realpath(arguments[0], &error);
       direct_open = path != NULL;
     }

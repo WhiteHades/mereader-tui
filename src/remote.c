@@ -3,7 +3,14 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc2y-extensions"
+#endif
 #include <glib.h>
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +34,11 @@ static const char *const BACA_REMOTE_EXTENSIONS[] = {
     ".cbz",  ".cbr",   ".cb7",  ".png", ".jpg",  ".jpeg", ".gif",  ".webp",
     ".bmp",  ".svg",   ".txt",  ".md",  ".fb2",  ".download",
 };
+
+bool baca_remote_is_url(const char *value) {
+    return value != nullptr &&
+           (g_ascii_strncasecmp(value, "http://", 7U) == 0 || g_ascii_strncasecmp(value, "https://", 8U) == 0);
+}
 
 static void baca_remote_curl_initialize(void) {
     baca_remote_curl_status = curl_global_init(CURL_GLOBAL_DEFAULT);

@@ -10,6 +10,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 - Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, FB2, TXT, Markdown, CBZ, CBR,
   CB7, PNG, JPEG, GIF, WebP, BMP, and SVG
+- Opens HTTP(S) document URLs with a private offline cache
 - Remembers last reading position
 - Searchable, sortable library home
 - Native images in Ghostty/Kitty with ANSI and text fallbacks
@@ -24,7 +25,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 - A C23 compiler
 - `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, libarchive, PCRE2,
-  GdkPixbuf, Poppler GLib, and Cairo
+  GdkPixbuf, Poppler GLib, Cairo, and libcurl
 - `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
   MOBI and AZW-family books
 
@@ -44,6 +45,9 @@ baca
 # open an ebook, document, comic, or image directly
 baca path/to/your/ebook.epub
 
+# download and open an HTTP(S) document
+baca https://example.com/ebook.epub
+
 # print reading history without opening the TUI
 baca -r
 
@@ -58,9 +62,17 @@ baca alice wonder lewis carroll
 - `gg`/`G`, Home/End: jump; Ctrl-f/Ctrl-b or Page keys: page
 - `/`: literal case-insensitive filter; `Esc`: cancel or clear it
 - `s`: cycle recent, title, and author sorting; `r`: refresh and remove missing books
-- `o`: open a local path; `q`: quit
+- `o`: open a local path or HTTP(S) URL; `q`: quit
 
 Quitting a reader opened from the library returns to the refreshed library.
+
+### Reading URLs
+
+HTTP and HTTPS documents are cached privately under `~/.cache/baca/downloads`.
+The normalized URL remains the reading-history and bookmark identity, and a cached
+document can be reopened while offline. URL fragments are ignored. URLs containing
+credentials are rejected, TLS certificates and hostnames are verified, HTTPS
+redirects cannot downgrade to HTTP, and downloads are limited to 256 MiB.
 
 ### Reader keys
 
@@ -241,17 +253,13 @@ Screenshot = f12
   Overall, `baca`'s search feature is most effective for locating individual words
   rather than phrases that may be split across multiple lines or impacted by text justification.
 
-- Compared to [epy](https://github.com/wustho/epy), currently `baca` has some missing features.
-  But these are planned to be implemented to `baca` in the near future:
-
-  - [ ] **TODO** URL reading support
-
 ## Credits
 
 - [ncurses](https://invisible-island.net/ncurses/)
 - [libmobi](https://github.com/bfabiszewski/libmobi)
 - [libarchive](https://www.libarchive.org/)
 - [libxml2](https://gitlab.gnome.org/GNOME/libxml2)
+- [libcurl](https://curl.se/libcurl/)
 
 ## License
 

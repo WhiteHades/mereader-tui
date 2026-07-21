@@ -9,5 +9,6 @@ typedef struct BacaRemoteFile {
     char *path;
 } BacaRemoteFile;
 
+[[nodiscard]] bool baca_remote_is_url(const char *value);
 [[nodiscard]] bool baca_remote_fetch(const char *url, BacaRemoteFile *file, BacaError *error);
 void baca_remote_file_free(BacaRemoteFile *file);

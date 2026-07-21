@@ -146,9 +146,12 @@ static BacaTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
                                                 "2024-02-01 00:00:00.000000");
     BacaHistoryEntry missing_entry = history_entry(missing, "Gone Book", NULL, 0.3,
                                                    "2024-03-01 00:00:00.000000");
+    BacaHistoryEntry remote_entry = history_entry("https://example.test/book.epub", "Remote Book", NULL, 0.4,
+                                                  "2024-05-01 00:00:00.000000");
     TEST_ASSERT_MSG(baca_database_save_progress(&database, &alpha_entry, &error), "%s", error.message);
     TEST_ASSERT_MSG(baca_database_save_progress(&database, &beta_entry, &error), "%s", error.message);
     TEST_ASSERT_MSG(baca_database_save_progress(&database, &missing_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(baca_database_save_progress(&database, &remote_entry, &error), "%s", error.message);
     alpha_entry.title = "First Book Revised";
     alpha_entry.reading_progress = 0.75;
     alpha_entry.last_read = "2024-04-01 00:00:00.000000";
@@ -156,14 +159,15 @@ static BacaTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
 
     BacaHistory history = {0};
     TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
-    TEST_ASSERT_SIZE(history.length, 3U);
-    TEST_ASSERT_STR(history.items[0].filepath, alpha);
-    TEST_ASSERT_STR(history.items[0].title, "First Book Revised");
-    TEST_ASSERT_DOUBLE(history.items[0].reading_progress, 0.75, 1e-12);
-    TEST_ASSERT_STR(history.items[1].filepath, missing);
-    TEST_ASSERT_STR(history.items[2].filepath, beta);
+    TEST_ASSERT_SIZE(history.length, 4U);
+    TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
+    TEST_ASSERT_STR(history.items[1].filepath, alpha);
+    TEST_ASSERT_STR(history.items[1].title, "First Book Revised");
+    TEST_ASSERT_DOUBLE(history.items[1].reading_progress, 0.75, 1e-12);
+    TEST_ASSERT_STR(history.items[2].filepath, missing);
+    TEST_ASSERT_STR(history.items[3].filepath, beta);
     TEST_ASSERT(baca_history_nth(&history, 0U) == NULL);
-    TEST_ASSERT(baca_history_nth(&history, 4U) == NULL);
+    TEST_ASSERT(baca_history_nth(&history, 5U) == NULL);
     TEST_ASSERT(baca_history_nth(&history, 1U) == &history.items[0]);
     const BacaHistoryEntry *match = baca_history_best_match(&history, "second writer two");
     TEST_ASSERT(match != NULL);
@@ -172,19 +176,21 @@ static BacaTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
     baca_history_free(&history);
 
     TEST_ASSERT_MSG(baca_database_history(&database, true, &history, &error), "%s", error.message);
-    TEST_ASSERT_SIZE(history.length, 2U);
-    TEST_ASSERT_STR(history.items[0].filepath, alpha);
-    TEST_ASSERT_STR(history.items[1].filepath, beta);
+    TEST_ASSERT_SIZE(history.length, 3U);
+    TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
+    TEST_ASSERT_STR(history.items[1].filepath, alpha);
+    TEST_ASSERT_STR(history.items[2].filepath, beta);
     baca_history_free(&history);
     TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
-    TEST_ASSERT_SIZE(history.length, 2U);
+    TEST_ASSERT_SIZE(history.length, 3U);
     baca_history_free(&history);
 
     TEST_ASSERT_MSG(baca_database_remove_history(&database, beta, &error), "%s", error.message);
     TEST_ASSERT_MSG(baca_database_remove_history(&database, beta, &error), "%s", error.message);
     TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
-    TEST_ASSERT_SIZE(history.length, 1U);
-    TEST_ASSERT_STR(history.items[0].filepath, alpha);
+    TEST_ASSERT_SIZE(history.length, 2U);
+    TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
+    TEST_ASSERT_STR(history.items[1].filepath, alpha);
     baca_history_free(&history);
     baca_database_close(&database);
     free(alpha);

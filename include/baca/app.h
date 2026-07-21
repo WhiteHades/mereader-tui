@@ -38,6 +38,7 @@ typedef struct BacaApp {
     BacaDatabase database;
     BacaDocument document;
     BacaLayout layout;
+    char *source;
     size_t scroll_line;
     double saved_progress;
     bool dark_mode;

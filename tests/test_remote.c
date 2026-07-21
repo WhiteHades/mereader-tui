@@ -189,6 +189,10 @@ static BacaTestResult test_fetch_redirect_limits_and_offline_cache(void) {
 static BacaTestResult test_rejects_credentials_and_non_http_urls(void) {
     BacaRemoteFile file = {0};
     BacaError error = {0};
+    TEST_ASSERT(baca_remote_is_url("HTTP://example.test/book.epub"));
+    TEST_ASSERT(baca_remote_is_url("https://example.test/book.epub"));
+    TEST_ASSERT(!baca_remote_is_url("ftp://example.test/book.epub"));
+    TEST_ASSERT(!baca_remote_is_url("/books/http://example.epub"));
     TEST_ASSERT(!baca_remote_fetch("ftp://example.test/book.epub", &file, &error));
     TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
     baca_error_clear(&error);

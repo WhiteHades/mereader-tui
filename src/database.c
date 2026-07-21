@@ -1,4 +1,5 @@
 #include "baca/database.h"
+#include "baca/remote.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -286,7 +287,8 @@ static bool baca_database_delete_missing(BacaDatabase *database, BacaHistory *hi
     }
     size_t missing_count = 0U;
     for (size_t index = 0U; index < history->length; ++index) {
-        missing[index] = !baca_file_exists(history->items[index].filepath);
+        missing[index] = !baca_remote_is_url(history->items[index].filepath) &&
+                         !baca_file_exists(history->items[index].filepath);
         if (missing[index]) {
             ++missing_count;
         }
