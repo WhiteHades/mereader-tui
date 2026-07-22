@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 #include <zip.h>
 
@@ -29,6 +30,7 @@ typedef struct LibraryPtyProcess {
     int master;
     int status;
     BacaString output;
+    size_t output_checkpoint;
     bool exited;
 } LibraryPtyProcess;
 
@@ -199,6 +201,28 @@ static bool library_seed_history(const LibraryPtyEnvironment *environment, const
     return seeded;
 }
 
+static bool library_configure_root(const LibraryPtyEnvironment *environment, const char *root) {
+    BacaError error = {0};
+    char *path = baca_path_join(environment->config, "baca/config.ini", &error);
+    char *directory = path == NULL ? NULL : baca_path_dirname(path, &error);
+    BacaString text = {0};
+    const bool ready = path != NULL && directory != NULL && baca_mkdirs(directory, &error) &&
+                       baca_string_append(&text, "[General]\nLibraryPath = ", &error) &&
+                       baca_string_append(&text, root, &error) && baca_string_append_char(&text, '\n', &error);
+    bool written = false;
+    if (ready) {
+        FILE *file = fopen(path, "wb");
+        if (file != NULL) {
+            written = fwrite(text.data, 1U, text.length, file) == text.length;
+            written = fclose(file) == 0 && written;
+        }
+    }
+    baca_string_free(&text);
+    free(directory);
+    free(path);
+    return written;
+}
+
 static bool library_database_execute(const LibraryPtyEnvironment *environment, const char *sql) {
     BacaError error = {0};
     char *database_path = baca_path_join(environment->cache, "baca/baca.db", &error);
@@ -220,12 +244,18 @@ static bool library_database_execute(const LibraryPtyEnvironment *environment, c
     return status == SQLITE_OK;
 }
 
-static bool library_pty_drain(LibraryPtyProcess *process) {
+static bool library_pty_drain(LibraryPtyProcess *process, bool *had_data) {
     char buffer[4096] = {0};
     BacaError error = {0};
+    if (had_data != NULL) {
+        *had_data = false;
+    }
     for (;;) {
         const ssize_t length = read(process->master, buffer, sizeof(buffer));
         if (length > 0) {
+            if (had_data != NULL) {
+                *had_data = true;
+            }
             if (!baca_string_append_n(&process->output, buffer, (size_t)length, &error)) {
                 return false;
             }
@@ -270,7 +300,8 @@ static bool library_pty_spawn(const LibraryPtyEnvironment *environment, const ch
         }
         _exit(127);
     }
-    if (fcntl(process->master, F_SETFL, O_NONBLOCK) != 0) {
+    const int flags = fcntl(process->master, F_GETFL);
+    if (flags < 0 || fcntl(process->master, F_SETFL, flags | O_NONBLOCK) != 0) {
         (void)kill(process->pid, SIGKILL);
         (void)waitpid(process->pid, NULL, 0);
         (void)close(process->master);
@@ -280,17 +311,34 @@ static bool library_pty_spawn(const LibraryPtyEnvironment *environment, const ch
     return true;
 }
 
+static int64_t library_pty_now_milliseconds(void) {
+    struct timespec now = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return -1;
+    }
+    return (int64_t)now.tv_sec * INT64_C(1000) + (int64_t)now.tv_nsec / INT64_C(1000000);
+}
+
 static bool library_pty_wait_for(LibraryPtyProcess *process, const char *needle) {
-    for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
+    const int64_t started = library_pty_now_milliseconds();
+    if (started < 0) {
+        return false;
+    }
+    const int64_t deadline = started + INT64_C(12000);
+    while (library_pty_now_milliseconds() < deadline) {
         struct pollfd descriptor = {.fd = process->master, .events = POLLIN};
         const int ready = poll(&descriptor, 1U, 20);
-        if (ready < 0 && errno != EINTR) {
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             return false;
         }
-        if (!library_pty_drain(process)) {
+        if ((descriptor.revents & POLLNVAL) != 0 || !library_pty_drain(process, NULL)) {
             return false;
         }
-        if (process->output.data != NULL && strstr(process->output.data, needle) != NULL) {
+        if (process->output.data != NULL && process->output_checkpoint <= process->output.length &&
+            strstr(process->output.data + process->output_checkpoint, needle) != NULL) {
             return true;
         }
         const pid_t waited = waitpid(process->pid, &process->status, WNOHANG);
@@ -326,27 +374,76 @@ static bool library_pty_send_text(LibraryPtyProcess *process, const char *text) 
 }
 
 static void library_pty_clear_output(LibraryPtyProcess *process) {
-    baca_string_free(&process->output);
+    process->output_checkpoint = process->output.length;
 }
 
 static bool library_pty_settle(LibraryPtyProcess *process) {
-    unsigned quiet = 0U;
-    for (unsigned attempt = 0U; attempt < 20U && quiet < 3U; ++attempt) {
+    const int64_t started = library_pty_now_milliseconds();
+    if (started < 0) {
+        return false;
+    }
+    const int64_t deadline = started + INT64_C(1000);
+    int64_t quiet_since = -1;
+    while (library_pty_now_milliseconds() < deadline) {
         struct pollfd descriptor = {.fd = process->master, .events = POLLIN};
         const int ready = poll(&descriptor, 1U, 20);
-        if (ready < 0 && errno != EINTR) {
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             return false;
         }
-        if (ready > 0) {
-            if (!library_pty_drain(process)) {
-                return false;
-            }
-            quiet = 0U;
-        } else {
-            ++quiet;
+        bool had_data = false;
+        if ((descriptor.revents & POLLNVAL) != 0 || !library_pty_drain(process, &had_data)) {
+            return false;
+        }
+        const int64_t now = library_pty_now_milliseconds();
+        if (now < 0) {
+            return false;
+        }
+        if (had_data) {
+            quiet_since = -1;
+        } else if (quiet_since < 0) {
+            quiet_since = now;
+        } else if (now - quiet_since >= INT64_C(60)) {
+            return true;
+        }
+        const pid_t waited = waitpid(process->pid, &process->status, WNOHANG);
+        if (waited == process->pid) {
+            process->exited = true;
+            return false;
+        }
+        if (waited < 0 && errno != EINTR) {
+            return false;
         }
     }
-    return true;
+    return false;
+}
+
+static void library_pty_screen_delete_characters(LibraryPtyScreen *screen, size_t count) {
+    char *line = screen->cells + screen->row * screen->columns;
+    const size_t available = screen->columns - screen->column;
+    const size_t removed = count < available ? count : available;
+    if (removed < available) {
+        memmove(line + screen->column, line + screen->column + removed, available - removed);
+    }
+    memset(line + screen->columns - removed, ' ', removed);
+}
+
+static void library_pty_screen_insert_characters(LibraryPtyScreen *screen, size_t count) {
+    char *line = screen->cells + screen->row * screen->columns;
+    const size_t available = screen->columns - screen->column;
+    const size_t inserted = count < available ? count : available;
+    if (inserted < available) {
+        memmove(line + screen->column + inserted, line + screen->column, available - inserted);
+    }
+    memset(line + screen->column, ' ', inserted);
+}
+
+static void library_pty_screen_erase_characters(LibraryPtyScreen *screen, size_t count) {
+    const size_t available = screen->columns - screen->column;
+    const size_t erased = count < available ? count : available;
+    memset(screen->cells + screen->row * screen->columns + screen->column, ' ', erased);
 }
 
 static void library_pty_screen_clear(LibraryPtyScreen *screen) {
@@ -364,6 +461,14 @@ static size_t library_pty_screen_parameter(const int parameters[8], size_t count
 static void library_pty_screen_move(LibraryPtyScreen *screen, size_t row, size_t column) {
     screen->row = row < screen->rows ? row : screen->rows - 1U;
     screen->column = column < screen->columns ? column : screen->columns - 1U;
+}
+
+static void library_pty_screen_private_mode(LibraryPtyScreen *screen, unsigned char final,
+                                            const int parameters[8], size_t count) {
+    if ((final == 'h' || final == 'l') && count > 0U && parameters[0] == 1049) {
+        library_pty_screen_clear(screen);
+        library_pty_screen_move(screen, 0U, 0U);
+    }
 }
 
 static void library_pty_screen_erase_line(LibraryPtyScreen *screen, int mode) {
@@ -390,10 +495,17 @@ static void library_pty_screen_erase_display(LibraryPtyScreen *screen, int mode)
 }
 
 static void library_pty_screen_csi(LibraryPtyScreen *screen, unsigned char final, const int parameters[8],
-                                   size_t count) {
+                                   size_t count, bool private_mode) {
+    if (private_mode) {
+        library_pty_screen_private_mode(screen, final, parameters, count);
+        return;
+    }
     const size_t first = library_pty_screen_parameter(parameters, count, 0U, 1U);
     const size_t second = library_pty_screen_parameter(parameters, count, 1U, 1U);
     switch (final) {
+    case '@':
+        library_pty_screen_insert_characters(screen, first);
+        break;
     case 'A':
         screen->row = first > screen->row ? 0U : screen->row - first;
         break;
@@ -426,6 +538,12 @@ static void library_pty_screen_csi(LibraryPtyScreen *screen, unsigned char final
         break;
     case 'K':
         library_pty_screen_erase_line(screen, count > 0U ? parameters[0] : 0);
+        break;
+    case 'P':
+        library_pty_screen_delete_characters(screen, first);
+        break;
+    case 'X':
+        library_pty_screen_erase_characters(screen, first);
         break;
     case 'd':
         library_pty_screen_move(screen, first - 1U, screen->column);
@@ -474,6 +592,7 @@ static bool library_pty_screen_replay(const LibraryPtyProcess *process, size_t r
             if (next == '[') {
                 int parameters[8] = {0};
                 size_t count = 1U;
+                bool private_mode = false;
                 while (index < process->output.length) {
                     const unsigned char part = data[index++];
                     if (part >= '0' && part <= '9') {
@@ -482,8 +601,10 @@ static bool library_pty_screen_replay(const LibraryPtyProcess *process, size_t r
                         }
                     } else if (part == ';' && count < BACA_ARRAY_LEN(parameters)) {
                         ++count;
+                    } else if (part == '?' && count == 1U && parameters[0] == 0) {
+                        private_mode = true;
                     } else if (part >= 0x40U && part <= 0x7eU) {
-                        library_pty_screen_csi(screen, part, parameters, count);
+                        library_pty_screen_csi(screen, part, parameters, count, private_mode);
                         break;
                     }
                 }
@@ -549,7 +670,9 @@ static bool library_pty_screen_line_matches(const LibraryPtyProcess *process, si
             const size_t suffix_length = suffix == NULL ? 0U : strlen(suffix);
             matched = suffix == NULL ||
                       (suffix_length <= length && memcmp(line + length - suffix_length, suffix, suffix_length) == 0);
-            break;
+            if (matched) {
+                break;
+            }
         }
     }
     free(line);
@@ -561,19 +684,32 @@ static bool library_pty_wait_exit(LibraryPtyProcess *process) {
     if (process->exited) {
         return true;
     }
-    for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
-        (void)library_pty_drain(process);
+    const int64_t started = library_pty_now_milliseconds();
+    if (started < 0) {
+        return false;
+    }
+    const int64_t deadline = started + INT64_C(12000);
+    while (library_pty_now_milliseconds() < deadline) {
+        if (!library_pty_drain(process, NULL)) {
+            return false;
+        }
         const pid_t waited = waitpid(process->pid, &process->status, WNOHANG);
         if (waited == process->pid) {
             process->exited = true;
-            (void)library_pty_drain(process);
+            (void)library_pty_drain(process, NULL);
             return true;
         }
-        if (waited < 0) {
+        if (waited < 0 && errno != EINTR) {
             return false;
         }
         struct pollfd descriptor = {.fd = process->master, .events = POLLIN};
-        (void)poll(&descriptor, 1U, 20);
+        const int ready = poll(&descriptor, 1U, 20);
+        if (ready < 0 && errno != EINTR) {
+            return false;
+        }
+        if ((descriptor.revents & POLLNVAL) != 0) {
+            return false;
+        }
     }
     return false;
 }
@@ -581,7 +717,8 @@ static bool library_pty_wait_exit(LibraryPtyProcess *process) {
 static void library_pty_process_free(LibraryPtyProcess *process) {
     if (process->pid > 0 && !process->exited) {
         (void)kill(process->pid, SIGKILL);
-        (void)waitpid(process->pid, &process->status, 0);
+        while (waitpid(process->pid, &process->status, 0) < 0 && errno == EINTR) {
+        }
     }
     if (process->master >= 0) {
         (void)close(process->master);
@@ -1001,12 +1138,14 @@ static bool run_pty_sorting_and_refresh(void) {
     if (success) {
         library_pty_clear_output(&process);
         success = library_pty_send_text(&process, "s") && library_pty_wait_for(&process, "1/3 - title") &&
-                  process.output.data != NULL && strstr(process.output.data, "Missing") == NULL;
+                  process.output.data != NULL &&
+                  strstr(process.output.data + process.output_checkpoint, "Missing") == NULL;
     }
     if (success) {
-        const char *bravo_position = strstr(process.output.data, "Bravo");
-        const char *charlie_position = strstr(process.output.data, "Charlie");
-        const char *zulu_position = strstr(process.output.data, "Zulu");
+        const char *output = process.output.data + process.output_checkpoint;
+        const char *bravo_position = strstr(output, "Bravo");
+        const char *charlie_position = strstr(output, "Charlie");
+        const char *zulu_position = strstr(output, "Zulu");
         success = bravo_position != NULL && charlie_position != NULL && zulu_position != NULL &&
                   bravo_position < charlie_position && charlie_position < zulu_position &&
                   library_pty_send_text(&process, "q") && library_pty_wait_exit(&process) &&
@@ -1323,6 +1462,64 @@ static BacaTestResult test_pty_direct_path_bypass(void) {
     return BACA_TEST_PASS;
 }
 
+static bool run_pty_calibre_navigation(void) {
+    LibraryPtyEnvironment environment = {0};
+    LibraryPtyProcess process = {.master = -1};
+    char *epub = library_create_epub("library-pty/calibre/root/Alice Writer/First Book (42)/first.epub",
+                                     "First Book", "Alice Writer", "CALIBRE EPUB BODY");
+    bool fixtures = epub != NULL &&
+                    baca_test_write_text("library-pty/calibre/root/metadata.db", "") &&
+                    baca_test_write_text("library-pty/calibre/root/Alice Writer/First Book (42)/first.pdf",
+                                         "%PDF-1.4\n%%EOF\n") &&
+                    baca_test_write_text("library-pty/calibre/root/Bob Writer/Second Book (7)/second.epub",
+                                         "second");
+    char *root = baca_test_path("library-pty/calibre/root");
+    bool success = fixtures && root != NULL && library_pty_environment_init("calibre", &environment) &&
+                   library_configure_root(&environment, root) &&
+                   library_pty_spawn(&environment, "xterm-256color", 14U, 80U, NULL, &process) &&
+                   library_pty_wait_for(&process, "baca / authors") &&
+                   library_pty_wait_for(&process, "Alice Writer");
+    if (success) {
+        success = library_pty_send_text(&process, "\n") &&
+                  library_pty_wait_for(&process, "First Book [EPUB +1]") && library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "baca / authors / Alice Writer", NULL);
+    }
+    if (success) {
+        success = library_pty_send_text(&process, "f") &&
+                  library_pty_wait_for(&process, "First Book [PDF]") && library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "baca / formats / First Book", NULL) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "First Book [EPUB]", NULL) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "First Book [PDF]", NULL);
+    }
+    if (success) {
+        static const char backspace = 127;
+        success = library_pty_send(&process, &backspace, 1U) && library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "baca / authors / Alice Writer", NULL) &&
+                  library_pty_send_text(&process, "\n") &&
+                  library_pty_wait_for(&process, "CALIBRE EPUB BODY");
+    }
+    if (success) {
+        success = library_pty_send_text(&process, "q") && library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 80U, "baca / authors", NULL) &&
+                  library_pty_send_text(&process, "aq") && library_pty_wait_exit(&process) &&
+                  WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
+    }
+    if (!success) {
+        fprintf(stderr, "calibre PTY capture: %s\n",
+                process.output.data == NULL ? "(empty)" : process.output.data);
+    }
+    library_pty_process_free(&process);
+    library_pty_environment_free(&environment);
+    free(root);
+    free(epub);
+    return success;
+}
+
+static BacaTestResult test_pty_calibre_navigation(void) {
+    TEST_ASSERT(run_pty_calibre_navigation());
+    return BACA_TEST_PASS;
+}
+
 const BacaTestCase *baca_library_test_cases(size_t *count) {
     static const BacaTestCase cases[] = {
         {.name = "projection_and_literal_filtering", .function = test_projection_and_literal_filtering},
@@ -1349,6 +1546,7 @@ const BacaTestCase *baca_library_test_cases(size_t *count) {
         {.name = "pty_strict_timestamps", .function = test_pty_strict_timestamps},
         {.name = "pty_signal_restore", .function = test_pty_signal_restore},
         {.name = "pty_direct_path_bypass", .function = test_pty_direct_path_bypass},
+        {.name = "pty_calibre_navigation", .function = test_pty_calibre_navigation},
     };
     *count = BACA_ARRAY_LEN(cases);
     return cases;

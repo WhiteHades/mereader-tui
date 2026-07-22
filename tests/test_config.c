@@ -45,8 +45,10 @@ static BacaTestResult test_defaults(void) {
     TEST_ASSERT_INT(config.image_mode, BACA_IMAGE_MODE_AUTO);
     TEST_ASSERT(!config.image_mode_explicit);
     TEST_ASSERT(config.show_image_as_ansi);
-    TEST_ASSERT_INT((int)config.dark.background, 0x1e1e1e);
-    TEST_ASSERT_INT((int)config.light.foreground, 0x1e1e1e);
+    TEST_ASSERT_INT((int)config.dark.background, 0x1e1e2e);
+    TEST_ASSERT_INT((int)config.dark.foreground, 0xcdd6f4);
+    TEST_ASSERT_INT((int)config.dark.accent, 0xcba6f7);
+    TEST_ASSERT_INT((int)config.light.foreground, 0x4c4f69);
     TEST_ASSERT_SIZE(config.keymaps.toggle_pdf_view.length, 1U);
     TEST_ASSERT_STR(config.keymaps.toggle_pdf_view.items[0], "v");
     TEST_ASSERT_SIZE(config.keymaps.page_down.length, 4U);
@@ -152,7 +154,7 @@ static BacaTestResult test_colors_and_invalid_fallback(void) {
     TEST_ASSERT(result == BACA_TEST_PASS);
     TEST_ASSERT_INT((int)config.dark.background, 0xaabbcc);
     TEST_ASSERT_INT((int)config.dark.foreground, 0xff0000);
-    TEST_ASSERT_INT((int)config.dark.accent, 0x0178d4);
+    TEST_ASSERT_INT((int)config.dark.accent, 0xcba6f7);
     TEST_ASSERT_INT((int)config.light.background, 0x123456);
     TEST_ASSERT_INT((int)config.light.foreground, 0x808080);
     TEST_ASSERT_INT((int)config.light.accent, 0x0000ff);

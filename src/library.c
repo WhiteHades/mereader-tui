@@ -300,7 +300,7 @@ bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, 
         baca_error_set(error, BACA_ERROR_ARGUMENT, "library view output is not empty");
         return false;
     }
-    if (sort > BACA_LIBRARY_SORT_AUTHOR) {
+    if (sort > BACA_LIBRARY_SORT_RELEVANCE) {
         baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid library sort order");
         return false;
     }
@@ -351,7 +351,7 @@ bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, 
             qsort(rows, length, sizeof(*rows), compare_recent);
         } else if (sort == BACA_LIBRARY_SORT_TITLE) {
             qsort(rows, length, sizeof(*rows), compare_title);
-        } else {
+        } else if (sort == BACA_LIBRARY_SORT_AUTHOR) {
             qsort(rows, length, sizeof(*rows), compare_author);
         }
     }
@@ -385,6 +385,9 @@ BacaLibrarySort baca_library_sort_next(BacaLibrarySort sort) {
 }
 
 const char *baca_library_sort_name(BacaLibrarySort sort) {
+    if (sort == BACA_LIBRARY_SORT_RELEVANCE) {
+        return "relevance";
+    }
     if (sort == BACA_LIBRARY_SORT_TITLE) {
         return "title";
     }

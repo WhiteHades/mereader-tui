@@ -1,6 +1,7 @@
 #pragma once
 
 #include "baca/config.h"
+#include "baca/catalog.h"
 #include "baca/database.h"
 #include "baca/document.h"
 #include "baca/layout.h"
@@ -65,6 +66,7 @@ typedef struct BacaLibraryAction {
 [[nodiscard]] int baca_app_run(BacaApp *app, BacaError *error);
 [[nodiscard]] int baca_cli_main(int argc, char **argv);
 [[nodiscard]] int baca_tui_run(BacaApp *app, BacaError *error);
-[[nodiscard]] int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history, BacaLibrarySort sort,
+[[nodiscard]] int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history, BacaCatalog *catalog,
+                                       BacaLibrarySort sort,
                                        const char *selected_filepath, const char *context, BacaLibraryAction *action,
                                        BacaError *error);

@@ -421,6 +421,48 @@ static bool resolve_library_selection(const BacaHistory *history,
   return true;
 }
 
+static bool library_directory(const char *path) {
+  struct stat status;
+  return path != NULL && stat(path, &status) == 0 && S_ISDIR(status.st_mode);
+}
+
+static char *resolve_library_root(const BacaConfig *config, BacaError *error) {
+  const char *override = getenv("BACA_LIBRARY_PATH");
+  const char *setting = override != NULL && override[0] != '\0'
+                            ? override
+                            : config->library_path;
+  if (setting != NULL && baca_casecmp(setting, "auto") != 0) {
+    char *root = baca_realpath(setting, error);
+    if (root != NULL && !library_directory(root)) {
+      baca_error_set(error, BACA_ERROR_NOT_FOUND,
+                     "library path is not a directory: %s", setting);
+      free(root);
+      return NULL;
+    }
+    return root;
+  }
+
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') {
+    return NULL;
+  }
+  static const char *candidates[] = {"Calibre Library",
+                                     "Documents/Calibre Library"};
+  for (size_t index = 0U; index < BACA_ARRAY_LEN(candidates); ++index) {
+    char *candidate = baca_path_join(home, candidates[index], error);
+    if (candidate == NULL) {
+      return NULL;
+    }
+    if (library_directory(candidate)) {
+      char *root = baca_realpath(candidate, error);
+      free(candidate);
+      return root;
+    }
+    free(candidate);
+  }
+  return NULL;
+}
+
 static int run_library(void) {
   BacaConfig config = {0};
   BacaDatabase database = {0};
@@ -432,6 +474,14 @@ static int run_library(void) {
     baca_config_free(&config);
     return report_error(&error);
   }
+
+  char *library_root = resolve_library_root(&config, &error);
+  if (library_root == NULL && baca_error_is_set(&error)) {
+    baca_database_close(&database);
+    baca_config_free(&config);
+    return report_error(&error);
+  }
+  BacaCatalog catalog = {0};
 
   BacaLibrarySort sort = BACA_LIBRARY_SORT_RECENT;
   char *selected_filepath = NULL;
@@ -448,8 +498,20 @@ static int run_library(void) {
     }
     remove_missing = false;
 
+    if (library_root != NULL) {
+      const bool catalog_ready =
+          catalog.search.handle == NULL
+              ? baca_catalog_open(&catalog, library_root, &history, true, &error)
+              : baca_catalog_update_progress(&catalog, &history, &error);
+      if (!catalog_ready) {
+        baca_history_free(&history);
+        result = report_error(&error);
+        break;
+      }
+    }
+
     const char *tui_selected_filepath = selected_filepath;
-    if (preserve_index &&
+    if (preserve_index && catalog.search.handle == NULL &&
         !resolve_library_selection(&history, sort, selected_filepath,
                                    selected_index, &tui_selected_filepath,
                                    &selected_index, &error)) {
@@ -459,15 +521,27 @@ static int run_library(void) {
     }
 
     BacaLibraryAction action = {0};
-    result = baca_library_tui_run(&config, &history, sort,
+    result = baca_library_tui_run(&config, &history,
+                                  catalog.search.handle == NULL ? NULL : &catalog,
+                                  sort,
                                   tui_selected_filepath, context, &action,
                                   &error);
     size_t refresh_index = selected_index;
     if (result == EXIT_SUCCESS &&
         action.command == BACA_LIBRARY_COMMAND_REFRESH &&
+        catalog.search.handle == NULL &&
         !resolve_library_selection(&history, action.sort, action.path,
                                    selected_index, NULL, &refresh_index,
                                    &error)) {
+      free(action.path);
+      baca_history_free(&history);
+      result = report_error(&error);
+      break;
+    }
+    if (result == EXIT_SUCCESS &&
+        action.command == BACA_LIBRARY_COMMAND_REFRESH &&
+        catalog.search.handle != NULL &&
+        !baca_catalog_refresh(&catalog, &history, &error)) {
       free(action.path);
       baca_history_free(&history);
       result = report_error(&error);
@@ -493,8 +567,8 @@ static int run_library(void) {
       free(selected_filepath);
       selected_filepath = action.path;
       selected_index = refresh_index;
-      preserve_index = true;
-      remove_missing = true;
+      preserve_index = catalog.search.handle == NULL;
+      remove_missing = catalog.search.handle == NULL;
       (void)snprintf(context, sizeof(context), "library refreshed");
       continue;
     }
@@ -535,6 +609,8 @@ static int run_library(void) {
   }
 
   free(selected_filepath);
+  baca_catalog_close(&catalog);
+  free(library_root);
   baca_database_close(&database);
   baca_config_free(&config);
   return result;

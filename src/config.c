@@ -48,14 +48,14 @@ static const char BACA_DEFAULT_CONFIG[] =
     "\n"
     "# colors accept #rgb, #rrggbb, or common names\n"
     "[Color Dark]\n"
-    "Background = #1e1e1e\n"
-    "Foreground = #f5f5f5\n"
-    "Accent = #0178d4\n"
+    "Background = #1e1e2e\n"
+    "Foreground = #cdd6f4\n"
+    "Accent = #cba6f7\n"
     "\n"
     "[Color Light]\n"
-    "Background = #f5f5f5\n"
-    "Foreground = #1e1e1e\n"
-    "Accent = #0178d4\n"
+    "Background = #eff1f5\n"
+    "Foreground = #4c4f69\n"
+    "Accent = #8839ef\n"
     "\n"
     "[Keymaps]\n"
     "ToggleLightDark = c\n"
@@ -530,22 +530,22 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
     BacaConfig result = {
         .max_text_width = 80,
         .justification = BACA_JUSTIFY_LEFT,
-        .dark = {.background = 0x1e1e1eU, .foreground = 0xf5f5f5U, .accent = 0x0178d4U},
-        .light = {.background = 0xf5f5f5U, .foreground = 0x1e1e1eU, .accent = 0x0178d4U},
+        .dark = {.background = 0x1e1e2eU, .foreground = 0xcdd6f4U, .accent = 0xcba6f7U},
+        .light = {.background = 0xeff1f5U, .foreground = 0x4c4f69U, .accent = 0x8839efU},
     };
     (void)baca_config_parse_positive_width(baca_ini_get(ini, "General", "MaxTextWidth", "80"),
                                            &result.max_text_width, &result.max_text_width_percent);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Background", "#1e1e1e"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Background", "#1e1e2e"),
                                   &result.dark.background);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Foreground", "#f5f5f5"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Foreground", "#cdd6f4"),
                                   &result.dark.foreground);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Accent", "#0178d4"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Accent", "#cba6f7"),
                                   &result.dark.accent);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Background", "#f5f5f5"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Background", "#eff1f5"),
                                   &result.light.background);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Foreground", "#1e1e1e"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Foreground", "#4c4f69"),
                                   &result.light.foreground);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Accent", "#0178d4"),
+    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Accent", "#8839ef"),
                                   &result.light.accent);
 
     const char *image_mode = baca_ini_get(ini, "General", "ImageMode", nullptr);

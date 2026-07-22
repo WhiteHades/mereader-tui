@@ -38,6 +38,7 @@ typedef struct BacaCatalogMatches {
 [[nodiscard]] bool baca_catalog_open(BacaCatalog *catalog, const char *root, const BacaHistory *history, bool watch,
                                      BacaError *error);
 [[nodiscard]] bool baca_catalog_refresh(BacaCatalog *catalog, const BacaHistory *history, BacaError *error);
+[[nodiscard]] bool baca_catalog_update_progress(BacaCatalog *catalog, const BacaHistory *history, BacaError *error);
 void baca_catalog_close(BacaCatalog *catalog);
 [[nodiscard]] bool baca_catalog_search(BacaCatalog *catalog, const char *query, BacaCatalogMatches *matches,
                                        BacaError *error);

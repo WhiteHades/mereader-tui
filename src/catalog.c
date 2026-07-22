@@ -453,6 +453,22 @@ bool baca_catalog_refresh(BacaCatalog *catalog, const BacaHistory *history, Baca
     return true;
 }
 
+bool baca_catalog_update_progress(BacaCatalog *catalog, const BacaHistory *history, BacaError *error) {
+    if (catalog == NULL || catalog->search.handle == NULL) {
+        baca_error_set(error, BACA_ERROR_ARGUMENT, "library catalog is not open");
+        return false;
+    }
+    for (size_t book_index = 0U; book_index < catalog->length; ++book_index) {
+        BacaCatalogBook *book = &catalog->books[book_index];
+        for (size_t format_index = 0U; format_index < book->format_count; ++format_index) {
+            book->formats[format_index].reading_progress = 0.0;
+            free(book->formats[format_index].last_read);
+            book->formats[format_index].last_read = NULL;
+        }
+    }
+    return catalog_apply_history(catalog, history, error);
+}
+
 const BacaCatalogFormat *baca_catalog_preferred_format(const BacaCatalogBook *book) {
     if (book == NULL || book->format_count == 0U || book->preferred_format >= book->format_count) {
         return NULL;
@@ -521,22 +537,31 @@ bool baca_catalog_search(BacaCatalog *catalog, const char *query, BacaCatalogMat
         }
     }
 
-    BacaSearchFiles files = {0};
-    if (!baca_search_files(&catalog->search, query, 0U, BACA_CATALOG_PAGE_SIZE, &files, error)) {
-        catalog_map_free(&paths);
-        free(seen);
-        free(indices);
-        return false;
-    }
     size_t length = 0U;
-    for (size_t index = 0U; index < files.length; ++index) {
-        size_t book_index = 0U;
-        if (catalog_map_lookup(&paths, files.items[index].relative_path, &book_index) && !seen[book_index]) {
-            seen[book_index] = true;
-            indices[length++] = book_index;
+    size_t offset = 0U;
+    bool complete = false;
+    while (!complete) {
+        BacaSearchFiles files = {0};
+        if (!baca_search_files(&catalog->search, query, offset, BACA_CATALOG_PAGE_SIZE, &files, error)) {
+            catalog_map_free(&paths);
+            free(seen);
+            free(indices);
+            return false;
         }
+        for (size_t index = 0U; index < files.length; ++index) {
+            size_t book_index = 0U;
+            if (catalog_map_lookup(&paths, files.items[index].relative_path, &book_index) && !seen[book_index]) {
+                seen[book_index] = true;
+                indices[length++] = book_index;
+            }
+        }
+        if (files.length == 0U || offset + files.length >= files.total) {
+            complete = true;
+        } else {
+            offset += files.length;
+        }
+        baca_search_files_free(&files);
     }
-    baca_search_files_free(&files);
     catalog_map_free(&paths);
     free(seen);
     *matches = (BacaCatalogMatches){.book_indices = indices, .length = length};

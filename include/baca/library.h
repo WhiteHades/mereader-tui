@@ -8,6 +8,7 @@ typedef enum BacaLibrarySort : uint8_t {
     BACA_LIBRARY_SORT_RECENT = 0,
     BACA_LIBRARY_SORT_TITLE,
     BACA_LIBRARY_SORT_AUTHOR,
+    BACA_LIBRARY_SORT_RELEVANCE,
 } BacaLibrarySort;
 
 typedef struct BacaLibraryRow {
