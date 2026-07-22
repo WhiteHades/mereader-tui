@@ -843,8 +843,14 @@ bool baca_fb2_open(BacaDocument *document, const char *path, const struct stat *
     if (!baca_document_read_snapshot(path, expected_identity, BACA_FB2_MAX_INPUT_BYTES, &snapshot, error)) {
         return false;
     }
-    const int options = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
-                        XML_PARSE_COMPACT | XML_PARSE_BIG_LINES | XML_PARSE_NO_XXE | XML_PARSE_NO_SYS_CATALOG;
+    int options = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
+                  XML_PARSE_COMPACT | XML_PARSE_BIG_LINES;
+#if LIBXML_VERSION >= 21300
+    options |= XML_PARSE_NO_XXE;
+#endif
+#if LIBXML_VERSION >= 21400
+    options |= XML_PARSE_NO_SYS_CATALOG;
+#endif
     xmlResetLastError();
     xmlDocPtr xml = xmlReadMemory((const char *)snapshot.data, (int)snapshot.length, path, NULL, options);
     baca_buffer_free(&snapshot);

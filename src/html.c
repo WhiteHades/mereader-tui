@@ -982,8 +982,13 @@ bool baca_html_append_section(BacaDocument *document, const char *html, size_t l
     bool success = true;
     if (length > 0) {
         int options = HTML_PARSE_RECOVER | HTML_PARSE_NODEFDTD | HTML_PARSE_NONET | HTML_PARSE_NOERROR |
-                      HTML_PARSE_NOWARNING | HTML_PARSE_COMPACT | HTML_PARSE_BIG_LINES | XML_PARSE_NO_XXE |
-                      XML_PARSE_NO_SYS_CATALOG;
+                      HTML_PARSE_NOWARNING | HTML_PARSE_COMPACT | HTML_PARSE_BIG_LINES;
+#if LIBXML_VERSION >= 21300
+        options |= XML_PARSE_NO_XXE;
+#endif
+#if LIBXML_VERSION >= 21400
+        options |= XML_PARSE_NO_SYS_CATALOG;
+#endif
         parsed = htmlReadMemory(html, (int) length, section_id, NULL, options);
         if (parsed == NULL) {
             baca_error_set(error, BACA_ERROR_CORRUPT, "could not parse HTML section %s", section_id);

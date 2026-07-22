@@ -304,7 +304,13 @@ static xmlDocPtr parse_xml(const BacaBuffer *buffer, const char *name, BacaError
         return NULL;
     }
     int options = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
-                  XML_PARSE_COMPACT | XML_PARSE_BIG_LINES | XML_PARSE_NO_XXE | XML_PARSE_NO_SYS_CATALOG;
+                  XML_PARSE_COMPACT | XML_PARSE_BIG_LINES;
+#if LIBXML_VERSION >= 21300
+    options |= XML_PARSE_NO_XXE;
+#endif
+#if LIBXML_VERSION >= 21400
+    options |= XML_PARSE_NO_SYS_CATALOG;
+#endif
     xmlDocPtr document = xmlReadMemory((const char *) buffer->data, (int) buffer->length, name, NULL, options);
     if (document == NULL) {
         baca_error_set(error, BACA_ERROR_CORRUPT, "could not parse EPUB XML member: %s", name);
