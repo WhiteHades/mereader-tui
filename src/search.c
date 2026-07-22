@@ -159,7 +159,9 @@ bool baca_search_files(BacaSearchIndex *index, const char *query, size_t offset,
         fff_free_search_result(payload);
         return false;
     }
-    memset(items, 0, count * sizeof(*items));
+    if (count > 0U) {
+        memset(items, 0, count * sizeof(*items));
+    }
     size_t copied = 0U;
     for (; copied < count; ++copied) {
         const FffFileItem *item = fff_search_result_get_item(payload, (uint32_t)copied);
