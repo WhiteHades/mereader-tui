@@ -35,7 +35,7 @@ export LC_ALL=C
 
 help_output=$("$binary" --help 2>&1) || fail help
 case $help_output in
-    *"usage: baca"*"TUI ebook reader"*"--history"*) ;;
+    *"usage: baca"*"TUI ebook reader"*"--doctor"*"--history"*) ;;
     *) fail help ;;
 esac
 pass help
@@ -43,6 +43,21 @@ pass help
 version_output=$("$binary" --version 2>&1) || fail version
 [ "$version_output" = "v0.2.0" ] || fail version
 pass version
+
+doctor_output=$("$binary" --doctor 2>&1) || fail doctor
+case $doctor_output in
+    *"Baca Doctor"*"Version: 0.2.0"*) ;;
+    *) fail doctor ;;
+esac
+case $doctor_output in
+    *"Config: $XDG_CONFIG_HOME/baca/config.ini"*"Database: $XDG_CACHE_HOME/baca/baca.db"*) ;;
+    *) fail doctor ;;
+esac
+case $doctor_output in
+    *"Downloads: $XDG_CACHE_HOME/baca/downloads"*"MOBI/AZW:"*) ;;
+    *) fail doctor ;;
+esac
+pass doctor
 
 history_output=$("$binary" --history 2>&1) || fail history
 case $history_output in

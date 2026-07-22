@@ -23,7 +23,8 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Requirements
 
-- A C23 compiler
+- Linux with a UTF-8 locale
+- GCC 14 or newer, or Clang 18 or newer, with C23 support
 - `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, libarchive, PCRE2,
   GdkPixbuf, Poppler GLib, Cairo, and libcurl
 - `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
@@ -31,10 +32,95 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Installation
 
+Download a source archive or clone this repository, then install the development
+packages for your distribution.
+
+### Debian and Ubuntu
+
 ```sh
-make
-sudo make PREFIX=/usr/local install
+sudo apt update
+sudo apt install build-essential pkg-config libncurses-dev libsqlite3-dev \
+  libglib2.0-dev libxml2-dev libzip-dev libarchive-dev libpcre2-dev \
+  libgdk-pixbuf-2.0-dev libpoppler-glib-dev libcairo2-dev \
+  libcurl4-openssl-dev
 ```
+
+### Fedora
+
+```sh
+sudo dnf install gcc make pkgconf-pkg-config ncurses-devel sqlite-devel \
+  glib2-devel libxml2-devel libzip-devel libarchive-devel pcre2-devel \
+  gdk-pixbuf2-devel poppler-glib-devel cairo-devel libcurl-devel
+```
+
+### Arch Linux
+
+```sh
+sudo pacman -S --needed base-devel pkgconf ncurses sqlite glib2 libxml2 \
+  libzip libarchive pcre2 gdk-pixbuf2 poppler-glib cairo curl
+```
+
+`mobitool` is required only for MOBI, PRC, AZW, AZW3, and AZW4 files. Install
+libmobi with its XML writer tools enabled and ensure `mobitool` is in `PATH`.
+All other listed formats work without it.
+
+If your distribution does not package `mobitool`, use libmobi's supported
+Autotools build. The Git checkout requires Autoconf, Automake, and Libtool from
+your distribution:
+
+```sh
+git clone https://github.com/bfabiszewski/libmobi.git
+cd libmobi
+./autogen.sh
+./configure
+make
+make test
+sudo make install
+sudo ldconfig
+```
+
+### User-local install
+
+This does not require root and installs into `~/.local`:
+
+```sh
+make doctor
+make
+make user-install
+hash -r
+baca --doctor
+```
+
+Ensure `~/.local/bin` is in `PATH`. The current shell can use:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### System-wide install
+
+The default prefix is `/usr/local`:
+
+```sh
+make doctor
+make
+sudo make install
+baca --doctor
+```
+
+Installation includes the executable, default configuration reference, and the
+`baca(1)` manual. Packaging tools can stage files safely with `DESTDIR`, for
+example `make install DESTDIR="$pkgdir" PREFIX=/usr`.
+
+### Uninstall
+
+```sh
+make user-uninstall       # user-local installation
+sudo make uninstall       # system-wide installation
+```
+
+Uninstalling does not delete personal configuration, reading history, bookmarks,
+or downloaded documents under `~/.config/baca` and `~/.cache/baca`.
 
 ## Usage
 
@@ -44,6 +130,7 @@ baca
 
 # open an ebook, document, comic, or image directly
 baca path/to/your/ebook.epub
+baca "/path/with spaces/book.pdf"
 
 # download and open an HTTP(S) document
 baca https://example.com/ebook.epub
@@ -54,6 +141,12 @@ baca -r
 # open a 1-based history row or fuzzy-match path/title/author
 baca 3
 baca alice wonder lewis carroll
+
+# check installation paths and MOBI/AZW availability
+baca --doctor
+
+# read the complete command manual
+man baca
 ```
 
 ### Library keys

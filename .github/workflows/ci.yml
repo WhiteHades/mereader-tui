@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-14, clang-18]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc-14 clang-18 pkg-config python3 sqlite3 \
+            libncurses-dev libsqlite3-dev libglib2.0-dev libxml2-dev \
+            libzip-dev libarchive-dev libpcre2-dev libgdk-pixbuf-2.0-dev \
+            libpoppler-glib-dev libcairo2-dev libcurl4-openssl-dev
+      - name: Build and test
+        env:
+          CC: ${{ matrix.compiler }}
+        run: make CC="$CC" test
+      - name: Check staged installation
+        if: matrix.compiler == 'gcc-14'
+        run: make CC=gcc-14 installcheck
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc-14 pkg-config python3 sqlite3 \
+            libncurses-dev libsqlite3-dev libglib2.0-dev libxml2-dev \
+            libzip-dev libarchive-dev libpcre2-dev libgdk-pixbuf-2.0-dev \
+            libpoppler-glib-dev libcairo2-dev libcurl4-openssl-dev
+      - name: Run ASan and UBSan
+        run: make CC=gcc-14 sanitize

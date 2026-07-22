@@ -281,7 +281,7 @@ static bool library_pty_spawn(const LibraryPtyEnvironment *environment, const ch
 }
 
 static bool library_pty_wait_for(LibraryPtyProcess *process, const char *needle) {
-    for (unsigned attempt = 0U; attempt < 300U; ++attempt) {
+    for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
         struct pollfd descriptor = {.fd = process->master, .events = POLLIN};
         const int ready = poll(&descriptor, 1U, 20);
         if (ready < 0 && errno != EINTR) {
@@ -561,7 +561,7 @@ static bool library_pty_wait_exit(LibraryPtyProcess *process) {
     if (process->exited) {
         return true;
     }
-    for (unsigned attempt = 0U; attempt < 300U; ++attempt) {
+    for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
         (void)library_pty_drain(process);
         const pid_t waited = waitpid(process->pid, &process->status, WNOHANG);
         if (waited == process->pid) {

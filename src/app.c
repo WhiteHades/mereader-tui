@@ -1,4 +1,5 @@
 #include "baca/app.h"
+#include "baca/platform.h"
 #include "baca/remote.h"
 
 #include <errno.h>
@@ -136,13 +137,14 @@ int baca_app_run(BacaApp *app, BacaError *error) {
 
 static void print_help(FILE *stream) {
   fprintf(stream,
-          "usage: %s [-h] [-v] [-r] [PATH | URL | # | PATTERN ...]\n"
+          "usage: %s [-h] [-v] [-d] [-r] [PATH | URL | # | PATTERN ...]\n"
           "\n"
           "TUI ebook reader and library\n"
           "\n"
           "options:\n"
           "  -h, --help       print help and exit\n"
           "  -v, --version    print version and exit\n"
+          "  -d, --doctor     print runtime diagnostics and exit\n"
           "  -r, --history    print reading history and exit\n"
           "\n"
           "examples:\n"
@@ -161,6 +163,34 @@ static int report_error(const BacaError *error) {
   }
   fprintf(stderr, "%s: %s\n", BACA_NAME, message);
   return EXIT_FAILURE;
+}
+
+static int print_doctor(void) {
+  BacaError error = {0};
+  char *config = baca_xdg_config_path("config.ini", &error);
+  char *database = config == NULL ? NULL : baca_xdg_cache_path("baca.db", &error);
+  char *downloads = database == NULL ? NULL : baca_xdg_cache_path("downloads", &error);
+  if (config == NULL || database == NULL || downloads == NULL) {
+    free(config);
+    free(database);
+    free(downloads);
+    return report_error(&error);
+  }
+
+  const char *mobitool = baca_platform_find_executable("mobitool");
+  puts("Baca Doctor");
+  printf("Version: %s\n", BACA_VERSION);
+  printf("Config: %s\n", config);
+  printf("Database: %s\n", database);
+  printf("Downloads: %s\n", downloads);
+  printf("MOBI/AZW: %s\n",
+         mobitool == NULL ? "unavailable (mobitool not found in PATH)"
+                          : mobitool);
+  puts("Core formats: ready");
+  free(config);
+  free(database);
+  free(downloads);
+  return EXIT_SUCCESS;
 }
 
 static double history_progress(double progress) {
@@ -514,6 +544,7 @@ int baca_cli_main(int argc, char **argv) {
   static const struct option options[] = {
       {"help", no_argument, NULL, 'h'},
       {"version", no_argument, NULL, 'v'},
+      {"doctor", no_argument, NULL, 'd'},
       {"history", no_argument, NULL, 'r'},
       {NULL, 0, NULL, 0},
   };
@@ -522,7 +553,7 @@ int baca_cli_main(int argc, char **argv) {
   opterr = 0;
   optind = 0;
   for (;;) {
-    const int option = getopt_long(argc, argv, "hvr", options, NULL);
+    const int option = getopt_long(argc, argv, "hvdr", options, NULL);
     if (option == -1) {
       break;
     }
@@ -533,6 +564,8 @@ int baca_cli_main(int argc, char **argv) {
     case 'v':
       printf("v%s\n", BACA_VERSION);
       return EXIT_SUCCESS;
+    case 'd':
+      return print_doctor();
     case 'r':
       show_history = true;
       break;

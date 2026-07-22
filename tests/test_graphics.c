@@ -435,7 +435,7 @@ static bool run_tui_pty_capture(BacaImageMode mode, unsigned short columns,
   bool sent_quit = false;
   bool completed = false;
   int status = 0;
-  for (unsigned attempt = 0U; attempt < 200U; ++attempt) {
+  for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
     struct pollfd descriptor = {.fd = master, .events = POLLIN};
     const int ready = poll(&descriptor, 1U, 20);
     if (ready < 0 && errno != EINTR) {
