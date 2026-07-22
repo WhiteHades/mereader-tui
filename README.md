@@ -1,40 +1,25 @@
-# `baca`: TUI E-book Reader
+# baca
 
-![baca_screenshots](https://github.com/wustho/baca/assets/43810055/82d5beb0-d061-4e4c-82ed-a3bd84074d2f)
+a fast terminal ebook reader and library for linux.
 
-Meet `baca`, [epy](https://github.com/wustho/epy)'s lovely sister who lets you indulge
-in your favorite e-books in the comfort of your terminal.
-But with a sleek and contemporary appearance that's sure to captivate you!
+![baca screenshot](https://github.com/wustho/baca/assets/43810055/82d5beb0-d061-4e4c-82ed-a3bd84074d2f)
 
-## Features
+## features
 
-- Formats supported: EPUB, EPUB3, MOBI, AZW, PDF, FB2, TXT, Markdown, CBZ, CBR,
-  CB7, PNG, JPEG, GIF, WebP, BMP, and SVG
-- Opens HTTP(S) document URLs with a private offline cache
-- Remembers last reading position
-- Searchable, sortable library home
-- Native images in Ghostty/Kitty with ANSI and text fallbacks
-- Scroll animations
-- Clean & modern looks
-- Text justification
-- Dark & light color scheme
-- Regex search
-- Hyperlinks
+- reads epub, epub3, pdf, fb2, txt, markdown, cbz, cbr, cb7, png, jpeg, gif, webp, bmp, and svg
+- reads mobi, prc, azw, azw3, and azw4 when `mobitool` is installed
+- indexes calibre libraries and ordinary book folders with the bundled fff search engine
+- groups formats for the same book and prefers epub when available
+- remembers reading progress and bookmarks automatically
+- opens local files and http(s) urls with a private offline cache
+- renders images with kitty graphics, true-color ansi, or a text fallback
+- provides regex document search, table of contents, metadata, links, themes, and configurable keys
 
-## Requirements
+## install
 
-- Linux with a UTF-8 locale
-- GCC 14 or newer, or Clang 18 or newer, with C23 support
-- Rust 1.97 and Cargo to build the pinned FFF search backend
-- `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, libarchive, PCRE2,
-  GdkPixbuf, Poppler GLib, Cairo, and libcurl
-- `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
-  MOBI and AZW-family books
+baca currently supports linux with a utf-8 locale. building requires gcc 14+ or clang 18+, rust 1.97, cargo, make, and `pkg-config`.
 
-## Installation
-
-Clone this repository and its pinned FFF submodule, then install the development
-packages for your distribution:
+clone the repository with its pinned fff submodule:
 
 ```sh
 git clone --recurse-submodules https://github.com/WhiteHades/baca.git
@@ -42,10 +27,13 @@ cd baca
 rustup toolchain install 1.97.0 --profile minimal
 ```
 
-If the repository was cloned without submodules, initialize FFF with
-`git submodule update --init --recursive` before building.
+if you already cloned without submodules, run:
 
-### Debian and Ubuntu
+```sh
+git submodule update --init --recursive
+```
+
+### ubuntu and debian
 
 ```sh
 sudo apt update
@@ -55,7 +43,7 @@ sudo apt install build-essential pkg-config libncurses-dev libsqlite3-dev \
   libcurl4-openssl-dev librsvg2-common
 ```
 
-### Fedora
+### fedora
 
 ```sh
 sudo dnf install gcc make pkgconf-pkg-config ncurses-devel sqlite-devel \
@@ -63,35 +51,14 @@ sudo dnf install gcc make pkgconf-pkg-config ncurses-devel sqlite-devel \
   gdk-pixbuf2-devel poppler-glib-devel cairo-devel libcurl-devel librsvg2
 ```
 
-### Arch Linux
+### arch linux
 
 ```sh
 sudo pacman -S --needed base-devel pkgconf ncurses sqlite glib2 libxml2 \
   libzip libarchive pcre2 gdk-pixbuf2 poppler-glib cairo curl librsvg
 ```
 
-`mobitool` is required only for MOBI, PRC, AZW, AZW3, and AZW4 files. Install
-libmobi with its XML writer tools enabled and ensure `mobitool` is in `PATH`.
-All other listed formats work without it.
-
-If your distribution does not package `mobitool`, use libmobi's supported
-Autotools build. The Git checkout requires Autoconf, Automake, and Libtool from
-your distribution:
-
-```sh
-git clone https://github.com/bfabiszewski/libmobi.git
-cd libmobi
-./autogen.sh
-./configure
-make
-make test
-sudo make install
-sudo ldconfig
-```
-
-### User-local install
-
-This does not require root and installs into `~/.local`:
+install for the current user without root:
 
 ```sh
 make doctor
@@ -101,271 +68,120 @@ hash -r
 baca --doctor
 ```
 
-Ensure `~/.local/bin` is in `PATH`. The current shell can use:
+make sure `~/.local/bin` is in `PATH`. use `sudo make install` instead for a system-wide install under `/usr/local`.
+
+the install includes `baca`, `libfff_c.so`, the default config, the `baca(1)` manual, and fff's license. rust is needed to build from source, but it is not needed to run an installed build.
+
+uninstall with `make user-uninstall` or `sudo make uninstall`. personal config, history, bookmarks, and cached books are not deleted.
+
+## usage
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
+baca                              # open the library
+baca book.epub                    # open a local book
+baca "path with spaces/book.pdf" # quoted paths work
+baca https://example.com/book.epub
+baca -r                           # print reading history
+baca 3                            # open history row 3
+baca alice wonderland             # fuzzy-match history
+baca --doctor                     # check the installation
 ```
 
-### System-wide install
+run `man baca` for the complete command reference.
 
-The default prefix is `/usr/local`:
+## library
 
-```sh
-make doctor
-make
-sudo make install
-baca --doctor
-```
+set `LibraryPath` in `~/.config/baca/config.ini` to a calibre library or an ordinary folder of books. `LibraryPath = auto` checks `~/Calibre Library` and `~/Documents/Calibre Library`. `BACA_LIBRARY_PATH` overrides the config for one process.
 
-Installation includes the executable, bundled FFF shared library and license,
-default configuration reference, and the `baca(1)` manual. The executable uses
-an installation-relative runtime path, so no global linker configuration is
-needed. Packaging tools can stage files safely with `DESTDIR`, for example
-`make install DESTDIR="$pkgdir" PREFIX=/usr`.
+a folder containing `metadata.db` is treated as a calibre library. baca displays authors first, then their books. ordinary folders display books directly. files with the same stem are grouped as formats of one book.
 
-### Uninstall
+| key | action |
+| --- | --- |
+| `j`, `k`, arrows | move |
+| `enter`, `l` | open the selected author or book |
+| `/` | fuzzy filter through fff |
+| `a` | switch between authors and all books |
+| `f` | show formats for the selected book |
+| `backspace`, `esc`, `h` | go back or clear the filter |
+| `s` | cycle recent, title, and author sorting |
+| `r` | rescan the library |
+| `o` | open a path or url |
+| `q` | quit |
 
-```sh
-make user-uninstall       # user-local installation
-sudo make uninstall       # system-wide installation
-```
+epub is preferred over pdf, mobi/azw, and other supported formats. press `f` when you need a specific format.
 
-Uninstalling does not delete personal configuration, reading history, bookmarks,
-or downloaded documents under `~/.config/baca` and `~/.cache/baca`.
+## reader
 
-## Usage
+| key | action |
+| --- | --- |
+| `j`, `k`, arrows | scroll |
+| `ctrl-f`, `ctrl-b`, page keys | move by pages |
+| `gg`, `G` | jump to the beginning or end |
+| `/`, `?` | search forward or backward |
+| `n`, `N` | repeat search |
+| `ctrl-o`, `ctrl-i` | move through jump history |
+| `tab` | open the table of contents |
+| `b`, `B` | save or list bookmarks |
+| `M` | show metadata |
+| `v` | switch pdf fixed and reflow views |
+| `f1` | show all configured keys |
+| `q`, `esc` | cancel or quit |
 
-```sh
-# open the library
-baca
+numeric prefixes repeat movement commands, such as `12j`, `3n`, or `120G`.
 
-# open an ebook, document, comic, or image directly
-baca path/to/your/ebook.epub
-baca "/path/with spaces/book.pdf"
+## config
 
-# download and open an HTTP(S) document
-baca https://example.com/ebook.epub
-
-# print reading history without opening the TUI
-baca -r
-
-# open a 1-based history row or fuzzy-match path/title/author
-baca 3
-baca alice wonder lewis carroll
-
-# check installation paths and MOBI/AZW availability
-baca --doctor
-
-# read the complete command manual
-man baca
-```
-
-### Library keys
-
-- `Enter` or `l`: open the selected book; `j`/`k` or arrows move
-- `gg`/`G`, Home/End: jump; Ctrl-f/Ctrl-b or Page keys: page
-- `/`: literal case-insensitive filter; `Esc`: cancel or clear it
-- `s`: cycle recent, title, and author sorting; `r`: refresh and remove missing books
-- `o`: open a local path or HTTP(S) URL; `q`: quit
-
-Quitting a reader opened from the library returns to the refreshed library.
-
-### Reading URLs
-
-HTTP and HTTPS documents are cached privately under `~/.cache/baca/downloads`.
-The normalized URL remains the reading-history and bookmark identity, and a cached
-document can be reopened while offline. URL fragments are ignored. URLs containing
-credentials are rejected, TLS certificates and hostnames are verified, HTTPS
-redirects cannot downgrade to HTTP, and downloads are limited to 256 MiB.
-
-### Reader keys
-
-- `j`/`k` or arrows scroll; Ctrl-f/Ctrl-b, `l`/`h`, or Page keys move by pages
-- `gg`/`G` or Home/End jump to the start/end; `{count}gg` and `{count}G` jump to a 1-based layout line
-- Numeric prefixes repeat scrolling, paging, and `n`/`N` search motions, such as `12j` or `3n`
-- Ctrl-o goes back through jumps; Ctrl-i goes forward. Tab opens the TOC when there is no forward jump
-- `/` and `?` search; `n`/`N` repeat; Enter clears highlights; `q` or Esc cancels a search or quits
-- `b` saves the current position; `B` lists bookmarks; Enter jumps and Delete removes
-- `M` opens metadata; F1 opens all configured keys
-
-## Opening an Image
-
-PNG, JPEG, GIF, WebP, BMP, and SVG files can be opened directly as one-image
-documents when the corresponding GdkPixbuf loader is available. PNG, JPEG, GIF,
-WebP, and BMP signatures are recognized from file contents. SVG markup is
-recognized within a bounded 1 KiB prefix after an optional UTF-8 BOM, whitespace,
-XML declaration, and comments. The extension is retained as a fallback. The
-filename is used as the document title in reading history.
-
-`ImageMode=auto` uses the Kitty graphics protocol in Ghostty and Kitty, true-color
-ANSI half blocks in other color terminals, and a text placeholder when neither is
-available. Images are clipped as they scroll, so partially visible images do not
-break the reading flow.
-
-Click a visible image or its `IMAGE` fallback to open the original resource with
-the configured system viewer. Corrupt, oversized, animated, or otherwise
-undecodable files in a supported format remain a placeholder instead of preventing
-the document from opening. A direct image up to the 16 MiB decode limit is captured
-at open and decoded from an immutable in-session compressed-byte snapshot, so
-replacing its path or editing the file in place does not change later probes or
-renders. Larger files do not retain compressed bytes and remain placeholders, but
-their original descriptor stays open. Opening any direct image writes a stable,
-private named copy under Baca's temporary directory for the configured viewer;
-files above the 16 MiB snapshot limit are streamed in bounded chunks. Exports are
-limited to 256 MiB to prevent temporary-storage exhaustion. A non-PDF image whose
-aspect ratio would exceed 1,024 terminal rows is shown as a one-row `IMAGE`
-placeholder rather than failing or being squashed.
-
-## Reading Comics
-
-CBZ (ZIP), CBR (RAR/RAR5), and CB7 (7-Zip) archives are read directly through
-libarchive without extracting the book to disk. Image pages use a case-insensitive
-natural filename order, so `2.png` precedes `10.png`. Directories, links, unsafe
-paths, and non-image members are ignored. The table of contents uses the original
-page filenames.
-
-Comic archives are limited to 20,000 members, 10,000 image pages, 16 MiB per page,
-1 GiB of declared image data, and 8 MiB of retained member names. Encrypted archives
-are not supported. The opened archive descriptor remains authoritative for the
-reading session, so replacing or deleting the path does not redirect page loads to
-another file.
-
-## Reading Text and FictionBook
-
-TXT files are decoded as UTF-8, UTF-8 with a byte-order mark, or BOM-marked
-UTF-16LE/UTF-16BE. CRLF and CR line endings are normalized to LF. Markdown files
-use the same reader and remain literal plain text; Baca does not render Markdown
-syntax. Text input and decoded output are each limited to 64 MiB. Invalid text,
-embedded null characters, and incomplete UTF-16 code units are rejected.
-
-FictionBook 2 (`.fb2`) files provide book and document metadata, nested section
-navigation, inline emphasis/strong/code styles, internal and external links,
-additional bodies such as notes, cover images, and lazy embedded image decoding.
-FB2 files are limited to 64 MiB of XML and 64 MiB of generated markup. Metadata
-fields are limited to 1 MiB. Up to 10,000 supported embedded images may be retained,
-with 16 MiB per image, 1 GiB of declared image data, and 8 MiB of image identifiers.
-DTD subsets are rejected and XML parsing never loads network resources. Missing or
-unsupported image references remain placeholders instead of preventing the book
-from opening.
-
-## Reading PDFs
-
-PDFs open in fixed-page view when the terminal has a usable Kitty or ANSI image
-mode. When terminal graphics are unavailable and `ImageMode` resolves to a text
-placeholder, PDFs open in extracted, reflowable text instead. Use the
-`TogglePdfView` mapping (`v` by default) to switch views. Search works in both
-views; a fixed-view match jumps to the matching page.
-
-Click a PDF link to follow it. Clicking elsewhere on a rendered page opens the
-original PDF in the system viewer. Reflow and search require an embedded text
-layer, so scanned image-only pages may have no reflowable text. Password-protected
-PDFs are not supported.
-
-PDF input is limited to 10,000 pages, 1 MiB of extracted text per page and
-16 MiB in total, 100,000 links with 8 MiB of retained link targets, and 100,000
-outline nodes at up to 64 levels. Layout is limited to 262,144 lines, 1,024 rows
-per image, and 65,536 aggregate extra image rows. Fixed-page renders are limited
-to 32,768 pixels per dimension, 10 million target pixels, and 16 MiB of encoded
-image data. A PDF that cannot preserve page aspect ratios within these limits
-fails with an explicit error rather than shortening page images.
-
-Poppler 26.07 does not expose page rotation through its GLib API. For a detected
-90- or 270-degree page, Baca follows a destination to the page top instead of
-using a vertical coordinate that may be wrong; normal-page XYZ, FitH, FitBH, and
-FitR coordinates retain their vertical position.
-
-## Configurations
-
-![pretty_yes_no_cap](https://user-images.githubusercontent.com/43810055/228417623-ac78fb84-0ee0-4930-a843-752ef693822d.png)
-
-Configuration file available at `~/.config/baca/config.ini` for linux users. Here is the default:
+baca creates `~/.config/baca/config.ini` on first use. the important defaults are:
 
 ```ini
 [General]
-# pick your favorite image viewer
 PreferredImageViewer = auto
-
-# integer columns or a terminal-width percentage
+LibraryPath = auto
 MaxTextWidth = 80
-
-# 'justify', 'center', 'left', 'right'
 TextJustification = justify
-
 Pretty = no
-
 PageScrollDuration = 0.2
-
-# auto, kitty, ansi, or placeholder
-# oversized, over-tall, animated, or corrupt images are shown as placeholders
-# PDF fixed-page rendering follows this mode; press v for reflowable text
 ImageMode = auto
 
 [Color Dark]
-Background = #1e1e1e
-Foreground = #f5f5f5
-Accent = #0178d4
+Background = #1e1e2e
+Foreground = #cdd6f4
+Accent = #cba6f7
 
 [Color Light]
-Background = #f5f5f5
-Foreground = #1e1e1e
-Accent = #0178d4
-
-[Keymaps]
-ToggleLightDark = c
-TogglePdfView = v
-ScrollDown = down,j
-ScrollUp = up,k
-PageDown = ctrl+f,pagedown,l,space
-PageUp = ctrl+b,pageup,h
-Home = home,gg
-End = end,G
-OpenToc = tab
-AddBookmark = b
-OpenBookmarks = B
-OpenMetadata = M
-OpenHelp = f1
-SearchForward = slash
-SearchBackward = question_mark
-NextMatch = n
-PreviousMatch = N
-Confirm = enter
-CloseOrQuit = q,escape
-Screenshot = f12
+Background = #eff1f5
+Foreground = #4c4f69
+Accent = #8839ef
 ```
 
-## Known Limitations
+the shipped colors are catppuccin mocha and latte. see `resources/config.ini` for every key mapping.
 
-- When searching for specific phrases in `baca`,
-  keep in mind that it may not be able to find them if they span across two lines,
-  much like in the search behavior of editor vi(m).
+## native fff integration
 
-  For example, `baca` won't be able to find the phrase `"for it"` because it is split into two lines
-  in this example.
+baca is written in c23. fff remains rust and is compiled from the pinned submodule into `libfff_c.so`. baca calls fff's c abi directly in the same process; it does not launch an fff command or require neovim.
 
-  ```
-  ...
-  she had forgotten the little golden key, and when she went back to the table for
-  it, she found she could not possibly reach it: she could see  it  quite  plainly
-  ...
-  ```
+the c adapter owns baca's copied paths and scores. rust owns the opaque index and temporary fff results, which are released through fff's matching c destructors.
 
+## development
 
-  Additionally, `baca` may struggle to locate certain phrases due to adjustments made for text justification.
-  See the example above, `"see_it"` may become `"see__it"` due to adjusted spacing between words.
-  In this case, it may be more effective to use a regex search for `"see +it"` or simply search for the word `"see"` alone.
+```sh
+make test          # native and cli tests
+make test-gcc      # clean gcc build
+make test-clang    # clean clang build
+make sanitize      # address and undefined behavior sanitizers
+make installcheck  # staged install and uninstall
+make format        # clang-format c sources and headers
+```
 
-  Overall, `baca`'s search feature is most effective for locating individual words
-  rather than phrases that may be split across multiple lines or impacted by text justification.
+fff is pinned as a git submodule so builds use a reviewed source revision and a locked cargo dependency graph.
 
-## Credits
+## limits
 
-- [ncurses](https://invisible-island.net/ncurses/)
-- [libmobi](https://github.com/bfabiszewski/libmobi)
-- [libarchive](https://www.libarchive.org/)
-- [libxml2](https://gitlab.gnome.org/GNOME/libxml2)
-- [libcurl](https://curl.se/libcurl/)
+- pdf reflow and search require an embedded text layer
+- password-protected pdfs and encrypted comic archives are not supported
+- document search works on laid-out lines, so a phrase split by wrapping may need a regex such as `word +next`
+- direct image decoding is bounded; oversized or corrupt images remain placeholders
 
-## License
+## license
 
-GPL-3
+gpl-3.0. the bundled fff component is mit licensed; its license is installed with baca.

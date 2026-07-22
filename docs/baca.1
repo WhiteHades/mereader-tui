@@ -12,6 +12,11 @@ TXT, Markdown, CBZ, CBR, CB7, PNG, JPEG, GIF, WebP, BMP, and SVG files.
 Running it without arguments opens the reading library. Reading position,
 bookmarks, and history are stored automatically.
 .PP
+When a library path is configured, Baca indexes it in-process with the bundled
+FFF search library. Calibre libraries are detected by their metadata.db file
+and displayed as authors, books, and grouped formats. EPUB is preferred when a
+book has multiple formats.
+.PP
 HTTP and HTTPS documents are downloaded into a private cache and can be
 reopened offline. URL credentials are rejected, TLS verification is enabled,
 and downloads are limited to 256 MiB.
@@ -75,7 +80,16 @@ Open the selected document.
 Move the selection.
 .TP
 .B /
-Filter by path, title, or author.
+Fuzzy-filter the configured library with FFF.
+.TP
+.B a
+Switch between the author shelf and all books.
+.TP
+.B f
+Show every available format for the selected book.
+.TP
+.BR Backspace , " " Esc , " " h
+Move to the parent shelf or clear the active filter.
 .TP
 .B s
 Cycle recent, title, and author sorting.
@@ -89,12 +103,18 @@ Open a local path or HTTP(S) URL.
 .TP
 .I ~/.config/baca/config.ini
 User configuration. Created with secure permissions on first use.
+.IP
+LibraryPath=auto checks ~/Calibre Library and ~/Documents/Calibre Library.
 .TP
 .I ~/.cache/baca/baca.db
 SQLite reading history and bookmark database.
 .TP
 .I ~/.cache/baca/downloads/
 Private persistent HTTP(S) document cache.
+.SH ENVIRONMENT
+.TP
+.B BACA_LIBRARY_PATH
+Override LibraryPath for the current process.
 .SH DEPENDENCIES
 MOBI and AZW-family files require
 .B mobitool
