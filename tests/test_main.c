@@ -1,6 +1,7 @@
 #include "test_support.h"
 
 #include <cairo.h>
+#include <fontconfig/fontconfig.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -60,5 +61,6 @@ int main(void) {
     int result = baca_test_run(suites, BACA_ARRAY_LEN(suites));
     baca_test_support_cleanup();
     cairo_debug_reset_static_data();
+    FcFini();
     return result;
 }

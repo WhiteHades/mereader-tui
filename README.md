@@ -42,7 +42,7 @@ sudo apt update
 sudo apt install build-essential pkg-config libncurses-dev libsqlite3-dev \
   libglib2.0-dev libxml2-dev libzip-dev libarchive-dev libpcre2-dev \
   libgdk-pixbuf-2.0-dev libpoppler-glib-dev libcairo2-dev \
-  libcurl4-openssl-dev
+  libcurl4-openssl-dev librsvg2-common
 ```
 
 ### Fedora
@@ -50,14 +50,14 @@ sudo apt install build-essential pkg-config libncurses-dev libsqlite3-dev \
 ```sh
 sudo dnf install gcc make pkgconf-pkg-config ncurses-devel sqlite-devel \
   glib2-devel libxml2-devel libzip-devel libarchive-devel pcre2-devel \
-  gdk-pixbuf2-devel poppler-glib-devel cairo-devel libcurl-devel
+  gdk-pixbuf2-devel poppler-glib-devel cairo-devel libcurl-devel librsvg2
 ```
 
 ### Arch Linux
 
 ```sh
 sudo pacman -S --needed base-devel pkgconf ncurses sqlite glib2 libxml2 \
-  libzip libarchive pcre2 gdk-pixbuf2 poppler-glib cairo curl
+  libzip libarchive pcre2 gdk-pixbuf2 poppler-glib cairo curl librsvg
 ```
 
 `mobitool` is required only for MOBI, PRC, AZW, AZW3, and AZW4 files. Install

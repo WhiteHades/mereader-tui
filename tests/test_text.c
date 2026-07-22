@@ -88,11 +88,11 @@ static bool run_vim_navigation_pty(BacaString *output, unsigned *stage) {
     BacaError error = {0};
     for (size_t line = 0U; line < sizeof(markers) - 1U; ++line) {
         char value[32] = {0};
-        const int length =
-            snprintf(value, sizeof(value), "%c%c%c%c%c%c%c%c\n", markers[line], markers[line], markers[line],
-                     markers[line], markers[line], markers[line], markers[line], markers[line]);
-        if (length <= 0 || (size_t)length >= sizeof(value) ||
-            !baca_string_append_n(&fixture, value, (size_t)length, &error)) {
+        for (size_t column = 0U; column < 8U; ++column) {
+            value[column] = markers[(line + column) % (sizeof(markers) - 1U)];
+        }
+        value[8] = '\n';
+        if (!baca_string_append_n(&fixture, value, 9U, &error)) {
             baca_string_free(&fixture);
             return false;
         }
@@ -138,64 +138,64 @@ static bool run_vim_navigation_pty(BacaString *output, unsigned *stage) {
         _exit(127);
     }
 
-    bool ok = fcntl(master, F_SETFL, O_NONBLOCK) == 0 && text_pty_wait_for(master, output, 0U, "00000000");
+    bool ok = fcntl(master, F_SETFL, O_NONBLOCK) == 0 && text_pty_wait_for(master, output, 0U, "01234567");
     if (ok) {
         *stage = 1U;
     }
     size_t start = output->length;
-    ok = ok && text_pty_write(master, "12j", 3U) && text_pty_wait_for(master, output, start, "CCCCCCCC");
+    ok = ok && text_pty_write(master, "12j", 3U) && text_pty_wait_for(master, output, start, "CDEFGHIJ");
     if (ok) {
         *stage = 2U;
     }
     start = output->length;
-    ok = ok && text_pty_write(master, "G", 1U) && text_pty_wait_for(master, output, start, "dddddddd");
+    ok = ok && text_pty_write(master, "G", 1U) && text_pty_wait_for(master, output, start, "d0123456");
     if (ok) {
         *stage = 3U;
     }
     start = output->length;
-    ok = ok && text_pty_write(master, "\017", 1U) && text_pty_wait_for(master, output, start, "CCCCCCCC");
+    ok = ok && text_pty_write(master, "\017", 1U) && text_pty_wait_for(master, output, start, "CDEFGHIJ");
     if (ok) {
         *stage = 4U;
     }
     start = output->length;
     static const char ctrl_i[] = "\033[105;5u";
     ok = ok && text_pty_write(master, ctrl_i, sizeof(ctrl_i) - 1U) &&
-         text_pty_wait_for(master, output, start, "dddddddd");
+         text_pty_wait_for(master, output, start, "d0123456");
     if (ok) {
         *stage = 5U;
     }
     start = output->length;
-    ok = ok && text_pty_write(master, "5gg", 3U) && text_pty_wait_for(master, output, start, "44444444");
+    ok = ok && text_pty_write(master, "5gg", 3U) && text_pty_wait_for(master, output, start, "456789AB");
     if (ok) {
         *stage = 6U;
     }
     start = output->length;
-    ok = ok && text_pty_write(master, "10G", 3U) && text_pty_wait_for(master, output, start, "99999999") &&
+    ok = ok && text_pty_write(master, "10G", 3U) && text_pty_wait_for(master, output, start, "9ABCDEFG") &&
          text_pty_write(master, "2\006", 2U);
     if (ok) {
         *stage = 7U;
     }
     start = output->length;
-    ok = ok && text_pty_wait_for(master, output, start, "HHHHHHHH") && text_pty_write(master, "2\002", 2U);
+    ok = ok && text_pty_wait_for(master, output, start, "HIJKLMNO") && text_pty_write(master, "2\002", 2U);
     if (ok) {
         *stage = 8U;
     }
     start = output->length;
-    static const char search[] = "/(AAAAAAAA|MMMMMMMM|ZZZZZZZZ)\n";
-    ok = ok && text_pty_wait_for(master, output, start, "99999999") &&
+    static const char search[] = "/(ABCDEFGH|MNOPQRST|Zabcd012)\n";
+    ok = ok && text_pty_wait_for(master, output, start, "9ABCDEFG") &&
          text_pty_write(master, search, sizeof(search) - 1U);
     if (ok) {
         *stage = 9U;
     }
     start = output->length;
-    ok = ok && text_pty_write(master, "2n", 2U) && text_pty_wait_for(master, output, start, "ZZZZZZZZ") &&
+    ok = ok && text_pty_write(master, "2n", 2U) && text_pty_wait_for(master, output, start, "Zabcd012") &&
          text_pty_write(master, "\nb", 2U) && text_pty_wait_for(master, output, start, "Bookmark saved");
     if (ok) {
         *stage = 10U;
     }
     start = output->length;
     ok = ok && text_pty_write(master, "qggB", 4U) && text_pty_wait_for(master, output, start, "Bookmarks") &&
-         text_pty_write(master, "\n", 1U) && text_pty_wait_for(master, output, start, "ZZZZZZZZ");
+         text_pty_write(master, "\n", 1U) && text_pty_wait_for(master, output, start, "Zabcd012");
     if (ok) {
         *stage = 11U;
     }

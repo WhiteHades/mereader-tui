@@ -184,16 +184,7 @@ baca_graphics_select_mode(BacaImageMode configured, bool explicit_mode,
                              : BACA_IMAGE_MODE_PLACEHOLDER;
 }
 
-static GdkPixbufLoader *graphics_loader_new(const char *mime_type,
-                                             GError **gerror) {
-  if (graphics_nonempty(mime_type)) {
-    GdkPixbufLoader *loader =
-        gdk_pixbuf_loader_new_with_mime_type(mime_type, gerror);
-    if (loader != NULL) {
-      return loader;
-    }
-    g_clear_error(gerror);
-  }
+static GdkPixbufLoader *graphics_loader_new(void) {
   return gdk_pixbuf_loader_new();
 }
 
@@ -216,15 +207,30 @@ static void graphics_probe_size(GdkPixbufLoader *loader, int width, int height,
   if (state->width == 0 && state->height == 0) {
     state->width = width;
     state->height = height;
+    if (width > 0 && height > 0 && state->target_width > 0 &&
+        state->target_height > 0 &&
+        (width > state->target_width || height > state->target_height)) {
+      int scaled_width = state->target_width;
+      int scaled_height = state->target_height;
+      if ((int64_t)width * state->target_height >=
+          (int64_t)height * state->target_width) {
+        scaled_height = (int)((int64_t)height * state->target_width / width);
+        if (scaled_height < 1) {
+          scaled_height = 1;
+        }
+      } else {
+        scaled_width = (int)((int64_t)width * state->target_height / height);
+        if (scaled_width < 1) {
+          scaled_width = 1;
+        }
+      }
+      gdk_pixbuf_loader_set_size(loader, scaled_width, scaled_height);
+    }
   }
   if (width <= 0 || height <= 0 || width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
       height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
       (size_t)width > BACA_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)height) {
     state->invalid = true;
-  }
-  if (state->target_width > 0 && state->target_height > 0) {
-    gdk_pixbuf_loader_set_size(loader, state->target_width,
-                               state->target_height);
   }
 }
 
@@ -393,7 +399,7 @@ bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
   }
 
   GError *gerror = NULL;
-  GdkPixbufLoader *loader = graphics_loader_new(resource->mime_type, &gerror);
+  GdkPixbufLoader *loader = graphics_loader_new();
   if (loader == NULL) {
     baca_error_set(error, BACA_ERROR_UNSUPPORTED,
                    "no GdkPixbuf loader for image: %s",
@@ -756,7 +762,7 @@ static GdkPixbuf *graphics_decode_target(const BacaResource *resource,
     return NULL;
   }
   GError *gerror = NULL;
-  GdkPixbufLoader *loader = graphics_loader_new(resource->mime_type, &gerror);
+  GdkPixbufLoader *loader = graphics_loader_new();
   if (loader == NULL) {
     baca_error_set(error, BACA_ERROR_UNSUPPORTED,
                    "no GdkPixbuf loader for image: %s",

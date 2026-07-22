@@ -176,19 +176,23 @@ static bool buffer_contains(const unsigned char *data, size_t length, const void
 }
 
 static BacaTestResult test_valid_standalone_format(const StandaloneFormatFixture *fixture) {
-    GError *gerror = NULL;
-    GdkPixbufLoader *loader = gdk_pixbuf_loader_new_with_type(fixture->loader, &gerror);
-    if (loader == NULL) {
-        char reason[512] = {0};
-        (void)snprintf(reason, sizeof(reason), "GdkPixbuf %s loader unavailable: %s", fixture->loader,
-                       gerror == NULL ? "no loader registered" : gerror->message);
-        g_clear_error(&gerror);
-        return fixture->optional_loader ? baca_test_skip("%s", reason)
-                                        : baca_test_fail_at(__FILE__, __LINE__, "%s", reason);
+    bool loader_available = false;
+    GSList *formats = gdk_pixbuf_get_formats();
+    for (GSList *item = formats; item != NULL; item = item->next) {
+        gchar *name = gdk_pixbuf_format_get_name(item->data);
+        const bool matches = name != NULL && strcmp(name, fixture->loader) == 0;
+        g_free(name);
+        if (matches) {
+            loader_available = true;
+            break;
+        }
     }
-    (void)gdk_pixbuf_loader_close(loader, NULL);
-    g_object_unref(loader);
-    g_clear_error(&gerror);
+    g_slist_free(formats);
+    if (!loader_available) {
+        return fixture->optional_loader
+                   ? baca_test_skip("GdkPixbuf %s loader unavailable", fixture->loader)
+                   : baca_test_fail_at(__FILE__, __LINE__, "GdkPixbuf %s loader unavailable", fixture->loader);
+    }
 
     char target_relative[96] = {0};
     char alias_relative[96] = {0};

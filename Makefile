@@ -12,7 +12,7 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
 	-Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration
 LDLIBS += $(shell pkg-config --libs $(PKGS)) -lm -pthread
-TEST_LDLIBS = -lutil
+TEST_LDLIBS = -lutil -lfontconfig
 
 SOURCES = \
 	src/app.c \

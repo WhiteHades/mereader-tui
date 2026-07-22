@@ -155,7 +155,7 @@ PY
     wait "$server_pid" 2>/dev/null || :
     server_pid=
     printf q | TERM=xterm-256color timeout 15s "$binary" 1 >/dev/null 2>&1 || fail remote_offline_history
-    remote_library_output=$((sleep 2; printf '\n'; sleep 2; printf q; sleep 1; printf q) |
+    remote_library_output=$( (sleep 2; printf '\n'; sleep 2; printf q; sleep 1; printf q) |
         TERM=xterm-256color timeout 20s "$binary" 2>&1) || fail remote_offline_library
     case $remote_library_output in
         *"Remote document"*) ;;
