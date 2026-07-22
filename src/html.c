@@ -982,7 +982,7 @@ bool baca_html_append_section(BacaDocument *document, const char *html, size_t l
     bool success = true;
     if (length > 0) {
         int options = HTML_PARSE_RECOVER | HTML_PARSE_NODEFDTD | HTML_PARSE_NONET | HTML_PARSE_NOERROR |
-                      HTML_PARSE_NOWARNING | HTML_PARSE_COMPACT | HTML_PARSE_BIG_LINES;
+                      HTML_PARSE_NOWARNING | HTML_PARSE_COMPACT;
 #if LIBXML_VERSION >= 21300
         options |= XML_PARSE_NO_XXE;
 #endif
