@@ -41,12 +41,12 @@ esac
 pass help
 
 version_output=$("$binary" --version 2>&1) || fail version
-[ "$version_output" = "v0.2.0" ] || fail version
+[ "$version_output" = "v0.1.0" ] || fail version
 pass version
 
 doctor_output=$("$binary" --doctor 2>&1) || fail doctor
 case $doctor_output in
-    *"Baca Doctor"*"Version: 0.2.0"*) ;;
+    *"Baca Doctor"*"Version: 0.1.0"*) ;;
     *) fail doctor ;;
 esac
 case $doctor_output in

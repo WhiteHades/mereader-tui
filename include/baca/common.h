@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 #define BACA_NAME "baca"
-#define BACA_VERSION "0.2.0"
+#define BACA_VERSION "0.1.0"
 #define BACA_ARRAY_LEN(values) (sizeof(values) / sizeof((values)[0]))
 
 typedef enum BacaErrorCode : uint8_t {
