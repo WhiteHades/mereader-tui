@@ -49,6 +49,7 @@ void baca_test_support_cleanup(void);
 [[nodiscard]] const BacaTestCase *baca_fb2_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_graphics_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_library_test_cases(size_t *count);
+[[nodiscard]] const BacaTestCase *baca_library_shelf_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_layout_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_pdf_test_cases(size_t *count);
 [[nodiscard]] const BacaTestCase *baca_remote_test_cases(size_t *count);

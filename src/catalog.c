@@ -225,6 +225,10 @@ void baca_catalog_close(BacaCatalog *catalog) {
     *catalog = (BacaCatalog){0};
 }
 
+bool baca_catalog_is_open(const BacaCatalog *catalog) {
+    return catalog != NULL && catalog->search.handle != NULL;
+}
+
 static bool catalog_add_book(BacaCatalog *catalog, const char *key, const char *relative_path, CatalogMap *groups,
                              size_t *book_index, BacaError *error) {
     if (catalog_map_lookup(groups, key, book_index)) {

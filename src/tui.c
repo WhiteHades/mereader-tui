@@ -1,6 +1,8 @@
 #include "baca/app.h"
 #include "baca/document_backend.h"
 #include "baca/graphics.h"
+#include "baca/library_shelf.h"
+#include "baca/library_tui.h"
 #include "baca/platform.h"
 
 #include <ctype.h>
@@ -167,26 +169,12 @@ typedef enum BacaLibraryInputKind {
   BACA_LIBRARY_INPUT_PATH,
 } BacaLibraryInputKind;
 
-typedef enum BacaLibraryMode {
-  BACA_LIBRARY_MODE_AUTHORS = 0,
-  BACA_LIBRARY_MODE_BOOKS,
-  BACA_LIBRARY_MODE_ALL,
-  BACA_LIBRARY_MODE_FORMATS,
-} BacaLibraryMode;
-
-typedef struct BacaLibraryReference {
-  size_t book_index;
-  size_t format_index;
-} BacaLibraryReference;
-
 typedef struct BacaLibraryTuiState {
   const BacaConfig *config;
   const BacaHistory *history;
   BacaCatalog *catalog;
-  BacaHistory projection;
-  BacaLibraryReference *references;
-  size_t reference_capacity;
-  BacaLibraryMode mode;
+  BacaLibraryShelf shelf;
+  BacaLibraryShelfKind mode;
   char *author;
   size_t format_book;
   BacaLibraryView view;
@@ -3325,203 +3313,6 @@ static size_t library_visible_rows(const BacaLibraryTuiState *state) {
   return state->rows > 3 ? (size_t)(state->rows - 3) : 1U;
 }
 
-static void library_projection_clear(BacaLibraryTuiState *state) {
-  baca_history_free(&state->projection);
-  free(state->references);
-  state->references = NULL;
-  state->reference_capacity = 0U;
-}
-
-static bool library_projection_append(BacaLibraryTuiState *state,
-                                      const char *path, const char *title,
-                                      const char *author, double progress,
-                                      const char *last_read,
-                                      BacaLibraryReference reference,
-                                      BacaError *error) {
-  const size_t needed = state->projection.length + 1U;
-  BacaHistoryEntry *entries = baca_array_reserve(
-      state->projection.items, &state->projection.capacity,
-      sizeof(*state->projection.items), needed, error);
-  if (entries == NULL) {
-    return false;
-  }
-  state->projection.items = entries;
-  BacaLibraryReference *references = baca_array_reserve(
-      state->references, &state->reference_capacity,
-      sizeof(*state->references), needed, error);
-  if (references == NULL) {
-    return false;
-  }
-  state->references = references;
-
-  BacaHistoryEntry entry = {
-      .filepath = baca_strdup(path == NULL ? "" : path, error),
-      .title = baca_strdup(title == NULL ? "" : title, error),
-      .author = baca_strdup(author == NULL ? "" : author, error),
-      .reading_progress = progress,
-      .last_read = baca_strdup(last_read == NULL ? "" : last_read, error),
-  };
-  if (entry.filepath == NULL || entry.title == NULL || entry.author == NULL ||
-      entry.last_read == NULL) {
-    free(entry.filepath);
-    free(entry.title);
-    free(entry.author);
-    free(entry.last_read);
-    return false;
-  }
-  state->projection.items[state->projection.length] = entry;
-  state->references[state->projection.length] = reference;
-  ++state->projection.length;
-  return true;
-}
-
-static char *library_catalog_book_title(const BacaCatalogBook *book,
-                                        BacaError *error) {
-  BacaString title = {0};
-  const BacaCatalogFormat *preferred = baca_catalog_preferred_format(book);
-  if (!baca_string_append(&title, book->title, error)) {
-    return NULL;
-  }
-  if (preferred != NULL && book->format_count > 1U) {
-    char suffix[64] = {0};
-    (void)snprintf(suffix, sizeof(suffix), " [%s +%zu]", preferred->name,
-                   book->format_count - 1U);
-    if (!baca_string_append(&title, suffix, error)) {
-      baca_string_free(&title);
-      return NULL;
-    }
-  }
-  return baca_string_take(&title);
-}
-
-static bool library_projection_add_book(BacaLibraryTuiState *state,
-                                        size_t book_index,
-                                        BacaError *error) {
-  const BacaCatalogBook *book = &state->catalog->books[book_index];
-  const BacaCatalogFormat *preferred = baca_catalog_preferred_format(book);
-  if (preferred == NULL) {
-    return true;
-  }
-  char *title = library_catalog_book_title(book, error);
-  if (title == NULL) {
-    return false;
-  }
-  const bool added = library_projection_append(
-      state, preferred->path, title, book->author,
-      preferred->reading_progress, preferred->last_read,
-      (BacaLibraryReference){.book_index = book_index,
-                             .format_index = SIZE_MAX},
-      error);
-  free(title);
-  return added;
-}
-
-static bool library_projection_build(BacaLibraryTuiState *state,
-                                     const char *query, BacaError *error) {
-  if (state->catalog == NULL) {
-    return true;
-  }
-  BacaCatalogMatches matches = {0};
-  if (!baca_catalog_search(state->catalog, query, &matches, error)) {
-    return false;
-  }
-  library_projection_clear(state);
-
-  bool built = true;
-  if (state->mode == BACA_LIBRARY_MODE_FORMATS) {
-    if (state->format_book < state->catalog->length) {
-      const BacaCatalogBook *book = &state->catalog->books[state->format_book];
-      for (size_t index = 0U; built && index < book->format_count; ++index) {
-        const BacaCatalogFormat *format = &book->formats[index];
-        char title[512] = {0};
-        (void)snprintf(title, sizeof(title), "%s [%s]", book->title,
-                       format->name);
-        built = library_projection_append(
-            state, format->path, title, book->author,
-            format->reading_progress, format->last_read,
-            (BacaLibraryReference){.book_index = state->format_book,
-                                   .format_index = index},
-            error);
-      }
-    }
-  } else if (state->mode == BACA_LIBRARY_MODE_AUTHORS) {
-    bool *matched = state->catalog->length == 0U
-                        ? NULL
-                        : calloc(state->catalog->length, sizeof(*matched));
-    if (state->catalog->length > 0U && matched == NULL) {
-      baca_error_set(error, BACA_ERROR_MEMORY,
-                     "could not allocate author filter");
-      built = false;
-    }
-    for (size_t index = 0U; built && index < matches.length; ++index) {
-      matched[matches.book_indices[index]] = true;
-    }
-    for (size_t start = 0U; built && start < state->catalog->length;) {
-      size_t end = start + 1U;
-      while (end < state->catalog->length &&
-             strcmp(state->catalog->books[start].author,
-                    state->catalog->books[end].author) == 0) {
-        ++end;
-      }
-      size_t selected_book = SIZE_MAX;
-      double progress = 0.0;
-      const char *last_read = NULL;
-      for (size_t index = start; index < end; ++index) {
-        if (!matched[index]) {
-          continue;
-        }
-        if (selected_book == SIZE_MAX) {
-          selected_book = index;
-        }
-        const BacaCatalogFormat *format =
-            baca_catalog_preferred_format(&state->catalog->books[index]);
-        if (format != NULL && format->reading_progress > progress) {
-          progress = format->reading_progress;
-        }
-        if (format != NULL && format->last_read != NULL &&
-            (last_read == NULL || strcmp(format->last_read, last_read) > 0)) {
-          last_read = format->last_read;
-        }
-      }
-      if (selected_book != SIZE_MAX) {
-        const BacaCatalogBook *book = &state->catalog->books[selected_book];
-        char count[64] = {0};
-        (void)snprintf(count, sizeof(count), "%zu %s", end - start,
-                       end - start == 1U ? "book" : "books");
-        const BacaCatalogFormat *format = baca_catalog_preferred_format(book);
-        built = format != NULL && library_projection_append(
-                                      state, format->path,
-                                      book->author[0] == '\0' ? "unknown author"
-                                                               : book->author,
-                                      count, progress, last_read,
-                                      (BacaLibraryReference){
-                                          .book_index = selected_book,
-                                          .format_index = SIZE_MAX},
-                                      error);
-      }
-      start = end;
-    }
-    free(matched);
-  } else {
-    for (size_t index = 0U; built && index < matches.length; ++index) {
-      const size_t book_index = matches.book_indices[index];
-      const BacaCatalogBook *book = &state->catalog->books[book_index];
-      if (state->mode == BACA_LIBRARY_MODE_BOOKS && state->author != NULL &&
-          strcmp(book->author, state->author) != 0) {
-        continue;
-      }
-      built = library_projection_add_book(state, book_index, error);
-    }
-  }
-  baca_catalog_matches_free(&matches);
-  if (!built) {
-    library_projection_clear(state);
-    return false;
-  }
-  state->history = &state->projection;
-  return true;
-}
-
 static void library_ensure_selection_visible(BacaLibraryTuiState *state) {
   if (state->view.length == 0U) {
     state->selected = 0U;
@@ -3571,27 +3362,38 @@ static void library_copy_status(BacaLibraryTuiState *state,
   }
 }
 
-static bool library_rebuild_view(BacaLibraryTuiState *state,
+static bool library_replace_view(BacaLibraryTuiState *state,
+                                 BacaLibraryShelfKind mode,
+                                 const char *author, size_t format_book,
                                  const char *filter, BacaLibrarySort sort,
                                  const char *selected_filepath,
                                  BacaError *error) {
-  BacaLibraryView replacement = {0};
-  if (state->catalog != NULL && !library_projection_build(state, filter, error)) {
-    return false;
+  BacaLibraryShelf replacement_shelf = {0};
+  const BacaHistory *history = state->history;
+  if (state->catalog != NULL) {
+    if (!baca_library_shelf_build(&replacement_shelf, state->catalog, mode,
+                                  author, format_book, filter, error)) {
+      return false;
+    }
+    history = &replacement_shelf.entries;
   }
   const char *view_filter = state->catalog == NULL ? filter : "";
   const BacaLibrarySort view_sort =
       state->catalog != NULL && filter[0] != '\0'
           ? BACA_LIBRARY_SORT_RELEVANCE
           : sort;
-  if (!baca_library_view_build(&replacement, state->history, view_filter, view_sort,
-                               error)) {
+  BacaLibraryView replacement_view = {0};
+  if (!baca_library_view_build(&replacement_view, history, view_filter,
+                               view_sort, error)) {
+    baca_library_shelf_free(&replacement_shelf);
     return false;
   }
   const size_t selected = baca_library_preserve_selection(
-      &replacement, selected_filepath, state->selected);
+      &replacement_view, selected_filepath, state->selected);
   baca_library_view_free(&state->view);
-  state->view = replacement;
+  baca_library_shelf_free(&state->shelf);
+  state->view = replacement_view;
+  state->shelf = replacement_shelf;
   state->selected = selected;
   if (filter != state->filter) {
     (void)snprintf(state->filter, sizeof(state->filter), "%s", filter);
@@ -3602,6 +3404,15 @@ static bool library_rebuild_view(BacaLibraryTuiState *state,
   return true;
 }
 
+static bool library_rebuild_view(BacaLibraryTuiState *state,
+                                 const char *filter, BacaLibrarySort sort,
+                                 const char *selected_filepath,
+                                 BacaError *error) {
+  return library_replace_view(state, state->mode, state->author,
+                              state->format_book, filter, sort,
+                              selected_filepath, error);
+}
+
 static const char *library_selected_filepath(
     const BacaLibraryTuiState *state) {
   if (state->selected >= state->view.length) {
@@ -3610,18 +3421,13 @@ static const char *library_selected_filepath(
   return state->view.rows[state->selected].entry->filepath;
 }
 
-static const BacaLibraryReference *library_selected_reference(
+static const BacaLibraryShelfReference *library_selected_reference(
     const BacaLibraryTuiState *state) {
   if (state->catalog == NULL || state->selected >= state->view.length) {
     return NULL;
   }
-  const BacaHistoryEntry *entry = state->view.rows[state->selected].entry;
-  for (size_t index = 0U; index < state->projection.length; ++index) {
-    if (entry == &state->projection.items[index]) {
-      return &state->references[index];
-    }
-  }
-  return NULL;
+  return baca_library_shelf_reference(
+      &state->shelf, state->view.rows[state->selected].entry);
 }
 
 static void library_runtime_error(BacaLibraryTuiState *state,
@@ -3839,11 +3645,11 @@ static void library_draw_context(BacaLibraryTuiState *state, int row) {
     }
     const char *scope = state->catalog == NULL
                             ? "history"
-                            : state->mode == BACA_LIBRARY_MODE_AUTHORS
+                            : state->mode == BACA_LIBRARY_SHELF_AUTHORS
                                   ? "authors"
-                                  : state->mode == BACA_LIBRARY_MODE_BOOKS
+                                  : state->mode == BACA_LIBRARY_SHELF_BOOKS
                                         ? "books"
-                                        : state->mode == BACA_LIBRARY_MODE_FORMATS
+                                        : state->mode == BACA_LIBRARY_SHELF_FORMATS
                                               ? "formats"
                                               : "all books";
     if (state->view.length == 0U) {
@@ -3890,11 +3696,11 @@ static void library_draw_frame(BacaLibraryTuiState *state) {
   if (show_heading) {
     char heading[512] = "baca / history";
     if (state->catalog != NULL) {
-      if (state->mode == BACA_LIBRARY_MODE_AUTHORS) {
+      if (state->mode == BACA_LIBRARY_SHELF_AUTHORS) {
         (void)snprintf(heading, sizeof(heading), "baca / authors");
-      } else if (state->mode == BACA_LIBRARY_MODE_ALL) {
+      } else if (state->mode == BACA_LIBRARY_SHELF_ALL) {
         (void)snprintf(heading, sizeof(heading), "baca / all books");
-      } else if (state->mode == BACA_LIBRARY_MODE_BOOKS) {
+      } else if (state->mode == BACA_LIBRARY_SHELF_BOOKS) {
         (void)snprintf(heading, sizeof(heading), "baca / authors / %s",
                        state->author == NULL ? "unknown" : state->author);
       } else if (state->format_book < state->catalog->length) {
@@ -4163,7 +3969,7 @@ static void library_clear_filter(BacaLibraryTuiState *state) {
 }
 
 static void library_change_mode(BacaLibraryTuiState *state,
-                                BacaLibraryMode mode,
+                                BacaLibraryShelfKind mode,
                                 const char *author,
                                 size_t format_book) {
   char *stored_author = NULL;
@@ -4175,25 +3981,28 @@ static void library_change_mode(BacaLibraryTuiState *state,
       return;
     }
   }
-  free(state->author);
-  state->author = stored_author;
-  state->mode = mode;
-  state->format_book = format_book;
-  state->selected = 0U;
-  state->top = 0U;
-  state->filter[0] = '\0';
-  if (!library_rebuild_view(state, "", state->sort, NULL, &error)) {
+  if (!library_replace_view(state, mode, stored_author, format_book, "",
+                            state->sort, NULL, &error)) {
+    free(stored_author);
     library_runtime_error(state, &error, "cannot open shelf");
   } else {
+    free(state->author);
+    state->author = stored_author;
+    state->mode = mode;
+    state->format_book = format_book;
+    state->selected = 0U;
+    state->top = 0U;
+    state->filter[0] = '\0';
+    library_ensure_selection_visible(state);
     library_clear_status(state);
   }
 }
 
 static void library_open_selected(BacaLibraryTuiState *state) {
-  const BacaLibraryReference *reference = library_selected_reference(state);
-  if (reference != NULL && state->mode == BACA_LIBRARY_MODE_AUTHORS &&
+  const BacaLibraryShelfReference *reference = library_selected_reference(state);
+  if (reference != NULL && state->mode == BACA_LIBRARY_SHELF_AUTHORS &&
       reference->book_index < state->catalog->length) {
-    library_change_mode(state, BACA_LIBRARY_MODE_BOOKS,
+    library_change_mode(state, BACA_LIBRARY_SHELF_BOOKS,
                         state->catalog->books[reference->book_index].author,
                         0U);
     return;
@@ -4208,14 +4017,14 @@ static void library_open_selected(BacaLibraryTuiState *state) {
 }
 
 static void library_open_formats(BacaLibraryTuiState *state) {
-  const BacaLibraryReference *reference = library_selected_reference(state);
+  const BacaLibraryShelfReference *reference = library_selected_reference(state);
   if (reference == NULL || reference->book_index >= state->catalog->length ||
-      state->mode == BACA_LIBRARY_MODE_AUTHORS) {
+      state->mode == BACA_LIBRARY_SHELF_AUTHORS) {
     library_copy_status(state, "select a book to view formats");
     state->dirty = true;
     return;
   }
-  library_change_mode(state, BACA_LIBRARY_MODE_FORMATS, NULL,
+  library_change_mode(state, BACA_LIBRARY_SHELF_FORMATS, NULL,
                       reference->book_index);
 }
 
@@ -4224,16 +4033,16 @@ static void library_go_back(BacaLibraryTuiState *state) {
     library_clear_filter(state);
   } else if (state->filter[0] != '\0') {
     library_clear_filter(state);
-  } else if (state->mode == BACA_LIBRARY_MODE_FORMATS) {
+  } else if (state->mode == BACA_LIBRARY_SHELF_FORMATS) {
     const char *author = state->format_book < state->catalog->length
                              ? state->catalog->books[state->format_book].author
                              : NULL;
     library_change_mode(state, state->catalog->calibre
-                                   ? BACA_LIBRARY_MODE_BOOKS
-                                   : BACA_LIBRARY_MODE_ALL,
+                                   ? BACA_LIBRARY_SHELF_BOOKS
+                                   : BACA_LIBRARY_SHELF_ALL,
                         state->catalog->calibre ? author : NULL, 0U);
-  } else if (state->mode == BACA_LIBRARY_MODE_BOOKS) {
-    library_change_mode(state, BACA_LIBRARY_MODE_AUTHORS, NULL, 0U);
+  } else if (state->mode == BACA_LIBRARY_SHELF_BOOKS) {
+    library_change_mode(state, BACA_LIBRARY_SHELF_AUTHORS, NULL, 0U);
   } else {
     library_clear_filter(state);
   }
@@ -4298,9 +4107,9 @@ static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
     library_open_formats(state);
   } else if (!key_code && character == L'a' && state->catalog != NULL) {
     library_change_mode(state,
-                        state->mode == BACA_LIBRARY_MODE_ALL
-                            ? BACA_LIBRARY_MODE_AUTHORS
-                            : BACA_LIBRARY_MODE_ALL,
+                        state->mode == BACA_LIBRARY_SHELF_ALL
+                            ? BACA_LIBRARY_SHELF_AUTHORS
+                            : BACA_LIBRARY_SHELF_ALL,
                         NULL, 0U);
   } else if ((key_code && code == KEY_BACKSPACE) ||
              (!key_code && (character == 8 || character == 127 ||
@@ -4331,21 +4140,19 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
       .config = config,
       .history = history,
       .catalog = catalog,
-      .mode = catalog != NULL && catalog->calibre ? BACA_LIBRARY_MODE_AUTHORS
-                                                   : BACA_LIBRARY_MODE_ALL,
+      .mode = catalog != NULL && catalog->calibre
+                  ? BACA_LIBRARY_SHELF_AUTHORS
+                  : BACA_LIBRARY_SHELF_ALL,
       .sort = sort,
       .previous_cursor = ERR,
       .dirty = true,
   };
   library_copy_status(&state, context);
-  if ((catalog != NULL && !library_projection_build(&state, "", error)) ||
-      !baca_library_view_build(&state.view, state.history, "", sort, error)) {
+  if (!library_rebuild_view(&state, "", sort, selected_filepath, error)) {
     library_clear_status(&state);
-    library_projection_clear(&state);
+    baca_library_shelf_free(&state.shelf);
     return EXIT_FAILURE;
   }
-  state.selected = baca_library_preserve_selection(
-      &state.view, selected_filepath, 0U);
 
   BacaSignalHandlers signal_handlers = {0};
   sigset_t previous_signal_mask;
@@ -4353,7 +4160,7 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
   if (!block_exit_signals(&previous_signal_mask, error)) {
     library_clear_status(&state);
     baca_library_view_free(&state.view);
-    library_projection_clear(&state);
+    baca_library_shelf_free(&state.shelf);
     return EXIT_FAILURE;
   }
   exit_signals_blocked = true;
@@ -4361,14 +4168,14 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
   if (!capture_signal_handlers(&signal_handlers, error)) {
     library_clear_status(&state);
     baca_library_view_free(&state.view);
-    library_projection_clear(&state);
+    baca_library_shelf_free(&state.shelf);
     (void)restore_signal_mask(&previous_signal_mask, NULL);
     return EXIT_FAILURE;
   }
   if (!library_initialize_curses(&state, error)) {
     library_clear_status(&state);
     baca_library_view_free(&state.view);
-    library_projection_clear(&state);
+    baca_library_shelf_free(&state.shelf);
     (void)restore_signal_mask(&previous_signal_mask, NULL);
     return EXIT_FAILURE;
   }
@@ -4417,7 +4224,7 @@ cleanup:
   free(state.input_selection);
   library_clear_status(&state);
   baca_library_view_free(&state.view);
-  library_projection_clear(&state);
+  baca_library_shelf_free(&state.shelf);
   free(state.author);
   if (!exit_signals_blocked) {
     BacaError mask_error = {0};

@@ -1,4 +1,5 @@
 #include "baca/app.h"
+#include "baca/library_tui.h"
 #include "baca/platform.h"
 #include "baca/remote.h"
 
@@ -500,7 +501,7 @@ static int run_library(void) {
 
     if (library_root != NULL) {
       const bool catalog_ready =
-          catalog.search.handle == NULL
+          !baca_catalog_is_open(&catalog)
               ? baca_catalog_open(&catalog, library_root, &history, true, &error)
               : baca_catalog_update_progress(&catalog, &history, &error);
       if (!catalog_ready) {
@@ -511,7 +512,7 @@ static int run_library(void) {
     }
 
     const char *tui_selected_filepath = selected_filepath;
-    if (preserve_index && catalog.search.handle == NULL &&
+    if (preserve_index && !baca_catalog_is_open(&catalog) &&
         !resolve_library_selection(&history, sort, selected_filepath,
                                    selected_index, &tui_selected_filepath,
                                    &selected_index, &error)) {
@@ -522,14 +523,14 @@ static int run_library(void) {
 
     BacaLibraryAction action = {0};
     result = baca_library_tui_run(&config, &history,
-                                  catalog.search.handle == NULL ? NULL : &catalog,
+                                  baca_catalog_is_open(&catalog) ? &catalog : NULL,
                                   sort,
                                   tui_selected_filepath, context, &action,
                                   &error);
     size_t refresh_index = selected_index;
     if (result == EXIT_SUCCESS &&
         action.command == BACA_LIBRARY_COMMAND_REFRESH &&
-        catalog.search.handle == NULL &&
+        !baca_catalog_is_open(&catalog) &&
         !resolve_library_selection(&history, action.sort, action.path,
                                    selected_index, NULL, &refresh_index,
                                    &error)) {
@@ -540,7 +541,7 @@ static int run_library(void) {
     }
     if (result == EXIT_SUCCESS &&
         action.command == BACA_LIBRARY_COMMAND_REFRESH &&
-        catalog.search.handle != NULL &&
+        baca_catalog_is_open(&catalog) &&
         !baca_catalog_refresh(&catalog, &history, &error)) {
       free(action.path);
       baca_history_free(&history);
@@ -567,8 +568,8 @@ static int run_library(void) {
       free(selected_filepath);
       selected_filepath = action.path;
       selected_index = refresh_index;
-      preserve_index = catalog.search.handle == NULL;
-      remove_missing = catalog.search.handle == NULL;
+      preserve_index = !baca_catalog_is_open(&catalog);
+      remove_missing = !baca_catalog_is_open(&catalog);
       (void)snprintf(context, sizeof(context), "library refreshed");
       continue;
     }

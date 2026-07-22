@@ -29,6 +29,7 @@ int main(void) {
     size_t fb2_count = 0U;
     size_t graphics_count = 0U;
     size_t library_count = 0U;
+    size_t library_shelf_count = 0U;
     size_t layout_count = 0U;
     size_t pdf_count = 0U;
     size_t remote_count = 0U;
@@ -43,6 +44,7 @@ int main(void) {
     const BacaTestCase *fb2_cases = baca_fb2_test_cases(&fb2_count);
     const BacaTestCase *graphics_cases = baca_graphics_test_cases(&graphics_count);
     const BacaTestCase *library_cases = baca_library_test_cases(&library_count);
+    const BacaTestCase *library_shelf_cases = baca_library_shelf_test_cases(&library_shelf_count);
     const BacaTestCase *layout_cases = baca_layout_test_cases(&layout_count);
     const BacaTestCase *pdf_cases = baca_pdf_test_cases(&pdf_count);
     const BacaTestCase *remote_cases = baca_remote_test_cases(&remote_count);
@@ -58,6 +60,7 @@ int main(void) {
         {.name = "fb2", .cases = fb2_cases, .count = fb2_count},
         {.name = "graphics", .cases = graphics_cases, .count = graphics_count},
         {.name = "library", .cases = library_cases, .count = library_count},
+        {.name = "library_shelf", .cases = library_shelf_cases, .count = library_shelf_count},
         {.name = "layout", .cases = layout_cases, .count = layout_count},
         {.name = "pdf", .cases = pdf_cases, .count = pdf_count},
         {.name = "remote", .cases = remote_cases, .count = remote_count},

@@ -43,6 +43,15 @@ static BacaTestResult test_calibre_hierarchy_formats_search_and_progress(void) {
     TEST_ASSERT_DOUBLE(preferred->reading_progress, 0.625, 1e-12);
     TEST_ASSERT_STR(preferred->last_read, "2026-07-22 10:00:00");
 
+    TEST_ASSERT_MSG(baca_catalog_update_progress(&catalog, NULL, &error), "%s", error.message);
+    TEST_ASSERT_DOUBLE(preferred->reading_progress, 0.0, 1e-12);
+    TEST_ASSERT(preferred->last_read == NULL);
+    entry.reading_progress = 0.75;
+    entry.last_read = "2026-07-22 11:00:00";
+    TEST_ASSERT_MSG(baca_catalog_update_progress(&catalog, &history, &error), "%s", error.message);
+    TEST_ASSERT_DOUBLE(preferred->reading_progress, 0.75, 1e-12);
+    TEST_ASSERT_STR(preferred->last_read, "2026-07-22 11:00:00");
+
     BacaCatalogMatches matches = {0};
     TEST_ASSERT_MSG(baca_catalog_search(&catalog, "alice first", &matches, &error), "%s", error.message);
     TEST_ASSERT(matches.length >= 1U);
