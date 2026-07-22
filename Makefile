@@ -6,12 +6,18 @@ BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share
 MANDIR ?= $(DATADIR)/man
 INSTALL ?= install
+CARGO ?= cargo
+RUST_TOOLCHAIN ?= 1.97.0
+FFF_TARGET_DIR ?= $(CURDIR)/vendor/fff/target
+LIBDIR ?= $(PREFIX)/lib/baca
+LICENSEDIR ?= $(DATADIR)/licenses/baca
 PKGS = ncursesw sqlite3 glib-2.0 libxml-2.0 libzip libarchive libpcre2-8 gdk-pixbuf-2.0 poppler-glib cairo libcurl
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -Iinclude $(shell pkg-config --cflags $(PKGS))
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -Iinclude -Ivendor/fff/crates/fff-c/include $(shell pkg-config --cflags $(PKGS))
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
 	-Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration
-LDLIBS += $(shell pkg-config --libs $(PKGS)) -lm -pthread
+LDLIBS += -Lbuild -lfff_c $(shell pkg-config --libs $(PKGS)) -lm -pthread
+LDFLAGS += -Wl,-rpath,'$$ORIGIN:$$ORIGIN/..:$$ORIGIN/../lib/baca'
 TEST_LDLIBS = -lutil -lfontconfig
 
 SOURCES = \
@@ -32,19 +38,20 @@ SOURCES = \
 	src/pdf.c \
 	src/platform.c \
 	src/remote.c \
+	src/search.c \
 	src/text.c \
 	src/tui.c \
 	src/main.c
 OBJECTS = $(SOURCES:src/%.c=build/%.o)
 TEST_SOURCES = tests/test_main.c tests/test_common.c tests/test_comic.c tests/test_config.c tests/test_database.c \
 	tests/test_document.c tests/test_fb2.c tests/test_graphics.c tests/test_layout.c tests/test_library.c \
-	tests/test_remote.c tests/test_support.c tests/test_text.c
+	tests/test_remote.c tests/test_search.c tests/test_support.c tests/test_text.c
 
 TEST_SOURCES += tests/test_pdf.c
 TEST_OBJECTS = $(TEST_SOURCES:tests/%.c=build/tests/%.o)
 LIB_OBJECTS = $(filter-out build/main.o,$(OBJECTS))
 
-.PHONY: all check-deps clean doctor format install installcheck sanitize test test-clang test-gcc tests uninstall user-install user-uninstall
+.PHONY: all check-deps clean doctor fff format install installcheck sanitize test test-clang test-gcc tests uninstall user-install user-uninstall
 
 all: check-deps build/baca
 
@@ -57,6 +64,10 @@ check-deps:
 		printf 'error: missing development packages:%s\n' "$$missing" >&2; \
 		exit 1; \
 	fi
+	@command -v "$(CARGO)" >/dev/null 2>&1 || { printf '%s\n' 'error: cargo is required to build bundled fff' >&2; exit 1; }
+	@"$(CARGO)" +"$(RUST_TOOLCHAIN)" --version >/dev/null 2>&1 || { \
+		printf '%s\n' 'error: Rust toolchain $(RUST_TOOLCHAIN) is required to build bundled fff' >&2; exit 1; \
+	}
 
 doctor: check-deps
 	@printf 'build dependencies: ready\n'
@@ -66,7 +77,15 @@ doctor: check-deps
 		printf 'MOBI/AZW runtime: unavailable (install mobitool from libmobi)\n'; \
 	fi
 
-build/baca: $(OBJECTS)
+fff: build/libfff_c.so
+
+build/libfff_c.so: vendor/fff/Cargo.lock
+	@mkdir -p build
+	CARGO_TARGET_DIR="$(FFF_TARGET_DIR)" "$(CARGO)" +"$(RUST_TOOLCHAIN)" build \
+		--manifest-path vendor/fff/Cargo.toml --locked --release -p fff-c
+	cp "$(FFF_TARGET_DIR)/release/libfff_c.so" $@
+
+build/baca: build/libfff_c.so $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 
 build/tests/test_baca: build/baca $(LIB_OBJECTS) $(TEST_OBJECTS)
@@ -107,14 +126,20 @@ format:
 
 install: build/baca
 	$(INSTALL) -Dm755 build/baca "$(DESTDIR)$(BINDIR)/baca"
+	$(INSTALL) -Dm755 build/libfff_c.so "$(DESTDIR)$(LIBDIR)/libfff_c.so"
 	$(INSTALL) -Dm644 resources/config.ini "$(DESTDIR)$(DATADIR)/baca/config.ini"
 	$(INSTALL) -Dm644 docs/baca.1 "$(DESTDIR)$(MANDIR)/man1/baca.1"
+	$(INSTALL) -Dm644 vendor/fff/LICENSE "$(DESTDIR)$(LICENSEDIR)/fff-LICENSE"
 
 uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/baca"
+	rm -f "$(DESTDIR)$(LIBDIR)/libfff_c.so"
 	rm -f "$(DESTDIR)$(DATADIR)/baca/config.ini"
 	rm -f "$(DESTDIR)$(MANDIR)/man1/baca.1"
+	rm -f "$(DESTDIR)$(LICENSEDIR)/fff-LICENSE"
 	-rmdir "$(DESTDIR)$(DATADIR)/baca" 2>/dev/null
+	-rmdir "$(DESTDIR)$(LIBDIR)" 2>/dev/null
+	-rmdir "$(DESTDIR)$(LICENSEDIR)" 2>/dev/null
 
 user-install:
 	$(MAKE) install PREFIX="$(HOME)/.local"
@@ -126,14 +151,18 @@ installcheck: build/baca
 	rm -rf build/install-root
 	$(MAKE) install DESTDIR="$(CURDIR)/build/install-root" PREFIX=/usr
 	test -x build/install-root/usr/bin/baca
+	test -x build/install-root/usr/lib/baca/libfff_c.so
 	test -f build/install-root/usr/share/baca/config.ini
 	test -f build/install-root/usr/share/man/man1/baca.1
+	test -f build/install-root/usr/share/licenses/baca/fff-LICENSE
 	build/install-root/usr/bin/baca --version
 	build/install-root/usr/bin/baca --doctor
 	$(MAKE) uninstall DESTDIR="$(CURDIR)/build/install-root" PREFIX=/usr
 	test ! -e build/install-root/usr/bin/baca
+	test ! -e build/install-root/usr/lib/baca/libfff_c.so
 	test ! -e build/install-root/usr/share/baca/config.ini
 	test ! -e build/install-root/usr/share/man/man1/baca.1
+	test ! -e build/install-root/usr/share/licenses/baca/fff-LICENSE
 
 clean:
 	rm -rf build

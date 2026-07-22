@@ -25,6 +25,7 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 - Linux with a UTF-8 locale
 - GCC 14 or newer, or Clang 18 or newer, with C23 support
+- Rust 1.97 and Cargo to build the pinned FFF search backend
 - `pkg-config`, ncursesw, SQLite, GLib, libxml2, libzip, libarchive, PCRE2,
   GdkPixbuf, Poppler GLib, Cairo, and libcurl
 - `mobitool` from [libmobi](https://github.com/bfabiszewski/libmobi) for
@@ -32,8 +33,17 @@ But with a sleek and contemporary appearance that's sure to captivate you!
 
 ## Installation
 
-Download a source archive or clone this repository, then install the development
-packages for your distribution.
+Clone this repository and its pinned FFF submodule, then install the development
+packages for your distribution:
+
+```sh
+git clone --recurse-submodules https://github.com/WhiteHades/baca.git
+cd baca
+rustup toolchain install 1.97.0 --profile minimal
+```
+
+If the repository was cloned without submodules, initialize FFF with
+`git submodule update --init --recursive` before building.
 
 ### Debian and Ubuntu
 
@@ -108,9 +118,11 @@ sudo make install
 baca --doctor
 ```
 
-Installation includes the executable, default configuration reference, and the
-`baca(1)` manual. Packaging tools can stage files safely with `DESTDIR`, for
-example `make install DESTDIR="$pkgdir" PREFIX=/usr`.
+Installation includes the executable, bundled FFF shared library and license,
+default configuration reference, and the `baca(1)` manual. The executable uses
+an installation-relative runtime path, so no global linker configuration is
+needed. Packaging tools can stage files safely with `DESTDIR`, for example
+`make install DESTDIR="$pkgdir" PREFIX=/usr`.
 
 ### Uninstall
 

@@ -31,6 +31,7 @@ int main(void) {
     size_t layout_count = 0U;
     size_t pdf_count = 0U;
     size_t remote_count = 0U;
+    size_t search_count = 0U;
     size_t text_count = 0U;
     const BacaTestCase *common_cases = baca_common_test_cases(&common_count);
     const BacaTestCase *comic_cases = baca_comic_test_cases(&comic_count);
@@ -43,6 +44,7 @@ int main(void) {
     const BacaTestCase *layout_cases = baca_layout_test_cases(&layout_count);
     const BacaTestCase *pdf_cases = baca_pdf_test_cases(&pdf_count);
     const BacaTestCase *remote_cases = baca_remote_test_cases(&remote_count);
+    const BacaTestCase *search_cases = baca_search_test_cases(&search_count);
     const BacaTestCase *text_cases = baca_text_test_cases(&text_count);
     const BacaTestSuite suites[] = {
         {.name = "common", .cases = common_cases, .count = common_count},
@@ -56,6 +58,7 @@ int main(void) {
         {.name = "layout", .cases = layout_cases, .count = layout_count},
         {.name = "pdf", .cases = pdf_cases, .count = pdf_count},
         {.name = "remote", .cases = remote_cases, .count = remote_count},
+        {.name = "search", .cases = search_cases, .count = search_count},
         {.name = "text", .cases = text_cases, .count = text_count},
     };
     int result = baca_test_run(suites, BACA_ARRAY_LEN(suites));
