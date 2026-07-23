@@ -1,7 +1,7 @@
-#include "baca/app.h"
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
-#include "baca/platform.h"
+#include "mereader-tui/app.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
+#include "mereader-tui/platform.h"
 #include "terminal_runtime.h"
 #include "text_input.h"
 
@@ -18,129 +18,129 @@
 #include <wchar.h>
 
 enum {
-  BACA_PAIR_BASE = 1,
-  BACA_PAIR_ACCENT,
-  BACA_PAIR_SEARCH,
-  BACA_PAIR_ALERT,
-  BACA_PAIR_IMAGE_FIRST,
-  BACA_JUMP_HISTORY_LIMIT = 100,
-  BACA_HELP_LINE_COUNT = 26,
-  BACA_PDF_HELP_LINE_COUNT = 28,
-  BACA_KEY_CTRL_I = KEY_MAX + 1,
+  MEREADER_TUI_PAIR_BASE = 1,
+  MEREADER_TUI_PAIR_ACCENT,
+  MEREADER_TUI_PAIR_SEARCH,
+  MEREADER_TUI_PAIR_ALERT,
+  MEREADER_TUI_PAIR_IMAGE_FIRST,
+  MEREADER_TUI_JUMP_HISTORY_LIMIT = 100,
+  MEREADER_TUI_HELP_LINE_COUNT = 26,
+  MEREADER_TUI_PDF_HELP_LINE_COUNT = 28,
+  MEREADER_TUI_KEY_CTRL_I = KEY_MAX + 1,
 };
 
-static const char BACA_IMAGE_PLACEHOLDER[] = "IMAGE";
+static const char MEREADER_TUI_IMAGE_PLACEHOLDER[] = "IMAGE";
 
-typedef enum BacaOverlayKind {
-  BACA_OVERLAY_NONE = 0,
-  BACA_OVERLAY_TOC,
-  BACA_OVERLAY_BOOKMARKS,
-  BACA_OVERLAY_METADATA,
-  BACA_OVERLAY_HELP,
-  BACA_OVERLAY_ALERT,
-} BacaOverlayKind;
+typedef enum MereaderTuiOverlayKind {
+  MEREADER_TUI_OVERLAY_NONE = 0,
+  MEREADER_TUI_OVERLAY_TOC,
+  MEREADER_TUI_OVERLAY_BOOKMARKS,
+  MEREADER_TUI_OVERLAY_METADATA,
+  MEREADER_TUI_OVERLAY_HELP,
+  MEREADER_TUI_OVERLAY_ALERT,
+} MereaderTuiOverlayKind;
 
-typedef struct BacaNormalizedKey {
+typedef struct MereaderTuiNormalizedKey {
   bool valid;
   bool key_code;
   int code;
   wchar_t character;
-  BacaCommand command;
-} BacaNormalizedKey;
+  MereaderTuiCommand command;
+} MereaderTuiNormalizedKey;
 
-typedef struct BacaSearchState {
+typedef struct MereaderTuiSearchState {
   char *pattern;
-  BacaSearchMatch *matches;
+  MereaderTuiSearchMatch *matches;
   size_t match_count;
   size_t current_match;
   double saved_progress;
   bool active;
   bool forward;
-} BacaSearchState;
+} MereaderTuiSearchState;
 
-typedef struct BacaPromptState {
-  BacaTextInput text;
+typedef struct MereaderTuiPromptState {
+  MereaderTuiTextInput text;
   double saved_progress;
   bool active;
   bool forward;
-} BacaPromptState;
+} MereaderTuiPromptState;
 
-typedef struct BacaReaderCommandState {
+typedef struct MereaderTuiReaderCommandState {
   size_t count;
   bool count_active;
   bool g_pending;
-} BacaReaderCommandState;
+} MereaderTuiReaderCommandState;
 
-typedef struct BacaJumpHistory {
-  double backward[BACA_JUMP_HISTORY_LIMIT];
+typedef struct MereaderTuiJumpHistory {
+  double backward[MEREADER_TUI_JUMP_HISTORY_LIMIT];
   size_t backward_count;
-  double forward[BACA_JUMP_HISTORY_LIMIT];
+  double forward[MEREADER_TUI_JUMP_HISTORY_LIMIT];
   size_t forward_count;
-} BacaJumpHistory;
+} MereaderTuiJumpHistory;
 
-typedef struct BacaAnimation {
+typedef struct MereaderTuiAnimation {
   double from;
   double to;
   double started_at;
   double duration;
   bool active;
-} BacaAnimation;
+} MereaderTuiAnimation;
 
-typedef struct BacaOverlayBox {
+typedef struct MereaderTuiOverlayBox {
   int y;
   int x;
   int height;
   int width;
-} BacaOverlayBox;
+} MereaderTuiOverlayBox;
 
-typedef struct BacaParserJob {
-  const BacaDocument *document;
+typedef struct MereaderTuiParserJob {
+  const MereaderTuiDocument *document;
   int width;
-  BacaJustification justification;
-  BacaPresentation presentation;
+  MereaderTuiJustification justification;
+  MereaderTuiPresentation presentation;
   int cell_pixel_width;
   int cell_pixel_height;
-  BacaLayout layout;
-  BacaError error;
+  MereaderTuiLayout layout;
+  MereaderTuiError error;
   atomic_bool cancel;
   atomic_bool done;
   atomic_bool succeeded;
-} BacaParserJob;
+} MereaderTuiParserJob;
 
-typedef struct BacaPdfRenderFailure {
+typedef struct MereaderTuiPdfRenderFailure {
   int columns;
   int rows;
   int cell_pixel_width;
   int cell_pixel_height;
   bool valid;
-} BacaPdfRenderFailure;
+} MereaderTuiPdfRenderFailure;
 
-typedef struct BacaTuiState {
-  BacaApp *app;
-  BacaGraphicsContext *graphics;
+typedef struct MereaderTuiTuiState {
+  MereaderTuiApp *app;
+  MereaderTuiGraphicsContext *graphics;
   int rows;
   int columns;
   int content_width;
   int content_x;
   int previous_cursor;
-  BacaOverlayKind overlay;
+  MereaderTuiOverlayKind overlay;
   size_t overlay_scroll;
   size_t toc_index;
-  BacaBookmarks bookmarks;
+  MereaderTuiBookmarks bookmarks;
   size_t bookmark_index;
   char alert[512];
-  BacaPdfRenderFailure *pdf_render_failures;
+  MereaderTuiPdfRenderFailure *pdf_render_failures;
   size_t pdf_render_failure_count;
-  BacaSearchState search;
-  BacaPromptState prompt;
-  BacaReaderCommandState reader_command;
-  BacaJumpHistory jumps;
-  BacaAnimation animation;
+  MereaderTuiSearchState search;
+  MereaderTuiPromptState prompt;
+  MereaderTuiReaderCommandState reader_command;
+  MereaderTuiJumpHistory jumps;
+  MereaderTuiAnimation animation;
   char **temp_directories;
   size_t temp_directory_count;
   size_t temp_directory_capacity;
-  BacaImageMode image_mode;
-  BacaPresentation presentation;
+  MereaderTuiImageMode image_mode;
+  MereaderTuiPresentation presentation;
   int cell_pixel_width;
   int cell_pixel_height;
   short image_pair_capacity;
@@ -148,11 +148,11 @@ typedef struct BacaTuiState {
   bool raw_truecolor;
   bool quit;
   bool dirty;
-} BacaTuiState;
+} MereaderTuiTuiState;
 
-static void open_alert(BacaTuiState *state, const char *message);
-static void draw_frame(BacaTuiState *state);
-static bool follow_link(BacaTuiState *state, const char *link,
+static void open_alert(MereaderTuiTuiState *state, const char *message);
+static void draw_frame(MereaderTuiTuiState *state);
+static bool follow_link(MereaderTuiTuiState *state, const char *link,
                         const char *missing_target_message);
 
 static size_t minimum_size(size_t left, size_t right) {
@@ -163,19 +163,19 @@ static int size_to_int(size_t value) {
   return value > (size_t)INT_MAX ? INT_MAX : (int)value;
 }
 
-static uint32_t current_background(const BacaTuiState *state) {
+static uint32_t current_background(const MereaderTuiTuiState *state) {
   return state->app->dark_mode ? state->app->config.dark.background
                                : state->app->config.light.background;
 }
 
-static void delete_kitty_images(BacaTuiState *state) {
-  if (state->graphics == NULL || state->image_mode != BACA_IMAGE_MODE_KITTY) {
+static void delete_kitty_images(MereaderTuiTuiState *state) {
+  if (state->graphics == NULL || state->image_mode != MEREADER_TUI_IMAGE_MODE_KITTY) {
     return;
   }
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   (void)fflush(stdout);
-  (void)baca_graphics_kitty_delete_all(
-      state->graphics, baca_terminal_graphics_write, state, &ignored);
+  (void)mereader_tui_graphics_kitty_delete_all(
+      state->graphics, mereader_tui_terminal_graphics_write, state, &ignored);
 }
 
 static size_t utf8_bytes_for_columns(const char *text, int columns) {
@@ -187,7 +187,7 @@ static size_t utf8_bytes_for_columns(const char *text, int columns) {
   int used = 0;
   while (offset < length && text[offset] != '\n' && text[offset] != '\r') {
     int width = 0;
-    const size_t next = baca_utf8_next(text, length, offset, &width);
+    const size_t next = mereader_tui_utf8_next(text, length, offset, &width);
     if (next <= offset || used + width > columns) {
       break;
     }
@@ -215,7 +215,7 @@ static void add_clipped(WINDOW *window, int y, int x, const char *text,
   (void)mvwaddnstr(window, y, x, text, size_to_int(bytes));
 }
 
-static int content_width_for(const BacaConfig *config, int terminal_width) {
+static int content_width_for(const MereaderTuiConfig *config, int terminal_width) {
   if (terminal_width <= 0) {
     return 1;
   }
@@ -223,12 +223,12 @@ static int content_width_for(const BacaConfig *config, int terminal_width) {
   if (available > 4) {
     available -= 4;
   }
-  int width = baca_config_content_width(config, available);
+  int width = mereader_tui_config_content_width(config, available);
   if (width < 1) {
     width = 1;
   }
-  if (width > BACA_GRAPHICS_MAX_COLUMNS) {
-    width = BACA_GRAPHICS_MAX_COLUMNS;
+  if (width > MEREADER_TUI_GRAPHICS_MAX_COLUMNS) {
+    width = MEREADER_TUI_GRAPHICS_MAX_COLUMNS;
   }
   if (width > available) {
     width = available;
@@ -236,21 +236,21 @@ static int content_width_for(const BacaConfig *config, int terminal_width) {
   return width;
 }
 
-static void update_cell_pixels(BacaTuiState *state) {
+static void update_cell_pixels(MereaderTuiTuiState *state) {
   int width = 0;
   int height = 0;
-  baca_terminal_probe_cell_pixels(state->image_mode == BACA_IMAGE_MODE_KITTY,
+  mereader_tui_terminal_probe_cell_pixels(state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY,
                                   &width, &height);
   state->cell_pixel_width = width;
   state->cell_pixel_height = height;
   if (state->graphics != NULL) {
-    BacaError ignored = {0};
-    (void)baca_graphics_set_cell_pixels(state->graphics, width, height,
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_graphics_set_cell_pixels(state->graphics, width, height,
                                         &ignored);
   }
 }
 
-static void update_dimensions(BacaTuiState *state) {
+static void update_dimensions(MereaderTuiTuiState *state) {
   const int previous_rows = state->rows;
   const int previous_columns = state->columns;
   getmaxyx(stdscr, state->rows, state->columns);
@@ -268,50 +268,50 @@ static void update_dimensions(BacaTuiState *state) {
   if (state->graphics != NULL &&
       (previous_rows != state->rows || previous_columns != state->columns)) {
     delete_kitty_images(state);
-    BacaError ignored = {0};
-    (void)baca_graphics_resize(state->graphics, state->columns, state->rows,
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_graphics_resize(state->graphics, state->columns, state->rows,
                                &ignored);
   }
   update_cell_pixels(state);
 }
 
 static short terminal_color(uint32_t rgb) {
-  return (short)baca_graphics_rgb_to_palette(rgb, (unsigned)COLORS);
+  return (short)mereader_tui_graphics_rgb_to_palette(rgb, (unsigned)COLORS);
 }
 
-static void apply_theme(BacaTuiState *state) {
+static void apply_theme(MereaderTuiTuiState *state) {
   if (state->graphics != NULL) {
     delete_kitty_images(state);
-    BacaError ignored = {0};
-    (void)baca_graphics_set_background(state->graphics,
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_graphics_set_background(state->graphics,
                                        current_background(state), &ignored);
   }
   if (!state->colors) {
     return;
   }
-  const BacaColorScheme *theme = state->app->dark_mode
+  const MereaderTuiColorScheme *theme = state->app->dark_mode
                                      ? &state->app->config.dark
                                      : &state->app->config.light;
   const short background = terminal_color(theme->background);
   const short foreground = terminal_color(theme->foreground);
   const short accent = terminal_color(theme->accent);
-  if (init_pair(BACA_PAIR_BASE, foreground, background) == ERR ||
-      init_pair(BACA_PAIR_ACCENT, accent, background) == ERR ||
-      init_pair(BACA_PAIR_SEARCH, background, accent) == ERR ||
-      init_pair(BACA_PAIR_ALERT, COLOR_RED, background) == ERR) {
+  if (init_pair(MEREADER_TUI_PAIR_BASE, foreground, background) == ERR ||
+      init_pair(MEREADER_TUI_PAIR_ACCENT, accent, background) == ERR ||
+      init_pair(MEREADER_TUI_PAIR_SEARCH, background, accent) == ERR ||
+      init_pair(MEREADER_TUI_PAIR_ALERT, COLOR_RED, background) == ERR) {
     state->colors = false;
-    if (state->image_mode == BACA_IMAGE_MODE_ANSI) {
-      state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI) {
+      state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
     }
     (void)wbkgd(stdscr, A_NORMAL);
     state->dirty = true;
     return;
   }
-  (void)wbkgd(stdscr, (chtype)COLOR_PAIR(BACA_PAIR_BASE));
+  (void)wbkgd(stdscr, (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE));
   state->dirty = true;
 }
 
-static void change_style(BacaTuiState *state, int row, int x, int width,
+static void change_style(MereaderTuiTuiState *state, int row, int x, int width,
                          attr_t attributes, short pair) {
   if (row < 0 || row >= state->rows || x < 0 || x >= state->columns ||
       width <= 0) {
@@ -324,7 +324,7 @@ static void change_style(BacaTuiState *state, int row, int x, int width,
                  NULL);
 }
 
-static bool named_key_matches(const BacaNormalizedKey *key, const char *name) {
+static bool named_key_matches(const MereaderTuiNormalizedKey *key, const char *name) {
   if (name == NULL || name[0] == '\0') {
     return false;
   }
@@ -346,64 +346,64 @@ static bool named_key_matches(const BacaNormalizedKey *key, const char *name) {
            number <= 63L && key->code == KEY_F((int)number);
   }
 
-  if (baca_casecmp(name, "down") == 0) {
+  if (mereader_tui_casecmp(name, "down") == 0) {
     return key->key_code && key->code == KEY_DOWN;
   }
-  if (baca_casecmp(name, "up") == 0) {
+  if (mereader_tui_casecmp(name, "up") == 0) {
     return key->key_code && key->code == KEY_UP;
   }
-  if (baca_casecmp(name, "left") == 0) {
+  if (mereader_tui_casecmp(name, "left") == 0) {
     return key->key_code && key->code == KEY_LEFT;
   }
-  if (baca_casecmp(name, "right") == 0) {
+  if (mereader_tui_casecmp(name, "right") == 0) {
     return key->key_code && key->code == KEY_RIGHT;
   }
-  if (baca_casecmp(name, "home") == 0) {
+  if (mereader_tui_casecmp(name, "home") == 0) {
     return key->key_code && key->code == KEY_HOME;
   }
-  if (baca_casecmp(name, "end") == 0) {
+  if (mereader_tui_casecmp(name, "end") == 0) {
     return key->key_code && key->code == KEY_END;
   }
-  if (baca_casecmp(name, "pageup") == 0 || baca_casecmp(name, "page_up") == 0) {
+  if (mereader_tui_casecmp(name, "pageup") == 0 || mereader_tui_casecmp(name, "page_up") == 0) {
     return key->key_code && key->code == KEY_PPAGE;
   }
-  if (baca_casecmp(name, "pagedown") == 0 ||
-      baca_casecmp(name, "page_down") == 0) {
+  if (mereader_tui_casecmp(name, "pagedown") == 0 ||
+      mereader_tui_casecmp(name, "page_down") == 0) {
     return key->key_code && key->code == KEY_NPAGE;
   }
-  if (baca_casecmp(name, "enter") == 0) {
+  if (mereader_tui_casecmp(name, "enter") == 0) {
     return (key->key_code && key->code == KEY_ENTER) ||
            (!key->key_code &&
             (key->character == L'\n' || key->character == L'\r'));
   }
-  if (baca_casecmp(name, "escape") == 0 || baca_casecmp(name, "esc") == 0) {
+  if (mereader_tui_casecmp(name, "escape") == 0 || mereader_tui_casecmp(name, "esc") == 0) {
     return !key->key_code && key->character == 27;
   }
-  if (baca_casecmp(name, "tab") == 0) {
+  if (mereader_tui_casecmp(name, "tab") == 0) {
     return !key->key_code && key->character == L'\t';
   }
-  if (baca_casecmp(name, "space") == 0) {
+  if (mereader_tui_casecmp(name, "space") == 0) {
     return !key->key_code && key->character == L' ';
   }
-  if (baca_casecmp(name, "slash") == 0) {
+  if (mereader_tui_casecmp(name, "slash") == 0) {
     return !key->key_code && key->character == L'/';
   }
-  if (baca_casecmp(name, "question_mark") == 0 ||
-      baca_casecmp(name, "question") == 0) {
+  if (mereader_tui_casecmp(name, "question_mark") == 0 ||
+      mereader_tui_casecmp(name, "question") == 0) {
     return !key->key_code && key->character == L'?';
   }
-  if (baca_casecmp(name, "backspace") == 0) {
+  if (mereader_tui_casecmp(name, "backspace") == 0) {
     return (key->key_code && key->code == KEY_BACKSPACE) ||
            (!key->key_code && (key->character == 8 || key->character == 127));
   }
-  if (baca_casecmp(name, "delete") == 0) {
+  if (mereader_tui_casecmp(name, "delete") == 0) {
     return key->key_code && key->code == KEY_DC;
   }
   return false;
 }
 
-static bool key_list_matches(const BacaKeyList *list,
-                             const BacaNormalizedKey *key) {
+static bool key_list_matches(const MereaderTuiKeyList *list,
+                             const MereaderTuiNormalizedKey *key) {
   for (size_t index = 0U; index < list->length; ++index) {
     if (named_key_matches(key, list->items[index])) {
       return true;
@@ -412,75 +412,75 @@ static bool key_list_matches(const BacaKeyList *list,
   return false;
 }
 
-static BacaCommand normalize_command(const BacaConfig *config,
-                                     const BacaNormalizedKey *key) {
-  const BacaKeymaps *maps = &config->keymaps;
+static MereaderTuiCommand normalize_command(const MereaderTuiConfig *config,
+                                     const MereaderTuiNormalizedKey *key) {
+  const MereaderTuiKeymaps *maps = &config->keymaps;
   if (key_list_matches(&maps->close, key)) {
-    return BACA_COMMAND_QUIT;
+    return MEREADER_TUI_COMMAND_QUIT;
   }
   if (key_list_matches(&maps->scroll_down, key)) {
-    return BACA_COMMAND_SCROLL_DOWN;
+    return MEREADER_TUI_COMMAND_SCROLL_DOWN;
   }
   if (key_list_matches(&maps->scroll_up, key)) {
-    return BACA_COMMAND_SCROLL_UP;
+    return MEREADER_TUI_COMMAND_SCROLL_UP;
   }
   if (key_list_matches(&maps->page_down, key)) {
-    return BACA_COMMAND_PAGE_DOWN;
+    return MEREADER_TUI_COMMAND_PAGE_DOWN;
   }
   if (key_list_matches(&maps->page_up, key)) {
-    return BACA_COMMAND_PAGE_UP;
+    return MEREADER_TUI_COMMAND_PAGE_UP;
   }
   if (key_list_matches(&maps->home, key)) {
-    return BACA_COMMAND_HOME;
+    return MEREADER_TUI_COMMAND_HOME;
   }
   if (key_list_matches(&maps->end, key)) {
-    return BACA_COMMAND_END;
+    return MEREADER_TUI_COMMAND_END;
   }
   if (key_list_matches(&maps->open_toc, key)) {
-    return BACA_COMMAND_TOC;
+    return MEREADER_TUI_COMMAND_TOC;
   }
   if (key_list_matches(&maps->add_bookmark, key)) {
-    return BACA_COMMAND_ADD_BOOKMARK;
+    return MEREADER_TUI_COMMAND_ADD_BOOKMARK;
   }
   if (key_list_matches(&maps->open_bookmarks, key)) {
-    return BACA_COMMAND_BOOKMARKS;
+    return MEREADER_TUI_COMMAND_BOOKMARKS;
   }
   if (key_list_matches(&maps->open_metadata, key)) {
-    return BACA_COMMAND_METADATA;
+    return MEREADER_TUI_COMMAND_METADATA;
   }
   if (key_list_matches(&maps->open_help, key)) {
-    return BACA_COMMAND_HELP;
+    return MEREADER_TUI_COMMAND_HELP;
   }
   if (key_list_matches(&maps->toggle_dark, key)) {
-    return BACA_COMMAND_TOGGLE_THEME;
+    return MEREADER_TUI_COMMAND_TOGGLE_THEME;
   }
   if (key_list_matches(&maps->search_forward, key)) {
-    return BACA_COMMAND_SEARCH_FORWARD;
+    return MEREADER_TUI_COMMAND_SEARCH_FORWARD;
   }
   if (key_list_matches(&maps->search_backward, key)) {
-    return BACA_COMMAND_SEARCH_BACKWARD;
+    return MEREADER_TUI_COMMAND_SEARCH_BACKWARD;
   }
   if (key_list_matches(&maps->next_match, key)) {
-    return BACA_COMMAND_NEXT_MATCH;
+    return MEREADER_TUI_COMMAND_NEXT_MATCH;
   }
   if (key_list_matches(&maps->previous_match, key)) {
-    return BACA_COMMAND_PREVIOUS_MATCH;
+    return MEREADER_TUI_COMMAND_PREVIOUS_MATCH;
   }
   if (key_list_matches(&maps->confirm, key)) {
-    return BACA_COMMAND_CONFIRM;
+    return MEREADER_TUI_COMMAND_CONFIRM;
   }
   if (key_list_matches(&maps->screenshot, key)) {
-    return BACA_COMMAND_SCREENSHOT;
+    return MEREADER_TUI_COMMAND_SCREENSHOT;
   }
   if (key_list_matches(&maps->toggle_pdf_view, key)) {
-    return BACA_COMMAND_TOGGLE_PDF_VIEW;
+    return MEREADER_TUI_COMMAND_TOGGLE_PDF_VIEW;
   }
-  return BACA_COMMAND_NONE;
+  return MEREADER_TUI_COMMAND_NONE;
 }
 
-static BacaNormalizedKey read_normalized_key(const BacaConfig *config,
+static MereaderTuiNormalizedKey read_normalized_key(const MereaderTuiConfig *config,
                                              int status, wint_t input) {
-  BacaNormalizedKey key = {0};
+  MereaderTuiNormalizedKey key = {0};
   if (status == ERR) {
     return key;
   }
@@ -497,17 +497,17 @@ static BacaNormalizedKey read_normalized_key(const BacaConfig *config,
 
 static void define_extended_keys(void) {
   /* Ghostty uses Kitty's CSI-u encoding to distinguish Ctrl-i from Tab. */
-  (void)define_key("\033[105;5u", BACA_KEY_CTRL_I);
+  (void)define_key("\033[105;5u", MEREADER_TUI_KEY_CTRL_I);
 }
 
-static size_t maximum_scroll(const BacaTuiState *state) {
+static size_t maximum_scroll(const MereaderTuiTuiState *state) {
   const size_t visible = state->rows > 0 ? (size_t)state->rows : 1U;
   return state->app->layout.line_count > visible
              ? state->app->layout.line_count - visible
              : 0U;
 }
 
-static size_t pdf_page_start(const BacaTuiState *state, size_t page) {
+static size_t pdf_page_start(const MereaderTuiTuiState *state, size_t page) {
   if (page >= state->app->document.section_count ||
       state->app->layout.section_first_line == NULL) {
     return state->app->layout.line_count;
@@ -515,7 +515,7 @@ static size_t pdf_page_start(const BacaTuiState *state, size_t page) {
   return state->app->layout.section_first_line[page];
 }
 
-static void pdf_position(const BacaTuiState *state, size_t *page,
+static void pdf_position(const MereaderTuiTuiState *state, size_t *page,
                          double *intra_page) {
   const size_t page_count = state->app->document.section_count;
   *page = 0U;
@@ -523,7 +523,7 @@ static void pdf_position(const BacaTuiState *state, size_t *page,
   if (page_count == 0U || state->app->layout.line_count == 0U) {
     return;
   }
-  const size_t section = baca_layout_section_for_line(
+  const size_t section = mereader_tui_layout_section_for_line(
       &state->app->layout, state->app->scroll_line, NULL);
   if (section != SIZE_MAX && section < page_count) {
     *page = section;
@@ -538,7 +538,7 @@ static void pdf_position(const BacaTuiState *state, size_t *page,
   }
 }
 
-static size_t pdf_restore_line(const BacaTuiState *state, double progress) {
+static size_t pdf_restore_line(const MereaderTuiTuiState *state, double progress) {
   const size_t page_count = state->app->document.section_count;
   if (page_count == 0U || !isfinite(progress) || !(progress > 0.0)) {
     return 0U;
@@ -563,14 +563,14 @@ static size_t pdf_restore_line(const BacaTuiState *state, double progress) {
   return start + minimum_size(offset, span);
 }
 
-static size_t restore_progress_line(const BacaTuiState *state,
+static size_t restore_progress_line(const MereaderTuiTuiState *state,
                                     double progress) {
-  return state->app->document.format == BACA_FORMAT_PDF
+  return state->app->document.format == MEREADER_TUI_FORMAT_PDF
              ? pdf_restore_line(state, progress)
-             : baca_layout_restore_progress(progress, maximum_scroll(state));
+             : mereader_tui_layout_restore_progress(progress, maximum_scroll(state));
 }
 
-static void remember_progress(BacaTuiState *state) {
+static void remember_progress(MereaderTuiTuiState *state) {
   const size_t maximum = maximum_scroll(state);
   if (maximum == 0U) {
     return;
@@ -579,7 +579,7 @@ static void remember_progress(BacaTuiState *state) {
     state->app->saved_progress = 1.0;
     return;
   }
-  if (state->app->document.format == BACA_FORMAT_PDF &&
+  if (state->app->document.format == MEREADER_TUI_FORMAT_PDF &&
       state->app->document.section_count > 0U) {
     size_t page = 0U;
     double intra_page = 0.0;
@@ -589,34 +589,34 @@ static void remember_progress(BacaTuiState *state) {
     return;
   }
   state->app->saved_progress =
-      baca_layout_progress(state->app->scroll_line, maximum);
+      mereader_tui_layout_progress(state->app->scroll_line, maximum);
 }
 
-static void set_scroll_line(BacaTuiState *state, size_t line) {
+static void set_scroll_line(MereaderTuiTuiState *state, size_t line) {
   const size_t maximum = maximum_scroll(state);
   state->app->scroll_line = line > maximum ? maximum : line;
   remember_progress(state);
   state->dirty = true;
 }
 
-static void cancel_animation(BacaTuiState *state) {
+static void cancel_animation(MereaderTuiTuiState *state) {
   state->animation.active = false;
 }
 
-static void jump_stack_push(double positions[BACA_JUMP_HISTORY_LIMIT],
+static void jump_stack_push(double positions[MEREADER_TUI_JUMP_HISTORY_LIMIT],
                             size_t *count, double progress) {
   if (*count > 0U && positions[*count - 1U] == progress) {
     return;
   }
-  if (*count == BACA_JUMP_HISTORY_LIMIT) {
+  if (*count == MEREADER_TUI_JUMP_HISTORY_LIMIT) {
     memmove(positions, positions + 1U,
-            (BACA_JUMP_HISTORY_LIMIT - 1U) * sizeof(*positions));
+            (MEREADER_TUI_JUMP_HISTORY_LIMIT - 1U) * sizeof(*positions));
     --*count;
   }
   positions[(*count)++] = progress;
 }
 
-static bool jump_to_line(BacaTuiState *state, size_t line) {
+static bool jump_to_line(MereaderTuiTuiState *state, size_t line) {
   const size_t target = minimum_size(line, maximum_scroll(state));
   if (target == state->app->scroll_line) {
     return false;
@@ -630,7 +630,7 @@ static bool jump_to_line(BacaTuiState *state, size_t line) {
   return true;
 }
 
-static bool traverse_jump_history(BacaTuiState *state, bool forward) {
+static bool traverse_jump_history(MereaderTuiTuiState *state, bool forward) {
   double *source = forward ? state->jumps.forward : state->jumps.backward;
   size_t *source_count =
       forward ? &state->jumps.forward_count : &state->jumps.backward_count;
@@ -648,7 +648,7 @@ static bool traverse_jump_history(BacaTuiState *state, bool forward) {
   return true;
 }
 
-static void scroll_lines(BacaTuiState *state, int lines) {
+static void scroll_lines(MereaderTuiTuiState *state, int lines) {
   cancel_animation(state);
   size_t target = state->app->scroll_line;
   if (lines < 0) {
@@ -663,7 +663,7 @@ static void scroll_lines(BacaTuiState *state, int lines) {
   set_scroll_line(state, target);
 }
 
-static void start_scroll_animation_with_duration(BacaTuiState *state,
+static void start_scroll_animation_with_duration(MereaderTuiTuiState *state,
                                                  size_t target,
                                                  double duration) {
   const size_t maximum = maximum_scroll(state);
@@ -678,17 +678,17 @@ static void start_scroll_animation_with_duration(BacaTuiState *state,
   }
   state->animation.from = (double)state->app->scroll_line;
   state->animation.to = (double)target;
-  state->animation.started_at = baca_terminal_monotonic_seconds();
+  state->animation.started_at = mereader_tui_terminal_monotonic_seconds();
   state->animation.duration = duration;
   state->animation.active = true;
 }
 
-static void start_scroll_animation(BacaTuiState *state, size_t target) {
+static void start_scroll_animation(MereaderTuiTuiState *state, size_t target) {
   start_scroll_animation_with_duration(state, target,
                                        state->app->config.page_scroll_duration);
 }
 
-static size_t pending_scroll_target(const BacaTuiState *state) {
+static size_t pending_scroll_target(const MereaderTuiTuiState *state) {
   if (!state->animation.active || !isfinite(state->animation.to) ||
       state->animation.to < 0.0) {
     return state->app->scroll_line;
@@ -699,7 +699,7 @@ static size_t pending_scroll_target(const BacaTuiState *state) {
   return (size_t)llround(state->animation.to);
 }
 
-static void page_scroll(BacaTuiState *state, bool down, size_t count) {
+static void page_scroll(MereaderTuiTuiState *state, bool down, size_t count) {
   const size_t amount = state->rows > 1 ? (size_t)(state->rows - 1) : 1U;
   const size_t maximum = maximum_scroll(state);
   const size_t distance = amount > maximum / count ? maximum : amount * count;
@@ -714,12 +714,12 @@ static void page_scroll(BacaTuiState *state, bool down, size_t count) {
   start_scroll_animation(state, target);
 }
 
-static void update_animation(BacaTuiState *state) {
+static void update_animation(MereaderTuiTuiState *state) {
   if (!state->animation.active) {
     return;
   }
   const double elapsed =
-      baca_terminal_monotonic_seconds() - state->animation.started_at;
+      mereader_tui_terminal_monotonic_seconds() - state->animation.started_at;
   double amount = elapsed / state->animation.duration;
   if (amount >= 1.0) {
     state->animation.active = false;
@@ -736,13 +736,13 @@ static void update_animation(BacaTuiState *state) {
   set_scroll_line(state, (size_t)llround(line));
 }
 
-static void clear_search(BacaSearchState *search) {
+static void clear_search(MereaderTuiSearchState *search) {
   free(search->pattern);
   free(search->matches);
   memset(search, 0, sizeof(*search));
 }
 
-static bool select_initial_match(BacaTuiState *state, bool forward) {
+static bool select_initial_match(MereaderTuiTuiState *state, bool forward) {
   if (state->search.match_count == 0U) {
     return false;
   }
@@ -764,7 +764,7 @@ static bool select_initial_match(BacaTuiState *state, bool forward) {
   return false;
 }
 
-static void reveal_current_match(BacaTuiState *state, bool record_jump) {
+static void reveal_current_match(MereaderTuiTuiState *state, bool record_jump) {
   if (!state->search.active ||
       state->search.current_match >= state->search.match_count) {
     return;
@@ -787,11 +787,11 @@ static void reveal_current_match(BacaTuiState *state, bool record_jump) {
   }
 }
 
-static void submit_search(BacaTuiState *state) {
-  BacaSearchMatch *matches = NULL;
+static void submit_search(MereaderTuiTuiState *state) {
+  MereaderTuiSearchMatch *matches = NULL;
   size_t match_count = 0U;
-  BacaError error = {0};
-  if (!baca_layout_search(&state->app->layout, state->prompt.text.value,
+  MereaderTuiError error = {0};
+  if (!mereader_tui_layout_search(&state->app->layout, state->prompt.text.value,
                           &matches, &match_count, &error)) {
     open_alert(state, error.message[0] != '\0' ? error.message
                                                : "Invalid regular expression");
@@ -799,7 +799,7 @@ static void submit_search(BacaTuiState *state) {
   }
 
   clear_search(&state->search);
-  state->search.pattern = baca_strdup(state->prompt.text.value, &error);
+  state->search.pattern = mereader_tui_strdup(state->prompt.text.value, &error);
   if (state->search.pattern == NULL) {
     free(matches);
     open_alert(state,
@@ -822,7 +822,7 @@ static void submit_search(BacaTuiState *state) {
   reveal_current_match(state, true);
 }
 
-static bool repeat_search(BacaTuiState *state, bool same_direction) {
+static bool repeat_search(MereaderTuiTuiState *state, bool same_direction) {
   if (!state->search.active || state->search.match_count == 0U) {
     return false;
   }
@@ -845,7 +845,7 @@ static bool repeat_search(BacaTuiState *state, bool same_direction) {
   return true;
 }
 
-static void cancel_search(BacaTuiState *state) {
+static void cancel_search(MereaderTuiTuiState *state) {
   if (!state->search.active) {
     return;
   }
@@ -855,11 +855,11 @@ static void cancel_search(BacaTuiState *state) {
   start_scroll_animation(state, target);
 }
 
-static bool refresh_search_after_layout(BacaTuiState *state) {
+static bool refresh_search_after_layout(MereaderTuiTuiState *state) {
   if (!state->search.active) {
     return true;
   }
-  BacaSearchMatch selected = {0};
+  MereaderTuiSearchMatch selected = {0};
   const bool had_selected =
       state->search.current_match < state->search.match_count;
   if (had_selected) {
@@ -868,8 +868,8 @@ static bool refresh_search_after_layout(BacaTuiState *state) {
   free(state->search.matches);
   state->search.matches = NULL;
   state->search.match_count = 0U;
-  BacaError error = {0};
-  if (!baca_layout_search(&state->app->layout, state->search.pattern,
+  MereaderTuiError error = {0};
+  if (!mereader_tui_layout_search(&state->app->layout, state->search.pattern,
                           &state->search.matches, &state->search.match_count,
                           &error)) {
     open_alert(state, error.message[0] != '\0'
@@ -883,7 +883,7 @@ static bool refresh_search_after_layout(BacaTuiState *state) {
   if (had_selected) {
     const size_t selected_length = selected.byte_end - selected.byte_start;
     for (size_t index = 0U; index < state->search.match_count; ++index) {
-      const BacaSearchMatch *candidate = &state->search.matches[index];
+      const MereaderTuiSearchMatch *candidate = &state->search.matches[index];
       if (candidate->block_index == selected.block_index &&
           candidate->block_offset == selected.block_offset &&
           candidate->byte_end - candidate->byte_start == selected_length) {
@@ -905,8 +905,8 @@ static bool refresh_search_after_layout(BacaTuiState *state) {
 }
 
 static void *parser_thread(void *argument) {
-  BacaParserJob *job = argument;
-  const bool succeeded = baca_layout_build_presentation(
+  MereaderTuiParserJob *job = argument;
+  const bool succeeded = mereader_tui_layout_build_presentation(
       &job->layout, job->document, job->width, job->justification,
       job->presentation, job->cell_pixel_width, job->cell_pixel_height,
       &job->cancel, &job->error);
@@ -915,14 +915,14 @@ static void *parser_thread(void *argument) {
   return NULL;
 }
 
-static void draw_loader(BacaTuiState *state, unsigned phase) {
+static void draw_loader(MereaderTuiTuiState *state, unsigned phase) {
   static const char frames[] = {'|', '/', '-', '\\'};
   char text[16] = {0};
   (void)snprintf(text, sizeof(text), "Loading %c",
-                 frames[phase % BACA_ARRAY_LEN(frames)]);
+                 frames[phase % MEREADER_TUI_ARRAY_LEN(frames)]);
   (void)werase(stdscr);
   (void)wbkgd(stdscr,
-              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+              state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   const int y = state->rows / 2;
   int x = (state->columns - (int)strlen(text)) / 2;
   if (x < 0) {
@@ -932,10 +932,10 @@ static void draw_loader(BacaTuiState *state, unsigned phase) {
   (void)refresh();
 }
 
-static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
-                                       BacaError *error) {
+static bool build_layout_in_background(MereaderTuiTuiState *state, MereaderTuiLayout *layout,
+                                       MereaderTuiError *error) {
   for (;;) {
-    BacaParserJob job = {
+    MereaderTuiParserJob job = {
         .document = &state->app->document,
         .width = state->content_width,
         .justification = state->app->config.justification,
@@ -951,7 +951,7 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
     const int create_result =
         pthread_create(&thread, NULL, parser_thread, &job);
     if (create_result != 0) {
-      baca_error_set(error, BACA_ERROR_INTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                      "cannot start parser thread: %s", strerror(create_result));
       return false;
     }
@@ -959,7 +959,7 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
     unsigned phase = 0U;
     draw_loader(state, phase++);
     while (!atomic_load_explicit(&job.done, memory_order_acquire)) {
-      if (baca_terminal_runtime_interrupted()) {
+      if (mereader_tui_terminal_runtime_interrupted()) {
         state->quit = true;
         atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
@@ -974,16 +974,16 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
       wtimeout(stdscr, 80);
       wint_t input = 0;
       const int status = wget_wch(stdscr, &input);
-      const BacaNormalizedKey key =
+      const MereaderTuiNormalizedKey key =
           read_normalized_key(&state->app->config, status, input);
-      if (baca_terminal_runtime_interrupted()) {
+      if (mereader_tui_terminal_runtime_interrupted()) {
         state->quit = true;
         atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
       if (key.valid && key.key_code && key.code == KEY_RESIZE) {
         update_dimensions(state);
         atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
-      } else if (key.valid && key.command == BACA_COMMAND_QUIT) {
+      } else if (key.valid && key.command == MEREADER_TUI_COMMAND_QUIT) {
         state->quit = true;
         atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
       }
@@ -991,15 +991,15 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
 
     const int join_result = pthread_join(thread, NULL);
     if (join_result != 0) {
-      baca_layout_free(&job.layout);
-      baca_error_set(error, BACA_ERROR_INTERNAL,
+      mereader_tui_layout_free(&job.layout);
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                      "cannot join parser thread: %s", strerror(join_result));
       return false;
     }
     const bool cancelled =
         atomic_load_explicit(&job.cancel, memory_order_relaxed);
     if (!atomic_load_explicit(&job.succeeded, memory_order_relaxed)) {
-      baca_layout_free(&job.layout);
+      mereader_tui_layout_free(&job.layout);
       if (cancelled) {
         if (state->quit) {
           return true;
@@ -1010,14 +1010,14 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
       return false;
     }
     if (state->quit) {
-      baca_layout_free(&job.layout);
+      mereader_tui_layout_free(&job.layout);
       return true;
     }
     if (job.width != state->content_width ||
         job.cell_pixel_width != state->cell_pixel_width ||
         job.cell_pixel_height != state->cell_pixel_height ||
         job.presentation != state->presentation) {
-      baca_layout_free(&job.layout);
+      mereader_tui_layout_free(&job.layout);
       continue;
     }
     *layout = job.layout;
@@ -1025,14 +1025,14 @@ static bool build_layout_in_background(BacaTuiState *state, BacaLayout *layout,
   }
 }
 
-static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
+static bool rebuild_layout(MereaderTuiTuiState *state, MereaderTuiError *error) {
   double progress = state->app->saved_progress;
   if (state->app->layout.line_count > 0U) {
     remember_progress(state);
     progress = state->app->saved_progress;
   }
 
-  BacaLayout layout = {0};
+  MereaderTuiLayout layout = {0};
   if (!build_layout_in_background(state, &layout, error)) {
     return false;
   }
@@ -1040,7 +1040,7 @@ static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
     return true;
   }
 
-  baca_layout_free(&state->app->layout);
+  mereader_tui_layout_free(&state->app->layout);
   state->app->layout = layout;
   const size_t restored = restore_progress_line(state, progress);
   state->app->scroll_line = minimum_size(restored, maximum_scroll(state));
@@ -1051,15 +1051,15 @@ static bool rebuild_layout(BacaTuiState *state, BacaError *error) {
   return true;
 }
 
-static bool open_external(BacaTuiState *state, const char *target,
-                          const char *preferred, BacaError *error) {
+static bool open_external(MereaderTuiTuiState *state, const char *target,
+                          const char *preferred, MereaderTuiError *error) {
   delete_kitty_images(state);
-  if (state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) {
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor) {
     (void)clearok(stdscr, true);
     (void)refresh();
   }
   if (def_prog_mode() == ERR) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                    "cannot suspend terminal for external opener");
     return false;
   }
@@ -1071,10 +1071,10 @@ static bool open_external(BacaTuiState *state, const char *target,
       state->app->external_opener != NULL
           ? state->app->external_opener(state->app->external_opener_data,
                                         target, preferred, error)
-          : baca_platform_open(target, preferred, error);
+          : mereader_tui_platform_open(target, preferred, error);
   if (reset_prog_mode() == ERR) {
     if (opened) {
-      baca_error_set(error, BACA_ERROR_EXTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                      "cannot resume terminal after external opener");
     }
     opened = false;
@@ -1084,11 +1084,11 @@ static bool open_external(BacaTuiState *state, const char *target,
   (void)clearok(stdscr, true);
   update_dimensions(state);
 
-  if (!baca_terminal_runtime_interrupted() &&
+  if (!mereader_tui_terminal_runtime_interrupted() &&
       previous_content_width != state->content_width) {
-    BacaError resize_error = {0};
+    MereaderTuiError resize_error = {0};
     if (!rebuild_layout(state, &resize_error) && !state->quit) {
-      if (opened || !baca_error_is_set(error)) {
+      if (opened || !mereader_tui_error_is_set(error)) {
         *error = resize_error;
       }
       opened = false;
@@ -1138,9 +1138,9 @@ static int rendered_column_for_raw_byte(const char *raw, const char *rendered,
 
     int raw_columns = 0;
     const size_t raw_next =
-        baca_utf8_next(raw, raw_length, raw_offset, &raw_columns);
+        mereader_tui_utf8_next(raw, raw_length, raw_offset, &raw_columns);
     int display_columns = 0;
-    size_t rendered_next = baca_utf8_next(rendered, rendered_length,
+    size_t rendered_next = mereader_tui_utf8_next(rendered, rendered_length,
                                           rendered_offset, &display_columns);
     const size_t raw_bytes = raw_next - raw_offset;
     while (rendered_next > rendered_offset &&
@@ -1152,7 +1152,7 @@ static int rendered_column_for_raw_byte(const char *raw, const char *rendered,
       if (rendered_offset >= rendered_length) {
         break;
       }
-      rendered_next = baca_utf8_next(rendered, rendered_length, rendered_offset,
+      rendered_next = mereader_tui_utf8_next(rendered, rendered_length, rendered_offset,
                                      &display_columns);
     }
     if (rendered_offset >= rendered_length || raw_next <= raw_offset ||
@@ -1166,25 +1166,25 @@ static int rendered_column_for_raw_byte(const char *raw, const char *rendered,
   return rendered_columns;
 }
 
-static void style_text_line(BacaTuiState *state, int row, int x,
+static void style_text_line(MereaderTuiTuiState *state, int row, int x,
                             size_t line_index, const char *raw,
                             const char *rendered) {
-  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
+  const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
   if (line->block_index >= state->app->document.block_count) {
     return;
   }
-  const BacaBlock *block = &state->app->document.blocks[line->block_index];
-  if (block->kind != BACA_BLOCK_TEXT) {
+  const MereaderTuiBlock *block = &state->app->document.blocks[line->block_index];
+  if (block->kind != MEREADER_TUI_BLOCK_TEXT) {
     return;
   }
-  const BacaTextBlock *text = &block->value.text;
+  const MereaderTuiTextBlock *text = &block->value.text;
   if (text->heading_level > 0U) {
-    const int width = size_to_int(baca_utf8_width(rendered, strlen(rendered)));
-    change_style(state, row, x, width, A_BOLD, BACA_PAIR_BASE);
+    const int width = size_to_int(mereader_tui_utf8_width(rendered, strlen(rendered)));
+    change_style(state, row, x, width, A_BOLD, MEREADER_TUI_PAIR_BASE);
   }
 
   for (size_t index = 0U; index < text->span_count; ++index) {
-    const BacaTextSpan *span = &text->spans[index];
+    const MereaderTuiTextSpan *span = &text->spans[index];
     const size_t start =
         span->start > line->byte_start ? span->start : line->byte_start;
     const size_t end = span->end < line->byte_end ? span->end : line->byte_end;
@@ -1200,31 +1200,31 @@ static void style_text_line(BacaTuiState *state, int row, int x,
       continue;
     }
     attr_t attributes = A_NORMAL;
-    if ((span->style & (BACA_STYLE_BOLD | BACA_STYLE_HEADING)) != 0U) {
+    if ((span->style & (MEREADER_TUI_STYLE_BOLD | MEREADER_TUI_STYLE_HEADING)) != 0U) {
       attributes |= A_BOLD;
     }
-    if ((span->style & BACA_STYLE_UNDERLINE) != 0U || span->link != NULL) {
+    if ((span->style & MEREADER_TUI_STYLE_UNDERLINE) != 0U || span->link != NULL) {
       attributes |= A_UNDERLINE;
     }
 #ifdef A_ITALIC
-    if ((span->style & BACA_STYLE_ITALIC) != 0U) {
+    if ((span->style & MEREADER_TUI_STYLE_ITALIC) != 0U) {
       attributes |= A_ITALIC;
     }
 #endif
-    const short pair = span->link != NULL ? BACA_PAIR_ACCENT : BACA_PAIR_BASE;
+    const short pair = span->link != NULL ? MEREADER_TUI_PAIR_ACCENT : MEREADER_TUI_PAIR_BASE;
     change_style(state, row, x + start_column, end_column - start_column,
                  attributes, pair);
   }
 }
 
-static void highlight_search_match(BacaTuiState *state, int row, int x,
+static void highlight_search_match(MereaderTuiTuiState *state, int row, int x,
                                    size_t line_index, const char *raw,
                                    const char *rendered) {
   if (!state->search.active ||
       state->search.current_match >= state->search.match_count) {
     return;
   }
-  const BacaSearchMatch *match =
+  const MereaderTuiSearchMatch *match =
       &state->search.matches[state->search.current_match];
   if (match->line != line_index) {
     return;
@@ -1235,30 +1235,30 @@ static void highlight_search_match(BacaTuiState *state, int row, int x,
   if (end > start) {
     const attr_t attributes = A_BOLD | (state->colors ? A_NORMAL : A_REVERSE);
     change_style(state, row, x + start, end - start, attributes,
-                 BACA_PAIR_SEARCH);
+                 MEREADER_TUI_PAIR_SEARCH);
   }
 }
 
-static bool first_visible_image_line(const BacaTuiState *state, int row,
+static bool first_visible_image_line(const MereaderTuiTuiState *state, int row,
                                      size_t line_index) {
   if (row == 0 || line_index == 0U) {
     return true;
   }
-  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
-  const BacaLayoutLine *previous = &state->app->layout.lines[line_index - 1U];
-  return previous->kind != BACA_LAYOUT_IMAGE ||
+  const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
+  const MereaderTuiLayoutLine *previous = &state->app->layout.lines[line_index - 1U];
+  return previous->kind != MEREADER_TUI_LAYOUT_IMAGE ||
          previous->block_index != line->block_index;
 }
 
-static bool pdf_render_failure_matches(const BacaTuiState *state,
+static bool pdf_render_failure_matches(const MereaderTuiTuiState *state,
                                        size_t block_index,
-                                       const BacaLayoutLine *line) {
-  if (state->app->document.format != BACA_FORMAT_PDF ||
+                                       const MereaderTuiLayoutLine *line) {
+  if (state->app->document.format != MEREADER_TUI_FORMAT_PDF ||
       block_index >= state->pdf_render_failure_count ||
       state->pdf_render_failures == NULL) {
     return false;
   }
-  const BacaPdfRenderFailure *failure =
+  const MereaderTuiPdfRenderFailure *failure =
       &state->pdf_render_failures[block_index];
   return failure->valid && failure->columns == state->content_width &&
          failure->rows == line->image_rows &&
@@ -1266,48 +1266,48 @@ static bool pdf_render_failure_matches(const BacaTuiState *state,
          failure->cell_pixel_height == state->cell_pixel_height;
 }
 
-static bool image_has_visible_render(const BacaTuiState *state,
-                                     const BacaLayoutLine *line) {
-  if (line->kind != BACA_LAYOUT_IMAGE ||
+static bool image_has_visible_render(const MereaderTuiTuiState *state,
+                                     const MereaderTuiLayoutLine *line) {
+  if (line->kind != MEREADER_TUI_LAYOUT_IMAGE ||
       line->block_index >= state->app->document.block_count ||
       line->image_placeholder ||
-      state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
+      state->image_mode == MEREADER_TUI_IMAGE_MODE_PLACEHOLDER ||
       state->graphics == NULL) {
     return false;
   }
-  const BacaBlock *block = &state->app->document.blocks[line->block_index];
-  return block->kind == BACA_BLOCK_IMAGE && !block->value.image.broken &&
+  const MereaderTuiBlock *block = &state->app->document.blocks[line->block_index];
+  return block->kind == MEREADER_TUI_BLOCK_IMAGE && !block->value.image.broken &&
          !pdf_render_failure_matches(state, line->block_index, line);
 }
 
-static void clear_pdf_render_failure(BacaTuiState *state, size_t block_index) {
+static void clear_pdf_render_failure(MereaderTuiTuiState *state, size_t block_index) {
   if (block_index < state->pdf_render_failure_count &&
       state->pdf_render_failures != NULL) {
-    state->pdf_render_failures[block_index] = (BacaPdfRenderFailure){0};
+    state->pdf_render_failures[block_index] = (MereaderTuiPdfRenderFailure){0};
   }
 }
 
-static bool mark_image_failure(BacaTuiState *state, size_t block_index,
-                               const BacaLayoutLine *line,
-                               const BacaError *error) {
+static bool mark_image_failure(MereaderTuiTuiState *state, size_t block_index,
+                               const MereaderTuiLayoutLine *line,
+                               const MereaderTuiError *error) {
   bool rendered_pdf_page = false;
   if (block_index < state->app->document.block_count &&
-      state->app->document.blocks[block_index].kind == BACA_BLOCK_IMAGE) {
-    BacaImageBlock *image =
+      state->app->document.blocks[block_index].kind == MEREADER_TUI_BLOCK_IMAGE) {
+    MereaderTuiImageBlock *image =
         &state->app->document.blocks[block_index].value.image;
-    rendered_pdf_page = state->app->document.format == BACA_FORMAT_PDF &&
+    rendered_pdf_page = state->app->document.format == MEREADER_TUI_FORMAT_PDF &&
                         image->page_index >= 0;
     if (rendered_pdf_page &&
-        (error == NULL || (error->code != BACA_ERROR_CORRUPT &&
-                           error->code != BACA_ERROR_UNSUPPORTED))) {
+        (error == NULL || (error->code != MEREADER_TUI_ERROR_CORRUPT &&
+                           error->code != MEREADER_TUI_ERROR_UNSUPPORTED))) {
       if (block_index >= state->pdf_render_failure_count ||
           state->pdf_render_failures == NULL || line == NULL) {
         return false;
       }
-      BacaPdfRenderFailure *failure = &state->pdf_render_failures[block_index];
+      MereaderTuiPdfRenderFailure *failure = &state->pdf_render_failures[block_index];
       const bool repeated =
           pdf_render_failure_matches(state, block_index, line);
-      *failure = (BacaPdfRenderFailure){
+      *failure = (MereaderTuiPdfRenderFailure){
           .columns = state->content_width,
           .rows = line->image_rows,
           .cell_pixel_width = state->cell_pixel_width,
@@ -1325,10 +1325,10 @@ static bool mark_image_failure(BacaTuiState *state, size_t block_index,
 }
 
 static bool
-prepare_image_placement(BacaTuiState *state, const BacaLayoutLine *line,
-                        int row, const BacaGraphicsRect *occlusions,
-                        size_t occlusion_count, BacaGraphicsSurface *surface,
-                        BacaGraphicsPlacement *placement, BacaError *error) {
+prepare_image_placement(MereaderTuiTuiState *state, const MereaderTuiLayoutLine *line,
+                        int row, const MereaderTuiGraphicsRect *occlusions,
+                        size_t occlusion_count, MereaderTuiGraphicsSurface *surface,
+                        MereaderTuiGraphicsPlacement *placement, MereaderTuiError *error) {
   if (state->graphics == NULL || line->image_placeholder ||
       line->block_index >= state->app->document.block_count) {
     return false;
@@ -1336,13 +1336,13 @@ prepare_image_placement(BacaTuiState *state, const BacaLayoutLine *line,
   if (pdf_render_failure_matches(state, line->block_index, line)) {
     return false;
   }
-  if (!baca_graphics_prepare(state->graphics, &state->app->document,
+  if (!mereader_tui_graphics_prepare(state->graphics, &state->app->document,
                              line->block_index, state->content_width,
                              line->image_rows, surface, error)) {
     return false;
   }
   clear_pdf_render_failure(state, line->block_index);
-  *placement = (BacaGraphicsPlacement){
+  *placement = (MereaderTuiGraphicsPlacement){
       .row = row - line->image_row,
       .column = state->content_x,
       .viewport_rows = state->rows,
@@ -1355,14 +1355,14 @@ prepare_image_placement(BacaTuiState *state, const BacaLayoutLine *line,
 
 static bool draw_image_cell(void *user_data, int row, int column,
                             uint32_t foreground, uint32_t background) {
-  BacaTuiState *state = user_data;
+  MereaderTuiTuiState *state = user_data;
   const unsigned foreground_index =
-      baca_graphics_rgb_to_palette(foreground, (unsigned)COLORS);
+      mereader_tui_graphics_rgb_to_palette(foreground, (unsigned)COLORS);
   const unsigned background_index =
-      baca_graphics_rgb_to_palette(background, (unsigned)COLORS);
+      mereader_tui_graphics_rgb_to_palette(background, (unsigned)COLORS);
   bool created = false;
-  const short pair = baca_graphics_pair(state->graphics, foreground_index,
-                                        background_index, BACA_PAIR_IMAGE_FIRST,
+  const short pair = mereader_tui_graphics_pair(state->graphics, foreground_index,
+                                        background_index, MEREADER_TUI_PAIR_IMAGE_FIRST,
                                         state->image_pair_capacity, &created);
   if (pair <= 0 || (created && init_pair(pair, (short)foreground_index,
                                          (short)background_index) == ERR)) {
@@ -1373,24 +1373,24 @@ static bool draw_image_cell(void *user_data, int row, int column,
          mvwadd_wch(stdscr, row, column, &character) != ERR;
 }
 
-static bool draw_ncurses_image(BacaTuiState *state, const BacaLayoutLine *line,
-                               int row, BacaError *error) {
-  BacaGraphicsSurface surface = {0};
-  BacaGraphicsPlacement placement = {0};
+static bool draw_ncurses_image(MereaderTuiTuiState *state, const MereaderTuiLayoutLine *line,
+                               int row, MereaderTuiError *error) {
+  MereaderTuiGraphicsSurface surface = {0};
+  MereaderTuiGraphicsPlacement placement = {0};
   if (!prepare_image_placement(state, line, row, NULL, 0U, &surface, &placement,
                                error)) {
     return false;
   }
-  const bool drawn = baca_graphics_render_cells(&surface, &placement,
+  const bool drawn = mereader_tui_graphics_render_cells(&surface, &placement,
                                                 draw_image_cell, state, error);
-  baca_graphics_surface_release(&surface);
+  mereader_tui_graphics_surface_release(&surface);
   return drawn;
 }
 
-static bool image_content_bounds(const BacaTuiState *state,
-                                 const BacaLayoutLine *line, size_t line_index,
+static bool image_content_bounds(const MereaderTuiTuiState *state,
+                                 const MereaderTuiLayoutLine *line, size_t line_index,
                                  int *x, int *width) {
-  if (line->kind != BACA_LAYOUT_IMAGE ||
+  if (line->kind != MEREADER_TUI_LAYOUT_IMAGE ||
       line->block_index >= state->app->document.block_count) {
     return false;
   }
@@ -1434,7 +1434,7 @@ static bool image_content_bounds(const BacaTuiState *state,
       line_index != visible_start + (visible_end - visible_start - 1U) / 2U) {
     return false;
   }
-  const int label_width = (int)(sizeof(BACA_IMAGE_PLACEHOLDER) - 1U);
+  const int label_width = (int)(sizeof(MEREADER_TUI_IMAGE_PLACEHOLDER) - 1U);
   int image_x = state->content_x + (state->content_width - label_width) / 2;
   if (image_x < 0) {
     image_x = 0;
@@ -1454,8 +1454,8 @@ static bool image_content_bounds(const BacaTuiState *state,
   return true;
 }
 
-static void draw_image_placeholder(const BacaTuiState *state,
-                                   const BacaLayoutLine *line, int row,
+static void draw_image_placeholder(const MereaderTuiTuiState *state,
+                                   const MereaderTuiLayoutLine *line, int row,
                                    size_t line_index) {
   const size_t image_row = line->image_row > 0 ? (size_t)line->image_row : 0U;
   const size_t image_rows =
@@ -1477,33 +1477,33 @@ static void draw_image_placeholder(const BacaTuiState *state,
       line_index != visible_start + (visible_end - visible_start - 1U) / 2U) {
     return;
   }
-  const int label_width = (int)(sizeof(BACA_IMAGE_PLACEHOLDER) - 1U);
+  const int label_width = (int)(sizeof(MEREADER_TUI_IMAGE_PLACEHOLDER) - 1U);
   int x = state->content_x + (state->content_width - label_width) / 2;
   if (x < 0) {
     x = 0;
   }
-  add_clipped(stdscr, row, x, BACA_IMAGE_PLACEHOLDER, label_width);
+  add_clipped(stdscr, row, x, MEREADER_TUI_IMAGE_PLACEHOLDER, label_width);
 }
 
-static void draw_document_line(BacaTuiState *state, int row,
+static void draw_document_line(MereaderTuiTuiState *state, int row,
                                size_t line_index) {
   if (line_index >= state->app->layout.line_count) {
     return;
   }
-  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
+  const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
   int x = state->content_x;
   if (x < 0) {
     x = 0;
   }
-  if (line->kind == BACA_LAYOUT_IMAGE) {
-    const BacaImageBlock *image =
+  if (line->kind == MEREADER_TUI_LAYOUT_IMAGE) {
+    const MereaderTuiImageBlock *image =
         line->block_index < state->app->document.block_count
             ? &state->app->document.blocks[line->block_index].value.image
             : NULL;
     if (image != NULL && !image->broken && !line->image_placeholder &&
-        state->image_mode == BACA_IMAGE_MODE_ANSI && !state->raw_truecolor &&
+        state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && !state->raw_truecolor &&
         first_visible_image_line(state, row, line_index)) {
-      BacaError image_error = {0};
+      MereaderTuiError image_error = {0};
       if (!draw_ncurses_image(state, line, row, &image_error)) {
         if (mark_image_failure(state, line->block_index, line, &image_error) &&
             image_error.message[0] != '\0') {
@@ -1512,26 +1512,26 @@ static void draw_document_line(BacaTuiState *state, int row,
       }
     }
     if (image == NULL || image->broken || line->image_placeholder ||
-        state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER ||
-        state->image_mode == BACA_IMAGE_MODE_KITTY) {
+        state->image_mode == MEREADER_TUI_IMAGE_MODE_PLACEHOLDER ||
+        state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
       draw_image_placeholder(state, line, row, line_index);
     }
     return;
   }
-  if (line->kind != BACA_LAYOUT_TEXT) {
+  if (line->kind != MEREADER_TUI_LAYOUT_TEXT) {
     return;
   }
 
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   char *rendered =
-      baca_layout_line_text(&state->app->layout, line_index, true, &ignored);
+      mereader_tui_layout_line_text(&state->app->layout, line_index, true, &ignored);
   if (rendered == NULL) {
     return;
   }
   add_clipped(stdscr, row, x, rendered, state->columns - x);
 
   char *raw =
-      baca_layout_line_text(&state->app->layout, line_index, false, &ignored);
+      mereader_tui_layout_line_text(&state->app->layout, line_index, false, &ignored);
   if (raw != NULL) {
     style_text_line(state, row, x, line_index, raw, rendered);
     highlight_search_match(state, row, x, line_index, raw, rendered);
@@ -1540,17 +1540,17 @@ static void draw_document_line(BacaTuiState *state, int row,
   free(rendered);
 }
 
-static void draw_scrollbar(BacaTuiState *state) {
+static void draw_scrollbar(MereaderTuiTuiState *state) {
   if (state->columns < 2 || state->rows < 1 ||
       state->app->layout.line_count <= (size_t)state->rows) {
     return;
   }
   const int x = state->columns - 1;
   (void)wattron(stdscr,
-                A_DIM | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                A_DIM | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   (void)mvvline(0, x, ACS_VLINE, state->rows);
   (void)wattroff(stdscr,
-                 A_DIM | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                 A_DIM | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
 
   int thumb_height = (int)(((double)state->rows * (double)state->rows) /
                            (double)state->app->layout.line_count);
@@ -1567,20 +1567,20 @@ static void draw_scrollbar(BacaTuiState *state) {
         (int)llround((double)state->app->scroll_line *
                      (double)(state->rows - thumb_height) / (double)maximum);
   }
-  (void)wattron(stdscr, state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : A_BOLD);
+  (void)wattron(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : A_BOLD);
   (void)mvvline(thumb_y, x, ACS_CKBOARD, thumb_height);
-  (void)wattroff(stdscr, state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : A_BOLD);
+  (void)wattroff(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : A_BOLD);
 }
 
-static void draw_reader_help_hint(BacaTuiState *state) {
-  const BacaKeyList *keys = &state->app->config.keymaps.open_help;
+static void draw_reader_help_hint(MereaderTuiTuiState *state) {
+  const MereaderTuiKeyList *keys = &state->app->config.keymaps.open_help;
   if (state->rows < 1 || keys->length == 0U || keys->items[0] == NULL ||
-      state->overlay != BACA_OVERLAY_NONE || state->prompt.active) {
+      state->overlay != MEREADER_TUI_OVERLAY_NONE || state->prompt.active) {
     return;
   }
   const char *configured = keys->items[0];
   const char *key =
-      baca_casecmp(configured, "question_mark") == 0 ? "?" : configured;
+      mereader_tui_casecmp(configured, "question_mark") == 0 ? "?" : configured;
   char hint[64] = {0};
   (void)snprintf(hint, sizeof(hint), "%s help", key);
   const int width = size_to_int(strlen(hint));
@@ -1589,14 +1589,14 @@ static void draw_reader_help_hint(BacaTuiState *state) {
     return;
   }
   (void)wattron(stdscr,
-                A_DIM | (state->colors ? COLOR_PAIR(BACA_PAIR_BASE) : 0));
+                A_DIM | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : 0));
   (void)mvwhline(stdscr, state->rows - 1, x, ' ', width);
   add_clipped(stdscr, state->rows - 1, x, hint, width);
   (void)wattroff(stdscr,
-                 A_DIM | (state->colors ? COLOR_PAIR(BACA_PAIR_BASE) : 0));
+                 A_DIM | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : 0));
 }
 
-static BacaOverlayBox overlay_box(const BacaTuiState *state) {
+static MereaderTuiOverlayBox overlay_box(const MereaderTuiTuiState *state) {
   int width = state->columns - state->columns / 5;
   int height = state->rows - state->rows / 5;
   if (width > 84) {
@@ -1608,7 +1608,7 @@ static BacaOverlayBox overlay_box(const BacaTuiState *state) {
   if (height < 3) {
     height = state->rows;
   }
-  return (BacaOverlayBox){
+  return (MereaderTuiOverlayBox){
       .y = (state->rows - height) / 2,
       .x = (state->columns - width) / 2,
       .height = height,
@@ -1616,26 +1616,26 @@ static BacaOverlayBox overlay_box(const BacaTuiState *state) {
   };
 }
 
-static const char *overlay_title(BacaOverlayKind overlay) {
+static const char *overlay_title(MereaderTuiOverlayKind overlay) {
   switch (overlay) {
-  case BACA_OVERLAY_TOC:
+  case MEREADER_TUI_OVERLAY_TOC:
     return "Table of Contents";
-  case BACA_OVERLAY_BOOKMARKS:
+  case MEREADER_TUI_OVERLAY_BOOKMARKS:
     return "Bookmarks (Delete removes)";
-  case BACA_OVERLAY_METADATA:
+  case MEREADER_TUI_OVERLAY_METADATA:
     return "Metadata";
-  case BACA_OVERLAY_HELP:
+  case MEREADER_TUI_OVERLAY_HELP:
     return "Help";
-  case BACA_OVERLAY_ALERT:
+  case MEREADER_TUI_OVERLAY_ALERT:
     return "!";
-  case BACA_OVERLAY_NONE:
+  case MEREADER_TUI_OVERLAY_NONE:
     break;
   }
   return "";
 }
 
 static void draw_overlay_title(WINDOW *window, int width, const char *title) {
-  const int title_width = size_to_int(baca_utf8_width(title, strlen(title)));
+  const int title_width = size_to_int(mereader_tui_utf8_width(title, strlen(title)));
   int x = (width - title_width) / 2;
   if (x < 1) {
     x = 1;
@@ -1643,7 +1643,7 @@ static void draw_overlay_title(WINDOW *window, int width, const char *title) {
   add_clipped(window, 0, x, title, width - x - 1);
 }
 
-static void draw_toc_overlay(BacaTuiState *state, WINDOW *window, int height,
+static void draw_toc_overlay(MereaderTuiTuiState *state, WINDOW *window, int height,
                              int width) {
   const int visible = height > 2 ? height - 2 : 0;
   if (visible <= 0) {
@@ -1660,24 +1660,24 @@ static void draw_toc_overlay(BacaTuiState *state, WINDOW *window, int height,
     if (index >= state->app->document.toc_count) {
       break;
     }
-    const BacaTocEntry *entry = &state->app->document.toc[index];
+    const MereaderTuiTocEntry *entry = &state->app->document.toc[index];
     int x = 2 + (int)minimum_size((size_t)entry->depth * 2U,
                                   (size_t)(width > 4 ? width - 4 : 0));
     if (index == state->toc_index) {
       (void)wattron(window,
-                    state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+                    state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_SEARCH) : A_REVERSE);
       (void)mvwhline(window, row + 1, 1, ' ', width > 2 ? width - 2 : 0);
     }
     add_clipped(window, row + 1, x, entry->label != NULL ? entry->label : "",
                 width - x - 1);
     if (index == state->toc_index) {
       (void)wattroff(window,
-                     state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+                     state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_SEARCH) : A_REVERSE);
     }
   }
 }
 
-static void draw_bookmarks_overlay(BacaTuiState *state, WINDOW *window,
+static void draw_bookmarks_overlay(MereaderTuiTuiState *state, WINDOW *window,
                                    int height, int width) {
   const int visible = height > 2 ? height - 2 : 0;
   if (visible <= 0) {
@@ -1694,32 +1694,32 @@ static void draw_bookmarks_overlay(BacaTuiState *state, WINDOW *window,
     if (index >= state->bookmarks.length) {
       break;
     }
-    const BacaBookmark *bookmark = &state->bookmarks.items[index];
+    const MereaderTuiBookmark *bookmark = &state->bookmarks.items[index];
     char label[96] = {0};
     (void)snprintf(label, sizeof(label), "%6.2f%%  %s",
                    bookmark->reading_progress * 100.0,
                    bookmark->created_at != NULL ? bookmark->created_at : "");
     if (index == state->bookmark_index) {
       (void)wattron(window,
-                    state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+                    state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_SEARCH) : A_REVERSE);
       (void)mvwhline(window, row + 1, 1, ' ', width > 2 ? width - 2 : 0);
     }
     add_clipped(window, row + 1, 2, label, width - 3);
     if (index == state->bookmark_index) {
       (void)wattroff(window,
-                     state->colors ? COLOR_PAIR(BACA_PAIR_SEARCH) : A_REVERSE);
+                     state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_SEARCH) : A_REVERSE);
     }
   }
 }
 
-static void draw_metadata_overlay(BacaTuiState *state, WINDOW *window,
+static void draw_metadata_overlay(MereaderTuiTuiState *state, WINDOW *window,
                                   int height, int width) {
   static const char *const names[] = {
       "Title",    "Author",     "Creator", "Description", "Publisher",
       "Producer", "Date",       "Created", "Modified",    "Language",
       "Format",   "Identifier", "Source",
   };
-  const BacaMetadata *metadata = &state->app->document.metadata;
+  const MereaderTuiMetadata *metadata = &state->app->document.metadata;
   const char *const values[] = {
       metadata->title,
       metadata->author,
@@ -1738,7 +1738,7 @@ static void draw_metadata_overlay(BacaTuiState *state, WINDOW *window,
   const int visible = height > 2 ? height - 2 : 0;
   for (int row = 0; row < visible; ++row) {
     const size_t index = state->overlay_scroll + (size_t)row;
-    if (index >= BACA_ARRAY_LEN(names)) {
+    if (index >= MEREADER_TUI_ARRAY_LEN(names)) {
       break;
     }
     (void)wattron(window, A_BOLD);
@@ -1750,7 +1750,7 @@ static void draw_metadata_overlay(BacaTuiState *state, WINDOW *window,
 }
 
 static void draw_key_list(WINDOW *window, int row, int width, const char *name,
-                          const BacaKeyList *keys) {
+                          const MereaderTuiKeyList *keys) {
   (void)wattron(window, A_BOLD);
   const int key_end = width < 23 ? width - 1 : 22;
   int x = 2;
@@ -1761,74 +1761,74 @@ static void draw_key_list(WINDOW *window, int row, int width, const char *name,
     }
     const char *key = keys->items[index];
     add_clipped(window, row, x, key, key_end - x);
-    x += size_to_int(baca_utf8_width(key, strlen(key)));
+    x += size_to_int(mereader_tui_utf8_width(key, strlen(key)));
   }
   (void)wattroff(window, A_BOLD);
   add_clipped(window, row, 23, name, width - 24);
 }
 
-static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
+static void draw_help_overlay(MereaderTuiTuiState *state, WINDOW *window, int height,
                               int width) {
   char *jump_back_items[] = {"ctrl+o"};
   char *jump_forward_items[] = {"ctrl+i"};
-  const BacaKeyList jump_back = {
+  const MereaderTuiKeyList jump_back = {
       .items = jump_back_items,
-      .length = BACA_ARRAY_LEN(jump_back_items),
+      .length = MEREADER_TUI_ARRAY_LEN(jump_back_items),
   };
-  const BacaKeyList jump_forward = {
+  const MereaderTuiKeyList jump_forward = {
       .items = jump_forward_items,
-      .length = BACA_ARRAY_LEN(jump_forward_items),
+      .length = MEREADER_TUI_ARRAY_LEN(jump_forward_items),
   };
-  const BacaKeymaps *maps = &state->app->config.keymaps;
-  typedef struct BacaReaderHelpLine {
+  const MereaderTuiKeymaps *maps = &state->app->config.keymaps;
+  typedef struct MereaderTuiReaderHelpLine {
     const char *description;
-    const BacaKeyList *keys;
-  } BacaReaderHelpLine;
-  BacaReaderHelpLine lines[BACA_PDF_HELP_LINE_COUNT] = {0};
+    const MereaderTuiKeyList *keys;
+  } MereaderTuiReaderHelpLine;
+  MereaderTuiReaderHelpLine lines[MEREADER_TUI_PDF_HELP_LINE_COUNT] = {0};
   size_t count = 0U;
-#define BACA_HELP_APPEND(value, key_list)                                      \
+#define MEREADER_TUI_HELP_APPEND(value, key_list)                                      \
   do {                                                                         \
-    if (count < BACA_ARRAY_LEN(lines)) {                                       \
+    if (count < MEREADER_TUI_ARRAY_LEN(lines)) {                                       \
       lines[count++] =                                                         \
-          (BacaReaderHelpLine){.description = (value), .keys = (key_list)};    \
+          (MereaderTuiReaderHelpLine){.description = (value), .keys = (key_list)};    \
     }                                                                          \
   } while (false)
-#define BACA_HELP_SECTION(value) BACA_HELP_APPEND((value), NULL)
-#define BACA_HELP_ENTRY(value, key_list) BACA_HELP_APPEND((value), (key_list))
-  BACA_HELP_SECTION("reading");
-  BACA_HELP_ENTRY("switch between light and dark", &maps->toggle_dark);
-  BACA_HELP_ENTRY("scroll down", &maps->scroll_down);
-  BACA_HELP_ENTRY("scroll up", &maps->scroll_up);
-  BACA_HELP_ENTRY("move down one screen", &maps->page_down);
-  BACA_HELP_ENTRY("move up one screen", &maps->page_up);
-  BACA_HELP_ENTRY("go to the start", &maps->home);
-  BACA_HELP_ENTRY("go to the end", &maps->end);
-  BACA_HELP_ENTRY("open the table of contents", &maps->open_toc);
-  if (state->app->document.format == BACA_FORMAT_PDF) {
-    BACA_HELP_SECTION("pdf");
-    BACA_HELP_ENTRY("switch between fixed and reflow view",
+#define MEREADER_TUI_HELP_SECTION(value) MEREADER_TUI_HELP_APPEND((value), NULL)
+#define MEREADER_TUI_HELP_ENTRY(value, key_list) MEREADER_TUI_HELP_APPEND((value), (key_list))
+  MEREADER_TUI_HELP_SECTION("reading");
+  MEREADER_TUI_HELP_ENTRY("switch between light and dark", &maps->toggle_dark);
+  MEREADER_TUI_HELP_ENTRY("scroll down", &maps->scroll_down);
+  MEREADER_TUI_HELP_ENTRY("scroll up", &maps->scroll_up);
+  MEREADER_TUI_HELP_ENTRY("move down one screen", &maps->page_down);
+  MEREADER_TUI_HELP_ENTRY("move up one screen", &maps->page_up);
+  MEREADER_TUI_HELP_ENTRY("go to the start", &maps->home);
+  MEREADER_TUI_HELP_ENTRY("go to the end", &maps->end);
+  MEREADER_TUI_HELP_ENTRY("open the table of contents", &maps->open_toc);
+  if (state->app->document.format == MEREADER_TUI_FORMAT_PDF) {
+    MEREADER_TUI_HELP_SECTION("pdf");
+    MEREADER_TUI_HELP_ENTRY("switch between fixed and reflow view",
                     &maps->toggle_pdf_view);
   }
-  BACA_HELP_SECTION("bookmarks and details");
-  BACA_HELP_ENTRY("add a bookmark", &maps->add_bookmark);
-  BACA_HELP_ENTRY("open bookmarks", &maps->open_bookmarks);
-  BACA_HELP_ENTRY("open document details", &maps->open_metadata);
-  BACA_HELP_ENTRY("save a terminal screenshot", &maps->screenshot);
-  BACA_HELP_SECTION("search");
-  BACA_HELP_ENTRY("search forward", &maps->search_forward);
-  BACA_HELP_ENTRY("search backward", &maps->search_backward);
-  BACA_HELP_ENTRY("go to the next match", &maps->next_match);
-  BACA_HELP_ENTRY("go to the previous match", &maps->previous_match);
-  BACA_HELP_ENTRY("clear search highlights", &maps->confirm);
-  BACA_HELP_SECTION("jump history");
-  BACA_HELP_ENTRY("jump back", &jump_back);
-  BACA_HELP_ENTRY("jump forward", &jump_forward);
-  BACA_HELP_SECTION("application");
-  BACA_HELP_ENTRY("open this help", &maps->open_help);
-  BACA_HELP_ENTRY("close a popup or quit", &maps->close);
-#undef BACA_HELP_ENTRY
-#undef BACA_HELP_SECTION
-#undef BACA_HELP_APPEND
+  MEREADER_TUI_HELP_SECTION("bookmarks and details");
+  MEREADER_TUI_HELP_ENTRY("add a bookmark", &maps->add_bookmark);
+  MEREADER_TUI_HELP_ENTRY("open bookmarks", &maps->open_bookmarks);
+  MEREADER_TUI_HELP_ENTRY("open document details", &maps->open_metadata);
+  MEREADER_TUI_HELP_ENTRY("save a terminal screenshot", &maps->screenshot);
+  MEREADER_TUI_HELP_SECTION("search");
+  MEREADER_TUI_HELP_ENTRY("search forward", &maps->search_forward);
+  MEREADER_TUI_HELP_ENTRY("search backward", &maps->search_backward);
+  MEREADER_TUI_HELP_ENTRY("go to the next match", &maps->next_match);
+  MEREADER_TUI_HELP_ENTRY("go to the previous match", &maps->previous_match);
+  MEREADER_TUI_HELP_ENTRY("clear search highlights", &maps->confirm);
+  MEREADER_TUI_HELP_SECTION("jump history");
+  MEREADER_TUI_HELP_ENTRY("jump back", &jump_back);
+  MEREADER_TUI_HELP_ENTRY("jump forward", &jump_forward);
+  MEREADER_TUI_HELP_SECTION("application");
+  MEREADER_TUI_HELP_ENTRY("open this help", &maps->open_help);
+  MEREADER_TUI_HELP_ENTRY("close a popup or quit", &maps->close);
+#undef MEREADER_TUI_HELP_ENTRY
+#undef MEREADER_TUI_HELP_SECTION
+#undef MEREADER_TUI_HELP_APPEND
   const int visible = height > 2 ? height - 2 : 0;
   for (int row = 0; row < visible; ++row) {
     const size_t index = state->overlay_scroll + (size_t)row;
@@ -1837,10 +1837,10 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
     }
     if (lines[index].keys == NULL) {
       (void)wattron(
-          window, A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+          window, A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
       add_clipped(window, row + 1, 2, lines[index].description, width - 3);
       (void)wattroff(
-          window, A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+          window, A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
     } else {
       draw_key_list(window, row + 1, width, lines[index].description,
                     lines[index].keys);
@@ -1848,21 +1848,21 @@ static void draw_help_overlay(BacaTuiState *state, WINDOW *window, int height,
   }
 }
 
-static void draw_alert_overlay(BacaTuiState *state, WINDOW *window, int height,
+static void draw_alert_overlay(MereaderTuiTuiState *state, WINDOW *window, int height,
                                int width) {
   if (height <= 2 || width <= 4) {
     return;
   }
-  (void)wattron(window, state->colors ? COLOR_PAIR(BACA_PAIR_ALERT) : A_BOLD);
+  (void)wattron(window, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ALERT) : A_BOLD);
   add_clipped(window, 1, 2, state->alert, width - 4);
-  (void)wattroff(window, state->colors ? COLOR_PAIR(BACA_PAIR_ALERT) : A_BOLD);
+  (void)wattroff(window, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ALERT) : A_BOLD);
 }
 
-static void draw_overlay(BacaTuiState *state) {
-  if (state->overlay == BACA_OVERLAY_NONE) {
+static void draw_overlay(MereaderTuiTuiState *state) {
+  if (state->overlay == MEREADER_TUI_OVERLAY_NONE) {
     return;
   }
-  const BacaOverlayBox box_size = overlay_box(state);
+  const MereaderTuiOverlayBox box_size = overlay_box(state);
   if (box_size.height <= 0 || box_size.width <= 0) {
     return;
   }
@@ -1872,36 +1872,36 @@ static void draw_overlay(BacaTuiState *state) {
     return;
   }
   (void)wbkgd(window,
-              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+              state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   (void)werase(window);
   if (box_size.height >= 2 && box_size.width >= 2) {
     (void)box(window, 0, 0);
     draw_overlay_title(window, box_size.width, overlay_title(state->overlay));
   }
   switch (state->overlay) {
-  case BACA_OVERLAY_TOC:
+  case MEREADER_TUI_OVERLAY_TOC:
     draw_toc_overlay(state, window, box_size.height, box_size.width);
     break;
-  case BACA_OVERLAY_BOOKMARKS:
+  case MEREADER_TUI_OVERLAY_BOOKMARKS:
     draw_bookmarks_overlay(state, window, box_size.height, box_size.width);
     break;
-  case BACA_OVERLAY_METADATA:
+  case MEREADER_TUI_OVERLAY_METADATA:
     draw_metadata_overlay(state, window, box_size.height, box_size.width);
     break;
-  case BACA_OVERLAY_HELP:
+  case MEREADER_TUI_OVERLAY_HELP:
     draw_help_overlay(state, window, box_size.height, box_size.width);
     break;
-  case BACA_OVERLAY_ALERT:
+  case MEREADER_TUI_OVERLAY_ALERT:
     draw_alert_overlay(state, window, box_size.height, box_size.width);
     break;
-  case BACA_OVERLAY_NONE:
+  case MEREADER_TUI_OVERLAY_NONE:
     break;
   }
   (void)wnoutrefresh(window);
   (void)delwin(window);
 }
 
-static void draw_prompt(BacaTuiState *state) {
+static void draw_prompt(MereaderTuiTuiState *state) {
   if (!state->prompt.active) {
     return;
   }
@@ -1926,7 +1926,7 @@ static void draw_prompt(BacaTuiState *state) {
   add_clipped(stdscr, input_row, 1, marker, state->columns - 1);
   add_clipped(stdscr, input_row, 3, state->prompt.text.value,
               state->columns - 4);
-  int cursor_x = 3 + size_to_int(baca_utf8_width(state->prompt.text.value,
+  int cursor_x = 3 + size_to_int(mereader_tui_utf8_width(state->prompt.text.value,
                                                  state->prompt.text.cursor));
   if (cursor_x >= state->columns) {
     cursor_x = state->columns - 1;
@@ -1937,12 +1937,12 @@ static void draw_prompt(BacaTuiState *state) {
   (void)move(input_row, cursor_x);
 }
 
-static size_t terminal_graphics_occlusions(const BacaTuiState *state,
-                                           BacaGraphicsRect rects[2]) {
+static size_t terminal_graphics_occlusions(const MereaderTuiTuiState *state,
+                                           MereaderTuiGraphicsRect rects[2]) {
   size_t count = 0U;
-  if (state->overlay != BACA_OVERLAY_NONE) {
-    const BacaOverlayBox box_size = overlay_box(state);
-    rects[count++] = (BacaGraphicsRect){
+  if (state->overlay != MEREADER_TUI_OVERLAY_NONE) {
+    const MereaderTuiOverlayBox box_size = overlay_box(state);
+    rects[count++] = (MereaderTuiGraphicsRect){
         .row = box_size.y,
         .column = box_size.x,
         .rows = box_size.height,
@@ -1951,7 +1951,7 @@ static size_t terminal_graphics_occlusions(const BacaTuiState *state,
   }
   if (state->prompt.active) {
     const int top = state->rows >= 3 ? state->rows - 3 : 0;
-    rects[count++] = (BacaGraphicsRect){
+    rects[count++] = (MereaderTuiGraphicsRect){
         .row = top,
         .column = 0,
         .rows = state->rows - top,
@@ -1961,28 +1961,28 @@ static size_t terminal_graphics_occlusions(const BacaTuiState *state,
   return count;
 }
 
-static void begin_terminal_graphics_frame(BacaTuiState *state) {
-  if (state->graphics == NULL || state->image_mode != BACA_IMAGE_MODE_KITTY) {
+static void begin_terminal_graphics_frame(MereaderTuiTuiState *state) {
+  if (state->graphics == NULL || state->image_mode != MEREADER_TUI_IMAGE_MODE_KITTY) {
     return;
   }
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   (void)fflush(stdout);
-  (void)baca_graphics_kitty_delete_placements(
-      state->graphics, baca_terminal_graphics_write, state, &ignored);
+  (void)mereader_tui_graphics_kitty_delete_placements(
+      state->graphics, mereader_tui_terminal_graphics_write, state, &ignored);
 }
 
-static void draw_terminal_graphics(BacaTuiState *state) {
+static void draw_terminal_graphics(MereaderTuiTuiState *state) {
   const bool raw_ansi =
-      state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor;
+      state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor;
   if (state->graphics == NULL &&
-      state->image_mode != BACA_IMAGE_MODE_PLACEHOLDER) {
+      state->image_mode != MEREADER_TUI_IMAGE_MODE_PLACEHOLDER) {
     return;
   }
-  if (!raw_ansi && state->image_mode != BACA_IMAGE_MODE_KITTY) {
+  if (!raw_ansi && state->image_mode != MEREADER_TUI_IMAGE_MODE_KITTY) {
     return;
   }
 
-  BacaGraphicsRect occlusions[2] = {0};
+  MereaderTuiGraphicsRect occlusions[2] = {0};
   const size_t occlusion_count =
       terminal_graphics_occlusions(state, occlusions);
   (void)fflush(stdout);
@@ -1991,17 +1991,17 @@ static void draw_terminal_graphics(BacaTuiState *state) {
     if (line_index >= state->app->layout.line_count) {
       break;
     }
-    const BacaLayoutLine *line = &state->app->layout.lines[line_index];
-    if (line->kind != BACA_LAYOUT_IMAGE || line->image_placeholder ||
+    const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
+    if (line->kind != MEREADER_TUI_LAYOUT_IMAGE || line->image_placeholder ||
         !first_visible_image_line(state, row, line_index) ||
         line->block_index >= state->app->document.block_count ||
         state->app->document.blocks[line->block_index].value.image.broken) {
       continue;
     }
 
-    BacaGraphicsSurface surface = {0};
-    BacaGraphicsPlacement placement = {0};
-    BacaError ignored = {0};
+    MereaderTuiGraphicsSurface surface = {0};
+    MereaderTuiGraphicsPlacement placement = {0};
+    MereaderTuiError ignored = {0};
     if (!prepare_image_placement(state, line, row, occlusions, occlusion_count,
                                  &surface, &placement, &ignored)) {
       const bool newly_failed =
@@ -2013,13 +2013,13 @@ static void draw_terminal_graphics(BacaTuiState *state) {
     }
     const bool drawn =
         raw_ansi
-            ? baca_graphics_render_ansi(&surface, &placement,
-                                        baca_terminal_graphics_write, state,
+            ? mereader_tui_graphics_render_ansi(&surface, &placement,
+                                        mereader_tui_terminal_graphics_write, state,
                                         &ignored)
-            : baca_graphics_kitty_draw(state->graphics, &surface, &placement,
-                                       baca_terminal_graphics_write, state,
+            : mereader_tui_graphics_kitty_draw(state->graphics, &surface, &placement,
+                                       mereader_tui_terminal_graphics_write, state,
                                        &ignored);
-    baca_graphics_surface_release(&surface);
+    mereader_tui_graphics_surface_release(&surface);
     if (!drawn) {
       if (mark_image_failure(state, line->block_index, line, &ignored) &&
           ignored.message[0] != '\0') {
@@ -2029,14 +2029,14 @@ static void draw_terminal_graphics(BacaTuiState *state) {
   }
 }
 
-static void draw_frame(BacaTuiState *state) {
+static void draw_frame(MereaderTuiTuiState *state) {
   begin_terminal_graphics_frame(state);
-  if (state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) {
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor) {
     (void)clearok(stdscr, true);
   }
   (void)werase(stdscr);
   (void)wbkgd(stdscr,
-              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+              state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   for (int row = 0; row < state->rows; ++row) {
     draw_document_line(state, row, state->app->scroll_line + (size_t)row);
   }
@@ -2057,15 +2057,15 @@ static void draw_frame(BacaTuiState *state) {
   draw_terminal_graphics(state);
 }
 
-static void open_alert(BacaTuiState *state, const char *message) {
+static void open_alert(MereaderTuiTuiState *state, const char *message) {
   (void)snprintf(state->alert, sizeof(state->alert), "%s",
                  message != NULL ? message : "Operation failed");
-  state->overlay = BACA_OVERLAY_ALERT;
+  state->overlay = MEREADER_TUI_OVERLAY_ALERT;
   state->overlay_scroll = 0U;
   state->dirty = true;
 }
 
-static size_t current_toc_index(const BacaTuiState *state) {
+static size_t current_toc_index(const MereaderTuiTuiState *state) {
   size_t selected = 0U;
   size_t selected_line = 0U;
   bool selected_any = false;
@@ -2074,7 +2074,7 @@ static size_t current_toc_index(const BacaTuiState *state) {
     if (target == NULL) {
       continue;
     }
-    const size_t line = baca_layout_target_line(&state->app->layout, target);
+    const size_t line = mereader_tui_layout_target_line(&state->app->layout, target);
     if (line != SIZE_MAX && line <= state->app->scroll_line &&
         (!selected_any || line > selected_line)) {
       selected = index;
@@ -2085,21 +2085,21 @@ static size_t current_toc_index(const BacaTuiState *state) {
   return selected;
 }
 
-static void open_toc(BacaTuiState *state) {
+static void open_toc(MereaderTuiTuiState *state) {
   if (state->app->document.toc_count == 0U) {
     open_alert(state, "No content navigation for this document");
     return;
   }
   state->toc_index = current_toc_index(state);
   state->overlay_scroll = state->toc_index;
-  state->overlay = BACA_OVERLAY_TOC;
+  state->overlay = MEREADER_TUI_OVERLAY_TOC;
   state->dirty = true;
 }
 
-static void add_bookmark(BacaTuiState *state) {
+static void add_bookmark(MereaderTuiTuiState *state) {
   remember_progress(state);
-  BacaError error = {0};
-  if (!baca_database_add_bookmark(&state->app->database, state->app->source,
+  MereaderTuiError error = {0};
+  if (!mereader_tui_database_add_bookmark(&state->app->database, state->app->source,
                                   state->app->saved_progress, &error)) {
     open_alert(state, error.message);
     return;
@@ -2110,10 +2110,10 @@ static void add_bookmark(BacaTuiState *state) {
   open_alert(state, message);
 }
 
-static void open_bookmarks(BacaTuiState *state) {
-  baca_bookmarks_free(&state->bookmarks);
-  BacaError error = {0};
-  if (!baca_database_bookmarks(&state->app->database, state->app->source,
+static void open_bookmarks(MereaderTuiTuiState *state) {
+  mereader_tui_bookmarks_free(&state->bookmarks);
+  MereaderTuiError error = {0};
+  if (!mereader_tui_database_bookmarks(&state->app->database, state->app->source,
                                &state->bookmarks, &error)) {
     open_alert(state, error.message);
     return;
@@ -2137,32 +2137,32 @@ static void open_bookmarks(BacaTuiState *state) {
     }
   }
   state->overlay_scroll = state->bookmark_index;
-  state->overlay = BACA_OVERLAY_BOOKMARKS;
+  state->overlay = MEREADER_TUI_OVERLAY_BOOKMARKS;
   state->dirty = true;
 }
 
-static size_t overlay_line_count(const BacaTuiState *state) {
+static size_t overlay_line_count(const MereaderTuiTuiState *state) {
   switch (state->overlay) {
-  case BACA_OVERLAY_TOC:
+  case MEREADER_TUI_OVERLAY_TOC:
     return state->app->document.toc_count;
-  case BACA_OVERLAY_BOOKMARKS:
+  case MEREADER_TUI_OVERLAY_BOOKMARKS:
     return state->bookmarks.length;
-  case BACA_OVERLAY_METADATA:
+  case MEREADER_TUI_OVERLAY_METADATA:
     return 13U;
-  case BACA_OVERLAY_HELP:
-    return state->app->document.format == BACA_FORMAT_PDF
-               ? BACA_PDF_HELP_LINE_COUNT
-               : BACA_HELP_LINE_COUNT;
-  case BACA_OVERLAY_ALERT:
+  case MEREADER_TUI_OVERLAY_HELP:
+    return state->app->document.format == MEREADER_TUI_FORMAT_PDF
+               ? MEREADER_TUI_PDF_HELP_LINE_COUNT
+               : MEREADER_TUI_HELP_LINE_COUNT;
+  case MEREADER_TUI_OVERLAY_ALERT:
     return 1U;
-  case BACA_OVERLAY_NONE:
+  case MEREADER_TUI_OVERLAY_NONE:
     break;
   }
   return 0U;
 }
 
-static void scroll_overlay(BacaTuiState *state, int amount) {
-  const BacaOverlayBox box_size = overlay_box(state);
+static void scroll_overlay(MereaderTuiTuiState *state, int amount) {
+  const MereaderTuiOverlayBox box_size = overlay_box(state);
   const size_t visible =
       box_size.height > 2 ? (size_t)(box_size.height - 2) : 1U;
   const size_t count = overlay_line_count(state);
@@ -2184,7 +2184,7 @@ static void scroll_overlay(BacaTuiState *state, int amount) {
   state->dirty = true;
 }
 
-static void move_toc_selection(BacaTuiState *state, int amount) {
+static void move_toc_selection(MereaderTuiTuiState *state, int amount) {
   const size_t count = state->app->document.toc_count;
   if (count == 0U) {
     return;
@@ -2199,7 +2199,7 @@ static void move_toc_selection(BacaTuiState *state, int amount) {
   state->dirty = true;
 }
 
-static void move_bookmark_selection(BacaTuiState *state, int amount) {
+static void move_bookmark_selection(MereaderTuiTuiState *state, int amount) {
   const size_t count = state->bookmarks.length;
   if (count == 0U) {
     return;
@@ -2214,25 +2214,25 @@ static void move_bookmark_selection(BacaTuiState *state, int amount) {
   state->dirty = true;
 }
 
-static void follow_bookmark_selection(BacaTuiState *state) {
+static void follow_bookmark_selection(MereaderTuiTuiState *state) {
   if (state->bookmark_index >= state->bookmarks.length) {
     return;
   }
   const double progress =
       state->bookmarks.items[state->bookmark_index].reading_progress;
   (void)jump_to_line(state, restore_progress_line(state, progress));
-  state->overlay = BACA_OVERLAY_NONE;
+  state->overlay = MEREADER_TUI_OVERLAY_NONE;
   state->overlay_scroll = 0U;
   state->dirty = true;
 }
 
-static void remove_bookmark_selection(BacaTuiState *state) {
+static void remove_bookmark_selection(MereaderTuiTuiState *state) {
   if (state->bookmark_index >= state->bookmarks.length) {
     return;
   }
   const int64_t id = state->bookmarks.items[state->bookmark_index].id;
-  BacaError error = {0};
-  if (!baca_database_remove_bookmark(&state->app->database, state->app->source,
+  MereaderTuiError error = {0};
+  if (!mereader_tui_database_remove_bookmark(&state->app->database, state->app->source,
                                      id, &error)) {
     open_alert(state, error.message);
     return;
@@ -2240,7 +2240,7 @@ static void remove_bookmark_selection(BacaTuiState *state) {
   open_bookmarks(state);
 }
 
-static void follow_toc_selection(BacaTuiState *state) {
+static void follow_toc_selection(MereaderTuiTuiState *state) {
   if (state->toc_index >= state->app->document.toc_count) {
     return;
   }
@@ -2249,31 +2249,31 @@ static void follow_toc_selection(BacaTuiState *state) {
                    "No target for selected table of contents entry")) {
     return;
   }
-  state->overlay = BACA_OVERLAY_NONE;
+  state->overlay = MEREADER_TUI_OVERLAY_NONE;
   state->overlay_scroll = 0U;
   state->dirty = true;
 }
 
-static void handle_prompt_key(BacaTuiState *state,
-                              const BacaNormalizedKey *key) {
-  BacaPromptState *prompt = &state->prompt;
-  if (key->command == BACA_COMMAND_QUIT) {
+static void handle_prompt_key(MereaderTuiTuiState *state,
+                              const MereaderTuiNormalizedKey *key) {
+  MereaderTuiPromptState *prompt = &state->prompt;
+  if (key->command == MEREADER_TUI_COMMAND_QUIT) {
     prompt->active = false;
     state->dirty = true;
     return;
   }
-  if (key->command == BACA_COMMAND_CONFIRM) {
+  if (key->command == MEREADER_TUI_COMMAND_CONFIRM) {
     prompt->active = false;
     submit_search(state);
     state->dirty = true;
     return;
   }
-  (void)baca_text_input_apply(&prompt->text, key->key_code, key->code,
+  (void)mereader_tui_text_input_apply(&prompt->text, key->key_code, key->code,
                               key->character);
   state->dirty = true;
 }
 
-static void save_screenshot(BacaTuiState *state) {
+static void save_screenshot(MereaderTuiTuiState *state) {
   char **lines = calloc((size_t)state->rows, sizeof(*lines));
   wchar_t *wide = calloc((size_t)state->columns + 1U, sizeof(*wide));
   if (lines == NULL || wide == NULL) {
@@ -2306,7 +2306,7 @@ static void save_screenshot(BacaTuiState *state) {
   }
   free(wide);
 
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   if (captured) {
     struct timespec timestamp = {0};
     struct tm local_time = {0};
@@ -2314,14 +2314,14 @@ static void save_screenshot(BacaTuiState *state) {
     (void)localtime_r(&timestamp.tv_sec, &local_time);
     char path[128] = {0};
     (void)snprintf(path, sizeof(path),
-                   BACA_NAME "_%04d%02d%02d-%02d%02d%02d-%09ld.svg",
+                   MEREADER_TUI_NAME "_%04d%02d%02d-%02d%02d%02d-%09ld.svg",
                    local_time.tm_year + 1900, local_time.tm_mon + 1,
                    local_time.tm_mday, local_time.tm_hour, local_time.tm_min,
                    local_time.tm_sec, timestamp.tv_nsec);
-    const BacaColorScheme *theme = state->app->dark_mode
+    const MereaderTuiColorScheme *theme = state->app->dark_mode
                                        ? &state->app->config.dark
                                        : &state->app->config.light;
-    if (baca_platform_save_svg(path, (const char *const *)lines,
+    if (mereader_tui_platform_save_svg(path, (const char *const *)lines,
                                (size_t)state->rows, theme->background,
                                theme->foreground, &error)) {
       char message[256] = {0};
@@ -2340,23 +2340,23 @@ static void save_screenshot(BacaTuiState *state) {
   free(lines);
 }
 
-static bool follow_link(BacaTuiState *state, const char *link,
+static bool follow_link(MereaderTuiTuiState *state, const char *link,
                         const char *missing_target_message) {
   if (link == NULL || link[0] == '\0') {
     open_alert(state, missing_target_message);
     return false;
   }
-  BacaError error = {0};
-  const bool pdf_page_link = state->app->document.format == BACA_FORMAT_PDF &&
+  MereaderTuiError error = {0};
+  const bool pdf_page_link = state->app->document.format == MEREADER_TUI_FORMAT_PDF &&
                              strncmp(link, "pdf://page/", 11U) == 0;
-  if (!pdf_page_link && baca_is_external_uri(link)) {
+  if (!pdf_page_link && mereader_tui_is_external_uri(link)) {
     if (!open_external(state, link, NULL, &error)) {
       open_alert(state, error.message);
       return false;
     }
     return true;
   }
-  const size_t line = baca_layout_target_line(&state->app->layout, link);
+  const size_t line = mereader_tui_layout_target_line(&state->app->layout, link);
   if (line == SIZE_MAX) {
     open_alert(state, missing_target_message);
     return false;
@@ -2365,10 +2365,10 @@ static bool follow_link(BacaTuiState *state, const char *link,
   return true;
 }
 
-static void cleanup_temp_directories(BacaTuiState *state) {
+static void cleanup_temp_directories(MereaderTuiTuiState *state) {
   for (size_t index = 0U; index < state->temp_directory_count; ++index) {
-    BacaError ignored = {0};
-    (void)baca_remove_tree(state->temp_directories[index], &ignored);
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_remove_tree(state->temp_directories[index], &ignored);
     free(state->temp_directories[index]);
   }
   free(state->temp_directories);
@@ -2377,14 +2377,14 @@ static void cleanup_temp_directories(BacaTuiState *state) {
   state->temp_directory_capacity = 0U;
 }
 
-static bool remember_temp_directory(BacaTuiState *state, char *directory,
-                                    BacaError *error) {
-  BacaError reserve_error = {0};
-  char **temp_directories = baca_array_reserve(
+static bool remember_temp_directory(MereaderTuiTuiState *state, char *directory,
+                                    MereaderTuiError *error) {
+  MereaderTuiError reserve_error = {0};
+  char **temp_directories = mereader_tui_array_reserve(
       state->temp_directories, &state->temp_directory_capacity,
       sizeof(*state->temp_directories), state->temp_directory_count + 1U,
       &reserve_error);
-  if (baca_error_is_set(&reserve_error)) {
+  if (mereader_tui_error_is_set(&reserve_error)) {
     if (error != NULL) {
       *error = reserve_error;
     }
@@ -2395,10 +2395,10 @@ static bool remember_temp_directory(BacaTuiState *state, char *directory,
   return true;
 }
 
-static char *resource_filename(const BacaImageBlock *image,
-                               const BacaResource *resource, BacaError *error) {
+static char *resource_filename(const MereaderTuiImageBlock *image,
+                               const MereaderTuiResource *resource, MereaderTuiError *error) {
   char *filename = image->uri != NULL && strncmp(image->uri, "data:", 5U) != 0
-                       ? baca_path_basename(image->uri, error)
+                       ? mereader_tui_path_basename(image->uri, error)
                        : NULL;
   if (filename != NULL) {
     char *suffix = strpbrk(filename, "?#");
@@ -2436,38 +2436,38 @@ static char *resource_filename(const BacaImageBlock *image,
       fallback = "image.webp";
     }
   }
-  return baca_strdup(fallback, error);
+  return mereader_tui_strdup(fallback, error);
 }
 
-static void open_image(BacaTuiState *state, size_t block_index) {
+static void open_image(MereaderTuiTuiState *state, size_t block_index) {
   if (block_index >= state->app->document.block_count ||
-      state->app->document.blocks[block_index].kind != BACA_BLOCK_IMAGE) {
+      state->app->document.blocks[block_index].kind != MEREADER_TUI_BLOCK_IMAGE) {
     return;
   }
-  const BacaImageBlock *image =
+  const MereaderTuiImageBlock *image =
       &state->app->document.blocks[block_index].value.image;
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   const bool standalone_image =
-      state->app->document.format == BACA_FORMAT_IMAGE && image->uri != NULL &&
+      state->app->document.format == MEREADER_TUI_FORMAT_IMAGE && image->uri != NULL &&
       state->app->document.path != NULL &&
       strcmp(image->uri, state->app->document.path) == 0;
   if (image->page_index >= 0 &&
-      state->app->document.format == BACA_FORMAT_PDF) {
+      state->app->document.format == MEREADER_TUI_FORMAT_PDF) {
     if (!open_external(state, state->app->document.path, NULL, &error)) {
       open_alert(state, error.message);
     }
     return;
   }
   if (standalone_image) {
-    BacaResource empty_resource = {0};
-    char *directory = baca_make_temp_directory(BACA_NAME "-image-", &error);
+    MereaderTuiResource empty_resource = {0};
+    char *directory = mereader_tui_make_temp_directory(MEREADER_TUI_NAME "-image-", &error);
     char *filename = directory == NULL
                          ? NULL
                          : resource_filename(image, &empty_resource, &error);
     char *path =
-        filename == NULL ? NULL : baca_path_join(directory, filename, &error);
+        filename == NULL ? NULL : mereader_tui_path_join(directory, filename, &error);
     if (path == NULL ||
-        !baca_image_export_original(&state->app->document, path, &error)) {
+        !mereader_tui_image_export_original(&state->app->document, path, &error)) {
       open_alert(state, error.message[0] != '\0'
                             ? error.message
                             : "Cannot export the original image");
@@ -2481,35 +2481,35 @@ static void open_image(BacaTuiState *state, size_t block_index) {
       }
     }
     if (directory != NULL) {
-      BacaError ignored = {0};
-      (void)baca_remove_tree(directory, &ignored);
+      MereaderTuiError ignored = {0};
+      (void)mereader_tui_remove_tree(directory, &ignored);
     }
     free(directory);
     free(filename);
     free(path);
     return;
   }
-  BacaResource resource = {0};
+  MereaderTuiResource resource = {0};
   char *directory = NULL;
   char *filename = NULL;
   char *path = NULL;
 
   if (image->uri == NULL ||
-      !baca_document_load_resource(&state->app->document, image->uri, &resource,
+      !mereader_tui_document_load_resource(&state->app->document, image->uri, &resource,
                                    &error)) {
     open_alert(state, error.message[0] != '\0' ? error.message
                                                : "Cannot load image resource");
     goto cleanup;
   }
-  directory = baca_make_temp_directory(BACA_NAME "-image-", &error);
+  directory = mereader_tui_make_temp_directory(MEREADER_TUI_NAME "-image-", &error);
   filename = resource_filename(image, &resource, &error);
   if (directory == NULL || filename == NULL) {
     open_alert(state, error.message);
     goto cleanup;
   }
-  path = baca_path_join(directory, filename, &error);
+  path = mereader_tui_path_join(directory, filename, &error);
   if (path == NULL ||
-      !baca_write_file(path, resource.data, resource.length, &error)) {
+      !mereader_tui_write_file(path, resource.data, resource.length, &error)) {
     open_alert(state, error.message);
     goto cleanup;
   }
@@ -2525,24 +2525,24 @@ static void open_image(BacaTuiState *state, size_t block_index) {
 
 cleanup:
   if (directory != NULL) {
-    BacaError ignored = {0};
-    (void)baca_remove_tree(directory, &ignored);
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_remove_tree(directory, &ignored);
   }
   free(directory);
   free(filename);
   free(path);
-  baca_resource_free(&resource);
+  mereader_tui_resource_free(&resource);
 }
 
-static const char *image_link_at_position(const BacaTuiState *state,
-                                          const BacaLayoutLine *line,
+static const char *image_link_at_position(const MereaderTuiTuiState *state,
+                                          const MereaderTuiLayoutLine *line,
                                           int absolute_x) {
   if (line->block_index >= state->app->document.block_count ||
       line->image_rows <= 0) {
     return NULL;
   }
-  const BacaBlock *block = &state->app->document.blocks[line->block_index];
-  if (block->kind != BACA_BLOCK_IMAGE || block->value.image.link_count == 0U ||
+  const MereaderTuiBlock *block = &state->app->document.blocks[line->block_index];
+  if (block->kind != MEREADER_TUI_BLOCK_IMAGE || block->value.image.link_count == 0U ||
       state->content_width <= 0 || !image_has_visible_render(state, line)) {
     return NULL;
   }
@@ -2550,7 +2550,7 @@ static const char *image_link_at_position(const BacaTuiState *state,
                    (double)state->content_width;
   const double y = ((double)line->image_row + 0.5) / (double)line->image_rows;
   for (size_t index = 0U; index < block->value.image.link_count; ++index) {
-    const BacaImageLink *link = &block->value.image.links[index];
+    const MereaderTuiImageLink *link = &block->value.image.links[index];
     if (x >= link->x && x < link->x + link->width && y >= link->y &&
         y < link->y + link->height) {
       return link->target;
@@ -2559,25 +2559,25 @@ static const char *image_link_at_position(const BacaTuiState *state,
   return NULL;
 }
 
-static const char *link_at_position(BacaTuiState *state, size_t line_index,
+static const char *link_at_position(MereaderTuiTuiState *state, size_t line_index,
                                     int absolute_x) {
   if (line_index >= state->app->layout.line_count) {
     return NULL;
   }
-  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
-  if (line->kind != BACA_LAYOUT_TEXT ||
+  const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
+  if (line->kind != MEREADER_TUI_LAYOUT_TEXT ||
       line->block_index >= state->app->document.block_count) {
     return NULL;
   }
-  const BacaBlock *block = &state->app->document.blocks[line->block_index];
-  if (block->kind != BACA_BLOCK_TEXT) {
+  const MereaderTuiBlock *block = &state->app->document.blocks[line->block_index];
+  if (block->kind != MEREADER_TUI_BLOCK_TEXT) {
     return NULL;
   }
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   char *raw =
-      baca_layout_line_text(&state->app->layout, line_index, false, &ignored);
+      mereader_tui_layout_line_text(&state->app->layout, line_index, false, &ignored);
   char *rendered =
-      baca_layout_line_text(&state->app->layout, line_index, true, &ignored);
+      mereader_tui_layout_line_text(&state->app->layout, line_index, true, &ignored);
   if (raw == NULL || rendered == NULL) {
     free(raw);
     free(rendered);
@@ -2586,7 +2586,7 @@ static const char *link_at_position(BacaTuiState *state, size_t line_index,
   const int clicked = absolute_x - state->content_x;
   const char *link = NULL;
   for (size_t index = 0U; index < block->value.text.span_count; ++index) {
-    const BacaTextSpan *span = &block->value.text.spans[index];
+    const MereaderTuiTextSpan *span = &block->value.text.spans[index];
     if (span->link == NULL) {
       continue;
     }
@@ -2611,7 +2611,7 @@ static const char *link_at_position(BacaTuiState *state, size_t line_index,
   return link;
 }
 
-static void handle_reader_click(BacaTuiState *state, const MEVENT *event) {
+static void handle_reader_click(MereaderTuiTuiState *state, const MEVENT *event) {
   if (event->y < 0 || event->y >= state->rows) {
     return;
   }
@@ -2625,8 +2625,8 @@ static void handle_reader_click(BacaTuiState *state, const MEVENT *event) {
   if (line_index >= state->app->layout.line_count) {
     return;
   }
-  const BacaLayoutLine *line = &state->app->layout.lines[line_index];
-  if (line->kind == BACA_LAYOUT_IMAGE) {
+  const MereaderTuiLayoutLine *line = &state->app->layout.lines[line_index];
+  if (line->kind == MEREADER_TUI_LAYOUT_IMAGE) {
     int image_x = 0;
     int image_width = 0;
     if (image_content_bounds(state, line, line_index, &image_x, &image_width) &&
@@ -2646,11 +2646,11 @@ static void handle_reader_click(BacaTuiState *state, const MEVENT *event) {
   }
 }
 
-static void handle_overlay_mouse(BacaTuiState *state, const MEVENT *event) {
+static void handle_overlay_mouse(MereaderTuiTuiState *state, const MEVENT *event) {
   if ((event->bstate & BUTTON4_PRESSED) != 0U) {
-    if (state->overlay == BACA_OVERLAY_TOC) {
+    if (state->overlay == MEREADER_TUI_OVERLAY_TOC) {
       move_toc_selection(state, -1);
-    } else if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+    } else if (state->overlay == MEREADER_TUI_OVERLAY_BOOKMARKS) {
       move_bookmark_selection(state, -1);
     } else {
       scroll_overlay(state, -1);
@@ -2658,44 +2658,44 @@ static void handle_overlay_mouse(BacaTuiState *state, const MEVENT *event) {
     return;
   }
   if ((event->bstate & BUTTON5_PRESSED) != 0U) {
-    if (state->overlay == BACA_OVERLAY_TOC) {
+    if (state->overlay == MEREADER_TUI_OVERLAY_TOC) {
       move_toc_selection(state, 1);
-    } else if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+    } else if (state->overlay == MEREADER_TUI_OVERLAY_BOOKMARKS) {
       move_bookmark_selection(state, 1);
     } else {
       scroll_overlay(state, 1);
     }
     return;
   }
-  if ((state->overlay != BACA_OVERLAY_TOC &&
-       state->overlay != BACA_OVERLAY_BOOKMARKS) ||
+  if ((state->overlay != MEREADER_TUI_OVERLAY_TOC &&
+       state->overlay != MEREADER_TUI_OVERLAY_BOOKMARKS) ||
       (event->bstate & BUTTON1_CLICKED) == 0U) {
     return;
   }
-  const BacaOverlayBox box_size = overlay_box(state);
+  const MereaderTuiOverlayBox box_size = overlay_box(state);
   if (event->x <= box_size.x || event->x >= box_size.x + box_size.width - 1 ||
       event->y <= box_size.y || event->y >= box_size.y + box_size.height - 1) {
     return;
   }
   const size_t index =
       state->overlay_scroll + (size_t)(event->y - box_size.y - 1);
-  if (state->overlay == BACA_OVERLAY_TOC &&
+  if (state->overlay == MEREADER_TUI_OVERLAY_TOC &&
       index < state->app->document.toc_count) {
     state->toc_index = index;
     follow_toc_selection(state);
-  } else if (state->overlay == BACA_OVERLAY_BOOKMARKS &&
+  } else if (state->overlay == MEREADER_TUI_OVERLAY_BOOKMARKS &&
              index < state->bookmarks.length) {
     state->bookmark_index = index;
     follow_bookmark_selection(state);
   }
 }
 
-static void handle_mouse(BacaTuiState *state) {
+static void handle_mouse(MereaderTuiTuiState *state) {
   MEVENT event = {0};
   if (getmouse(&event) != OK) {
     return;
   }
-  if (state->overlay != BACA_OVERLAY_NONE) {
+  if (state->overlay != MEREADER_TUI_OVERLAY_NONE) {
     handle_overlay_mouse(state, &event);
     return;
   }
@@ -2708,39 +2708,39 @@ static void handle_mouse(BacaTuiState *state) {
   }
 }
 
-static void handle_overlay_key(BacaTuiState *state,
-                               const BacaNormalizedKey *key) {
-  if (key->command == BACA_COMMAND_SCREENSHOT) {
+static void handle_overlay_key(MereaderTuiTuiState *state,
+                               const MereaderTuiNormalizedKey *key) {
+  if (key->command == MEREADER_TUI_COMMAND_SCREENSHOT) {
     save_screenshot(state);
     return;
   }
-  if (key->command == BACA_COMMAND_QUIT ||
-      (state->overlay == BACA_OVERLAY_TOC &&
-       key->command == BACA_COMMAND_TOC) ||
-      (state->overlay == BACA_OVERLAY_BOOKMARKS &&
-       key->command == BACA_COMMAND_BOOKMARKS)) {
-    state->overlay = BACA_OVERLAY_NONE;
+  if (key->command == MEREADER_TUI_COMMAND_QUIT ||
+      (state->overlay == MEREADER_TUI_OVERLAY_TOC &&
+       key->command == MEREADER_TUI_COMMAND_TOC) ||
+      (state->overlay == MEREADER_TUI_OVERLAY_BOOKMARKS &&
+       key->command == MEREADER_TUI_COMMAND_BOOKMARKS)) {
+    state->overlay = MEREADER_TUI_OVERLAY_NONE;
     state->overlay_scroll = 0U;
     state->dirty = true;
     return;
   }
-  if (state->overlay == BACA_OVERLAY_TOC) {
+  if (state->overlay == MEREADER_TUI_OVERLAY_TOC) {
     switch (key->command) {
-    case BACA_COMMAND_SCROLL_DOWN:
+    case MEREADER_TUI_COMMAND_SCROLL_DOWN:
       move_toc_selection(state, 1);
       break;
-    case BACA_COMMAND_SCROLL_UP:
+    case MEREADER_TUI_COMMAND_SCROLL_UP:
       move_toc_selection(state, -1);
       break;
-    case BACA_COMMAND_HOME:
+    case MEREADER_TUI_COMMAND_HOME:
       state->toc_index = 0U;
       state->dirty = true;
       break;
-    case BACA_COMMAND_END:
+    case MEREADER_TUI_COMMAND_END:
       state->toc_index = state->app->document.toc_count - 1U;
       state->dirty = true;
       break;
-    case BACA_COMMAND_CONFIRM:
+    case MEREADER_TUI_COMMAND_CONFIRM:
       follow_toc_selection(state);
       break;
     default:
@@ -2748,27 +2748,27 @@ static void handle_overlay_key(BacaTuiState *state,
     }
     return;
   }
-  if (state->overlay == BACA_OVERLAY_BOOKMARKS) {
+  if (state->overlay == MEREADER_TUI_OVERLAY_BOOKMARKS) {
     if (key->key_code && key->code == KEY_DC) {
       remove_bookmark_selection(state);
       return;
     }
     switch (key->command) {
-    case BACA_COMMAND_SCROLL_DOWN:
+    case MEREADER_TUI_COMMAND_SCROLL_DOWN:
       move_bookmark_selection(state, 1);
       break;
-    case BACA_COMMAND_SCROLL_UP:
+    case MEREADER_TUI_COMMAND_SCROLL_UP:
       move_bookmark_selection(state, -1);
       break;
-    case BACA_COMMAND_HOME:
+    case MEREADER_TUI_COMMAND_HOME:
       state->bookmark_index = 0U;
       state->dirty = true;
       break;
-    case BACA_COMMAND_END:
+    case MEREADER_TUI_COMMAND_END:
       state->bookmark_index = state->bookmarks.length - 1U;
       state->dirty = true;
       break;
-    case BACA_COMMAND_CONFIRM:
+    case MEREADER_TUI_COMMAND_CONFIRM:
       follow_bookmark_selection(state);
       break;
     default:
@@ -2777,23 +2777,23 @@ static void handle_overlay_key(BacaTuiState *state,
     return;
   }
   switch (key->command) {
-  case BACA_COMMAND_SCROLL_DOWN:
+  case MEREADER_TUI_COMMAND_SCROLL_DOWN:
     scroll_overlay(state, 1);
     break;
-  case BACA_COMMAND_SCROLL_UP:
+  case MEREADER_TUI_COMMAND_SCROLL_UP:
     scroll_overlay(state, -1);
     break;
-  case BACA_COMMAND_PAGE_DOWN:
+  case MEREADER_TUI_COMMAND_PAGE_DOWN:
     scroll_overlay(state, state->rows > 2 ? state->rows - 2 : 1);
     break;
-  case BACA_COMMAND_PAGE_UP:
+  case MEREADER_TUI_COMMAND_PAGE_UP:
     scroll_overlay(state, -(state->rows > 2 ? state->rows - 2 : 1));
     break;
-  case BACA_COMMAND_HOME:
+  case MEREADER_TUI_COMMAND_HOME:
     state->overlay_scroll = 0U;
     state->dirty = true;
     break;
-  case BACA_COMMAND_END: {
+  case MEREADER_TUI_COMMAND_END: {
     const size_t count = overlay_line_count(state);
     state->overlay_scroll = count > 0U ? count - 1U : 0U;
     scroll_overlay(state, 0);
@@ -2804,7 +2804,7 @@ static void handle_overlay_key(BacaTuiState *state,
   }
 }
 
-static void begin_search_prompt(BacaTuiState *state, bool forward) {
+static void begin_search_prompt(MereaderTuiTuiState *state, bool forward) {
   memset(&state->prompt, 0, sizeof(state->prompt));
   state->prompt.active = true;
   state->prompt.forward = forward;
@@ -2813,30 +2813,30 @@ static void begin_search_prompt(BacaTuiState *state, bool forward) {
   state->dirty = true;
 }
 
-static void toggle_pdf_view(BacaTuiState *state) {
-  if (state->app->document.format != BACA_FORMAT_PDF) {
+static void toggle_pdf_view(MereaderTuiTuiState *state) {
+  if (state->app->document.format != MEREADER_TUI_FORMAT_PDF) {
     return;
   }
-  const BacaPresentation previous = state->presentation;
-  state->presentation = previous == BACA_PRESENTATION_FIXED
-                            ? BACA_PRESENTATION_REFLOW
-                            : BACA_PRESENTATION_FIXED;
-  BacaError error = {0};
+  const MereaderTuiPresentation previous = state->presentation;
+  state->presentation = previous == MEREADER_TUI_PRESENTATION_FIXED
+                            ? MEREADER_TUI_PRESENTATION_REFLOW
+                            : MEREADER_TUI_PRESENTATION_FIXED;
+  MereaderTuiError error = {0};
   if (!rebuild_layout(state, &error) && !state->quit) {
     state->presentation = previous;
-    BacaError restore_error = {0};
+    MereaderTuiError restore_error = {0};
     (void)rebuild_layout(state, &restore_error);
     open_alert(state, error.message[0] != '\0' ? error.message
                                                : "Cannot change PDF view");
   }
 }
 
-static void reset_reader_command(BacaTuiState *state) {
-  state->reader_command = (BacaReaderCommandState){0};
+static void reset_reader_command(MereaderTuiTuiState *state) {
+  state->reader_command = (MereaderTuiReaderCommandState){0};
 }
 
-static bool collect_reader_count(BacaTuiState *state,
-                                 const BacaNormalizedKey *key) {
+static bool collect_reader_count(MereaderTuiTuiState *state,
+                                 const MereaderTuiNormalizedKey *key) {
   if (key->key_code || key->character < L'0' || key->character > L'9') {
     return false;
   }
@@ -2853,7 +2853,7 @@ static bool collect_reader_count(BacaTuiState *state,
   return true;
 }
 
-static size_t take_reader_count(BacaTuiState *state, bool *explicit_count) {
+static size_t take_reader_count(MereaderTuiTuiState *state, bool *explicit_count) {
   *explicit_count = state->reader_command.count_active;
   const size_t count = *explicit_count ? state->reader_command.count : 1U;
   state->reader_command.count = 0U;
@@ -2861,7 +2861,7 @@ static size_t take_reader_count(BacaTuiState *state, bool *explicit_count) {
   return count;
 }
 
-static void scroll_reader_lines(BacaTuiState *state, bool down, size_t count) {
+static void scroll_reader_lines(MereaderTuiTuiState *state, bool down, size_t count) {
   const size_t maximum = maximum_scroll(state);
   const size_t current = minimum_size(pending_scroll_target(state), maximum);
   const size_t target =
@@ -2874,9 +2874,9 @@ static void scroll_reader_lines(BacaTuiState *state, bool down, size_t count) {
   start_scroll_animation_with_duration(state, target, duration);
 }
 
-static void handle_reader_key(BacaTuiState *state,
-                              const BacaNormalizedKey *key) {
-  if (key->command == BACA_COMMAND_QUIT &&
+static void handle_reader_key(MereaderTuiTuiState *state,
+                              const MereaderTuiNormalizedKey *key) {
+  if (key->command == MEREADER_TUI_COMMAND_QUIT &&
       (state->reader_command.count_active || state->reader_command.g_pending)) {
     reset_reader_command(state);
     return;
@@ -2899,7 +2899,7 @@ static void handle_reader_key(BacaTuiState *state,
     reset_reader_command(state);
   }
   const bool plain_tab = !key->key_code && key->character == L'\t';
-  const bool ctrl_i = key->key_code && key->code == BACA_KEY_CTRL_I;
+  const bool ctrl_i = key->key_code && key->code == MEREADER_TUI_KEY_CTRL_I;
   if ((plain_tab || ctrl_i) && state->jumps.forward_count > 0U) {
     state->reader_command.count = 0U;
     state->reader_command.count_active = false;
@@ -2912,86 +2912,86 @@ static void handle_reader_key(BacaTuiState *state,
   bool explicit_count = false;
   const size_t count = take_reader_count(state, &explicit_count);
   switch (key->command) {
-  case BACA_COMMAND_QUIT:
+  case MEREADER_TUI_COMMAND_QUIT:
     if (state->search.active) {
       cancel_search(state);
     } else {
       state->quit = true;
     }
     break;
-  case BACA_COMMAND_SCROLL_DOWN:
+  case MEREADER_TUI_COMMAND_SCROLL_DOWN:
     scroll_reader_lines(state, true, count);
     break;
-  case BACA_COMMAND_SCROLL_UP:
+  case MEREADER_TUI_COMMAND_SCROLL_UP:
     scroll_reader_lines(state, false, count);
     break;
-  case BACA_COMMAND_PAGE_DOWN:
+  case MEREADER_TUI_COMMAND_PAGE_DOWN:
     page_scroll(state, true, count);
     break;
-  case BACA_COMMAND_PAGE_UP:
+  case MEREADER_TUI_COMMAND_PAGE_UP:
     page_scroll(state, false, count);
     break;
-  case BACA_COMMAND_HOME:
+  case MEREADER_TUI_COMMAND_HOME:
     (void)jump_to_line(state, 0U);
     break;
-  case BACA_COMMAND_END:
+  case MEREADER_TUI_COMMAND_END:
     (void)jump_to_line(state,
                        explicit_count ? count - 1U : maximum_scroll(state));
     break;
-  case BACA_COMMAND_TOC:
+  case MEREADER_TUI_COMMAND_TOC:
     open_toc(state);
     break;
-  case BACA_COMMAND_ADD_BOOKMARK:
+  case MEREADER_TUI_COMMAND_ADD_BOOKMARK:
     add_bookmark(state);
     break;
-  case BACA_COMMAND_BOOKMARKS:
+  case MEREADER_TUI_COMMAND_BOOKMARKS:
     open_bookmarks(state);
     break;
-  case BACA_COMMAND_METADATA:
-    state->overlay = BACA_OVERLAY_METADATA;
+  case MEREADER_TUI_COMMAND_METADATA:
+    state->overlay = MEREADER_TUI_OVERLAY_METADATA;
     state->overlay_scroll = 0U;
     state->dirty = true;
     break;
-  case BACA_COMMAND_HELP:
-    state->overlay = BACA_OVERLAY_HELP;
+  case MEREADER_TUI_COMMAND_HELP:
+    state->overlay = MEREADER_TUI_OVERLAY_HELP;
     state->overlay_scroll = 0U;
     state->dirty = true;
     break;
-  case BACA_COMMAND_TOGGLE_THEME:
+  case MEREADER_TUI_COMMAND_TOGGLE_THEME:
     state->app->dark_mode = !state->app->dark_mode;
     apply_theme(state);
     break;
-  case BACA_COMMAND_SEARCH_FORWARD:
+  case MEREADER_TUI_COMMAND_SEARCH_FORWARD:
     begin_search_prompt(state, true);
     break;
-  case BACA_COMMAND_SEARCH_BACKWARD:
+  case MEREADER_TUI_COMMAND_SEARCH_BACKWARD:
     begin_search_prompt(state, false);
     break;
-  case BACA_COMMAND_NEXT_MATCH:
+  case MEREADER_TUI_COMMAND_NEXT_MATCH:
     for (size_t index = 0U; index < count; ++index) {
       if (!repeat_search(state, true)) {
         break;
       }
     }
     break;
-  case BACA_COMMAND_PREVIOUS_MATCH:
+  case MEREADER_TUI_COMMAND_PREVIOUS_MATCH:
     for (size_t index = 0U; index < count; ++index) {
       if (!repeat_search(state, false)) {
         break;
       }
     }
     break;
-  case BACA_COMMAND_TOGGLE_PDF_VIEW:
+  case MEREADER_TUI_COMMAND_TOGGLE_PDF_VIEW:
     toggle_pdf_view(state);
     break;
-  case BACA_COMMAND_CONFIRM:
+  case MEREADER_TUI_COMMAND_CONFIRM:
     clear_search(&state->search);
     state->dirty = true;
     break;
-  case BACA_COMMAND_SCREENSHOT:
+  case MEREADER_TUI_COMMAND_SCREENSHOT:
     save_screenshot(state);
     break;
-  case BACA_COMMAND_NONE:
+  case MEREADER_TUI_COMMAND_NONE:
     if (!key->key_code && key->character == 15) {
       (void)traverse_jump_history(state, false);
     }
@@ -2999,9 +2999,9 @@ static void handle_reader_key(BacaTuiState *state,
   }
 }
 
-static bool initialize_curses(BacaTuiState *state, BacaError *error) {
+static bool initialize_curses(MereaderTuiTuiState *state, MereaderTuiError *error) {
   if (initscr() == NULL) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot initialize terminal");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "cannot initialize terminal");
     return false;
   }
   (void)raw();
@@ -3012,7 +3012,7 @@ static bool initialize_curses(BacaTuiState *state, BacaError *error) {
   state->previous_cursor = curs_set(0);
   state->colors = false;
   if (has_colors() == true && start_color() == OK && COLORS >= 8 &&
-      COLOR_PAIRS > BACA_PAIR_ALERT) {
+      COLOR_PAIRS > MEREADER_TUI_PAIR_ALERT) {
     state->colors = true;
     (void)use_default_colors();
   }
@@ -3023,8 +3023,8 @@ static bool initialize_curses(BacaTuiState *state, BacaError *error) {
   return true;
 }
 
-static void initialize_graphics(BacaTuiState *state) {
-  const BacaGraphicsEnvironment environment = {
+static void initialize_graphics(MereaderTuiTuiState *state) {
+  const MereaderTuiGraphicsEnvironment environment = {
       .term_program = getenv("TERM_PROGRAM"),
       .term = getenv("TERM"),
       .kitty_window_id = getenv("KITTY_WINDOW_ID"),
@@ -3034,15 +3034,15 @@ static void initialize_graphics(BacaTuiState *state) {
       .colors = state->colors,
       .output_is_tty = isatty(STDOUT_FILENO) != 0,
   };
-  const BacaGraphicsMultiplexer multiplexer =
-      baca_graphics_multiplexer(&environment);
-  state->image_mode = baca_graphics_select_mode(
+  const MereaderTuiGraphicsMultiplexer multiplexer =
+      mereader_tui_graphics_multiplexer(&environment);
+  state->image_mode = mereader_tui_graphics_select_mode(
       state->app->config.image_mode, state->app->config.image_mode_explicit,
       &environment);
-  state->raw_truecolor = baca_graphics_truecolor_available(&environment) &&
-                         multiplexer == BACA_GRAPHICS_MULTIPLEXER_NONE;
+  state->raw_truecolor = mereader_tui_graphics_truecolor_available(&environment) &&
+                         multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE;
 
-  int pair_capacity = state->colors ? COLOR_PAIRS - BACA_PAIR_IMAGE_FIRST : 0;
+  int pair_capacity = state->colors ? COLOR_PAIRS - MEREADER_TUI_PAIR_IMAGE_FIRST : 0;
   if (pair_capacity > 256) {
     pair_capacity = 256;
   }
@@ -3051,84 +3051,84 @@ static void initialize_graphics(BacaTuiState *state) {
   }
   state->image_pair_capacity = (short)pair_capacity;
 
-  if (state->image_mode == BACA_IMAGE_MODE_ANSI && !state->raw_truecolor &&
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && !state->raw_truecolor &&
       state->image_pair_capacity == 0) {
-    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
   }
-  if (state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER) {
-    state->presentation = state->app->document.format == BACA_FORMAT_PDF
-                              ? BACA_PRESENTATION_REFLOW
-                              : BACA_PRESENTATION_DEFAULT;
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_PLACEHOLDER) {
+    state->presentation = state->app->document.format == MEREADER_TUI_FORMAT_PDF
+                              ? MEREADER_TUI_PRESENTATION_REFLOW
+                              : MEREADER_TUI_PRESENTATION_DEFAULT;
     update_cell_pixels(state);
-    baca_document_probe_images(&state->app->document, false);
+    mereader_tui_document_probe_images(&state->app->document, false);
     return;
   }
 
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   state->graphics =
-      baca_graphics_create(BACA_GRAPHICS_DEFAULT_CACHE_BYTES, multiplexer,
+      mereader_tui_graphics_create(MEREADER_TUI_GRAPHICS_DEFAULT_CACHE_BYTES, multiplexer,
                            current_background(state), &ignored);
   if (state->graphics == NULL) {
-    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
-    state->presentation = state->app->document.format == BACA_FORMAT_PDF
-                              ? BACA_PRESENTATION_REFLOW
-                              : BACA_PRESENTATION_DEFAULT;
+    state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
+    state->presentation = state->app->document.format == MEREADER_TUI_FORMAT_PDF
+                              ? MEREADER_TUI_PRESENTATION_REFLOW
+                              : MEREADER_TUI_PRESENTATION_DEFAULT;
     update_cell_pixels(state);
-    baca_document_probe_images(&state->app->document, false);
+    mereader_tui_document_probe_images(&state->app->document, false);
     return;
   }
-  if (!baca_graphics_resize(state->graphics, state->columns, state->rows,
+  if (!mereader_tui_graphics_resize(state->graphics, state->columns, state->rows,
                             &ignored)) {
-    baca_graphics_free(state->graphics);
+    mereader_tui_graphics_free(state->graphics);
     state->graphics = NULL;
-    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
-    state->presentation = state->app->document.format == BACA_FORMAT_PDF
-                              ? BACA_PRESENTATION_REFLOW
-                              : BACA_PRESENTATION_DEFAULT;
+    state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
+    state->presentation = state->app->document.format == MEREADER_TUI_FORMAT_PDF
+                              ? MEREADER_TUI_PRESENTATION_REFLOW
+                              : MEREADER_TUI_PRESENTATION_DEFAULT;
     update_cell_pixels(state);
-    baca_document_probe_images(&state->app->document, false);
+    mereader_tui_document_probe_images(&state->app->document, false);
     return;
   }
-  state->presentation = state->app->document.format == BACA_FORMAT_PDF
-                            ? BACA_PRESENTATION_FIXED
-                            : BACA_PRESENTATION_DEFAULT;
+  state->presentation = state->app->document.format == MEREADER_TUI_FORMAT_PDF
+                            ? MEREADER_TUI_PRESENTATION_FIXED
+                            : MEREADER_TUI_PRESENTATION_DEFAULT;
   update_cell_pixels(state);
-  baca_document_probe_images(&state->app->document, true);
+  mereader_tui_document_probe_images(&state->app->document, true);
 }
 
-int baca_tui_run(BacaApp *app, BacaError *error) {
+int mereader_tui_tui_run(MereaderTuiApp *app, MereaderTuiError *error) {
   if (app == NULL || app->document.path == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "application is not initialized");
     return EXIT_FAILURE;
   }
-  BacaTuiState state = {
+  MereaderTuiTuiState state = {
       .app = app,
       .previous_cursor = ERR,
       .dirty = true,
   };
-  if (!baca_terminal_runtime_begin(error)) {
+  if (!mereader_tui_terminal_runtime_begin(error)) {
     return EXIT_FAILURE;
   }
   if (!initialize_curses(&state, error)) {
-    return baca_terminal_runtime_finish(EXIT_FAILURE, error);
+    return mereader_tui_terminal_runtime_finish(EXIT_FAILURE, error);
   }
   initialize_graphics(&state);
 
   int result = EXIT_SUCCESS;
-  if (app->document.format == BACA_FORMAT_PDF &&
+  if (app->document.format == MEREADER_TUI_FORMAT_PDF &&
       app->document.block_count > 0U) {
     state.pdf_render_failures =
         calloc(app->document.block_count, sizeof(*state.pdf_render_failures));
     if (state.pdf_render_failures == NULL) {
-      baca_error_set(error, BACA_ERROR_MEMORY,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                      "cannot allocate PDF render failure cache");
       result = EXIT_FAILURE;
       goto cleanup;
     }
     state.pdf_render_failure_count = app->document.block_count;
   }
-  if (!baca_terminal_runtime_activate(error)) {
+  if (!mereader_tui_terminal_runtime_activate(error)) {
     result = EXIT_FAILURE;
     goto cleanup;
   }
@@ -3138,7 +3138,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
   }
 
   while (!state.quit) {
-    if (baca_terminal_runtime_interrupted()) {
+    if (mereader_tui_terminal_runtime_interrupted()) {
       state.quit = true;
       continue;
     }
@@ -3150,11 +3150,11 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
     wtimeout(stdscr, state.animation.active ? 16 : 100);
     wint_t input = 0;
     const int status = wget_wch(stdscr, &input);
-    if (baca_terminal_runtime_interrupted()) {
+    if (mereader_tui_terminal_runtime_interrupted()) {
       state.quit = true;
       continue;
     }
-    const BacaNormalizedKey key =
+    const MereaderTuiNormalizedKey key =
         read_normalized_key(&app->config, status, input);
     if (!key.valid) {
       continue;
@@ -3162,7 +3162,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
     if (key.key_code && key.code == KEY_RESIZE) {
       reset_reader_command(&state);
       update_dimensions(&state);
-      BacaError resize_error = {0};
+      MereaderTuiError resize_error = {0};
       if (!rebuild_layout(&state, &resize_error) && !state.quit) {
         open_alert(&state, resize_error.message);
       }
@@ -3176,7 +3176,7 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
     if (state.prompt.active) {
       reset_reader_command(&state);
       handle_prompt_key(&state, &key);
-    } else if (state.overlay != BACA_OVERLAY_NONE) {
+    } else if (state.overlay != MEREADER_TUI_OVERLAY_NONE) {
       reset_reader_command(&state);
       handle_overlay_key(&state, &key);
     } else {
@@ -3187,15 +3187,15 @@ int baca_tui_run(BacaApp *app, BacaError *error) {
 cleanup:
   remember_progress(&state);
   clear_search(&state.search);
-  baca_bookmarks_free(&state.bookmarks);
+  mereader_tui_bookmarks_free(&state.bookmarks);
   free(state.pdf_render_failures);
   cleanup_temp_directories(&state);
   delete_kitty_images(&state);
-  baca_graphics_free(state.graphics);
+  mereader_tui_graphics_free(state.graphics);
   state.graphics = NULL;
   if (state.previous_cursor != ERR) {
     (void)curs_set(state.previous_cursor);
   }
   (void)endwin();
-  return baca_terminal_runtime_finish(result, error);
+  return mereader_tui_terminal_runtime_finish(result, error);
 }

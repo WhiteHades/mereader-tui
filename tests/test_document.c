@@ -1,8 +1,8 @@
 #include "test_support.h"
 
-#include "baca/document.h"
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
+#include "mereader-tui/document.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -102,17 +102,17 @@ typedef struct StandaloneFormatFixture {
     bool optional_loader;
 } StandaloneFormatFixture;
 
-static bool probe_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
-                                BacaError *error) {
+static bool probe_load_resource(MereaderTuiDocument *document, const char *uri, MereaderTuiResource *resource,
+                                MereaderTuiError *error) {
     (void)uri;
     ProbeBackend *backend = document->backend;
     ++backend->loads;
     const size_t allocation = backend->corrupt ? 1U : sizeof(pixel_png);
     resource->data = malloc(allocation);
-    resource->mime_type = baca_strdup("image/png", error);
+    resource->mime_type = mereader_tui_strdup("image/png", error);
     if (resource->data == NULL || resource->mime_type == NULL) {
-        baca_resource_free(resource);
-        baca_error_set(error, BACA_ERROR_MEMORY, "cannot allocate probe fixture");
+        mereader_tui_resource_free(resource);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "cannot allocate probe fixture");
         return false;
     }
     if (!backend->corrupt) {
@@ -124,7 +124,7 @@ static bool probe_load_resource(BacaDocument *document, const char *uri, BacaRes
     return true;
 }
 
-static bool probe_resource_size(const BacaDocument *document, const char *uri, size_t *size) {
+static bool probe_resource_size(const MereaderTuiDocument *document, const char *uri, size_t *size) {
     const ProbeBackend *backend = document->backend;
     if (backend == NULL || uri == NULL || size == NULL) {
         return false;
@@ -135,24 +135,24 @@ static bool probe_resource_size(const BacaDocument *document, const char *uri, s
     return true;
 }
 
-static const BacaDocumentOps probe_document_ops = {
+static const MereaderTuiDocumentOps probe_document_ops = {
     .load_resource = probe_load_resource,
     .resource_size = probe_resource_size,
 };
 
 static bool patch_member_size(const char *path, const char *member_name, uint32_t size);
 
-static bool append_probe_image(BacaDocument *document, const char *uri, BacaError *error) {
-    BacaBlock block = {
-        .kind = BACA_BLOCK_IMAGE,
+static bool append_probe_image(MereaderTuiDocument *document, const char *uri, MereaderTuiError *error) {
+    MereaderTuiBlock block = {
+        .kind = MEREADER_TUI_BLOCK_IMAGE,
         .value.image = {
-            .uri = baca_strdup(uri, error),
-            .alt = baca_strdup(uri, error),
+            .uri = mereader_tui_strdup(uri, error),
+            .alt = mereader_tui_strdup(uri, error),
             .page_index = -1,
         },
     };
     if (block.value.image.uri != NULL && block.value.image.alt != NULL &&
-        baca_document_add_image_block(document, &block, error)) {
+        mereader_tui_document_add_image_block(document, &block, error)) {
         return true;
     }
     free(block.value.image.uri);
@@ -175,7 +175,7 @@ static bool buffer_contains(const unsigned char *data, size_t length, const void
     return false;
 }
 
-static BacaTestResult test_valid_standalone_format(const StandaloneFormatFixture *fixture) {
+static MereaderTuiTestResult test_valid_standalone_format(const StandaloneFormatFixture *fixture) {
     bool loader_available = false;
     GSList *formats = gdk_pixbuf_get_formats();
     for (GSList *item = formats; item != NULL; item = item->next) {
@@ -190,8 +190,8 @@ static BacaTestResult test_valid_standalone_format(const StandaloneFormatFixture
     g_slist_free(formats);
     if (!loader_available) {
         return fixture->optional_loader
-                   ? baca_test_skip("GdkPixbuf %s loader unavailable", fixture->loader)
-                   : baca_test_fail_at(__FILE__, __LINE__, "GdkPixbuf %s loader unavailable", fixture->loader);
+                   ? mereader_tui_test_skip("GdkPixbuf %s loader unavailable", fixture->loader)
+                   : mereader_tui_test_fail_at(__FILE__, __LINE__, "GdkPixbuf %s loader unavailable", fixture->loader);
     }
 
     char target_relative[96] = {0};
@@ -202,56 +202,56 @@ static BacaTestResult test_valid_standalone_format(const StandaloneFormatFixture
                                       "document/valid-%s-alias.%s", fixture->name, fixture->extension);
     TEST_ASSERT(target_length > 0 && (size_t)target_length < sizeof(target_relative));
     TEST_ASSERT(alias_length > 0 && (size_t)alias_length < sizeof(alias_relative));
-    TEST_ASSERT(baca_test_write(target_relative, fixture->data, fixture->length));
-    char *target = baca_test_path(target_relative);
-    char *alias = baca_test_path(alias_relative);
+    TEST_ASSERT(mereader_tui_test_write(target_relative, fixture->data, fixture->length));
+    char *target = mereader_tui_test_path(target_relative);
+    char *alias = mereader_tui_test_path(alias_relative);
     TEST_ASSERT(target != NULL && alias != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, target, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
-    baca_document_probe_images(&document, true);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, target, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 2);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 3);
 
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, document.path, &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, document.path, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, fixture->length);
     TEST_ASSERT(memcmp(resource.data, fixture->data, fixture->length) == 0);
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
 
-    BacaGraphicsContext *graphics = baca_graphics_create(
-        1024U * 1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+    MereaderTuiGraphicsContext *graphics = mereader_tui_graphics_create(
+        1024U * 1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
     TEST_ASSERT(graphics != NULL);
-    BacaGraphicsSurface surface = {0};
-    TEST_ASSERT_MSG(baca_graphics_prepare(graphics, &document, 0U, 2, 2, &surface, &error), "%s",
+    MereaderTuiGraphicsSurface surface = {0};
+    TEST_ASSERT_MSG(mereader_tui_graphics_prepare(graphics, &document, 0U, 2, 2, &surface, &error), "%s",
                     error.message);
     TEST_ASSERT_INT(surface.width, 2);
     TEST_ASSERT_INT(surface.height, 4);
-    baca_graphics_surface_release(&surface);
-    baca_graphics_free(graphics);
-    baca_document_close(&document);
+    mereader_tui_graphics_surface_release(&surface);
+    mereader_tui_graphics_free(graphics);
+    mereader_tui_document_close(&document);
 
     (void)unlink(alias);
     TEST_ASSERT(symlink(target, alias) == 0);
-    TEST_ASSERT_MSG(baca_document_open(&document, alias, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, alias, &error), "%s", error.message);
     TEST_ASSERT_STR(document.path, target);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
-    baca_document_probe_images(&document, true);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 2);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 3);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(alias);
     free(target);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 typedef struct DocumentOpenResult {
-    BacaErrorCode code;
+    MereaderTuiErrorCode code;
     bool opened;
 } DocumentOpenResult;
 
@@ -268,11 +268,11 @@ static bool document_open_returns_without_blocking(const char *path, DocumentOpe
     }
     if (child == 0) {
         (void)close(descriptors[0]);
-        BacaDocument document = {0};
-        BacaError error = {0};
-        const bool opened = baca_document_open(&document, path, &error);
+        MereaderTuiDocument document = {0};
+        MereaderTuiError error = {0};
+        const bool opened = mereader_tui_document_open(&document, path, &error);
         if (opened) {
-            baca_document_close(&document);
+            mereader_tui_document_close(&document);
         }
         const DocumentOpenResult child_result = {
             .code = error.code,
@@ -366,13 +366,13 @@ static bool close_archive(zip_t *archive) {
 
 static bool create_numbered_probe_archive(const char *relative, const char *prefix, size_t member_count,
                                           const void *data, size_t data_length, char **output_path) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return false;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return false;
@@ -407,13 +407,13 @@ static bool create_numbered_probe_archive(const char *relative, const char *pref
 
 static bool create_epub(const char *relative, const char *opf, const FixtureMember *members, size_t member_count,
                         char **output_path) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return false;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         fprintf(stderr, "EPUB fixture directory: %s\n", error.message);
         free(directory);
         free(path);
@@ -449,16 +449,16 @@ static bool create_epub(const char *relative, const char *opf, const FixtureMemb
     return true;
 }
 
-static bool document_has_anchor(const BacaDocument *document, const char *target) {
+static bool document_has_anchor(const MereaderTuiDocument *document, const char *target) {
     for (size_t block_index = 0U; block_index < document->block_count; block_index++) {
-        const BacaBlock *block = &document->blocks[block_index];
-        if (block->kind == BACA_BLOCK_TEXT) {
+        const MereaderTuiBlock *block = &document->blocks[block_index];
+        if (block->kind == MEREADER_TUI_BLOCK_TEXT) {
             for (size_t anchor_index = 0U; anchor_index < block->value.text.anchor_count; anchor_index++) {
                 if (strcmp(block->value.text.anchors[anchor_index].target, target) == 0) {
                     return true;
                 }
             }
-        } else if (block->kind == BACA_BLOCK_IMAGE && block->value.image.anchor != NULL &&
+        } else if (block->kind == MEREADER_TUI_BLOCK_IMAGE && block->value.image.anchor != NULL &&
                    strcmp(block->value.image.anchor, target) == 0) {
             return true;
         }
@@ -466,9 +466,9 @@ static bool document_has_anchor(const BacaDocument *document, const char *target
     return false;
 }
 
-static const BacaTextBlock *find_text(const BacaDocument *document, const char *text) {
+static const MereaderTuiTextBlock *find_text(const MereaderTuiDocument *document, const char *text) {
     for (size_t index = 0U; index < document->block_count; index++) {
-        if (document->blocks[index].kind == BACA_BLOCK_TEXT && document->blocks[index].value.text.text != NULL &&
+        if (document->blocks[index].kind == MEREADER_TUI_BLOCK_TEXT && document->blocks[index].value.text.text != NULL &&
             strcmp(document->blocks[index].value.text.text, text) == 0) {
             return &document->blocks[index].value.text;
         }
@@ -476,9 +476,9 @@ static const BacaTextBlock *find_text(const BacaDocument *document, const char *
     return NULL;
 }
 
-static const BacaImageBlock *find_image(const BacaDocument *document, const char *alt) {
+static const MereaderTuiImageBlock *find_image(const MereaderTuiDocument *document, const char *alt) {
     for (size_t index = 0U; index < document->block_count; index++) {
-        if (document->blocks[index].kind == BACA_BLOCK_IMAGE && document->blocks[index].value.image.alt != NULL &&
+        if (document->blocks[index].kind == MEREADER_TUI_BLOCK_IMAGE && document->blocks[index].value.image.alt != NULL &&
             strcmp(document->blocks[index].value.image.alt, alt) == 0) {
             return &document->blocks[index].value.image;
         }
@@ -486,12 +486,12 @@ static const BacaImageBlock *find_image(const BacaDocument *document, const char
     return NULL;
 }
 
-static bool text_has_span(const BacaTextBlock *text, BacaTextStyle style, const char *link) {
+static bool text_has_span(const MereaderTuiTextBlock *text, MereaderTuiTextStyle style, const char *link) {
     if (text == NULL) {
         return false;
     }
     for (size_t index = 0U; index < text->span_count; index++) {
-        const BacaTextSpan *span = &text->spans[index];
+        const MereaderTuiTextSpan *span = &text->spans[index];
         bool style_matches = (span->style & style) == style;
         bool link_matches = link == NULL ? span->link == NULL : span->link != NULL && strcmp(span->link, link) == 0;
         if (style_matches && link_matches && span->start < span->end && span->end <= strlen(text->text)) {
@@ -561,17 +561,17 @@ static bool build_epub2(char **path) {
         {.name = "OEBPS/Images/broken.png", .data = "not a PNG", .length = 9U},
         {.name = "OEBPS/Images/vector.svg", .data = vector, .length = sizeof(vector) - 1U},
     };
-    return create_epub("document/epub2.epub", opf, members, BACA_ARRAY_LEN(members), path);
+    return create_epub("document/epub2.epub", opf, members, MEREADER_TUI_ARRAY_LEN(members), path);
 }
 
-static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
+static MereaderTuiTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
     char *path = NULL;
     TEST_ASSERT(build_epub2(&path));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    baca_document_probe_images(&document, true);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_EPUB);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    mereader_tui_document_probe_images(&document, true);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_EPUB);
     TEST_ASSERT_STR(document.metadata.title, "Harness Book");
     TEST_ASSERT_STR(document.metadata.creator, "Test Author");
     TEST_ASSERT_STR(document.metadata.description, "Generated locally");
@@ -587,23 +587,23 @@ static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
     TEST_ASSERT(document.sections[0].linear && document.sections[1].linear);
     TEST_ASSERT(document.sections[1].search_offset > document.sections[0].search_offset);
 
-    const BacaTextBlock *heading = find_text(&document, "Chapter One");
-    const BacaTextBlock *paragraph = find_text(&document, "Hello bold next outside.");
+    const MereaderTuiTextBlock *heading = find_text(&document, "Chapter One");
+    const MereaderTuiTextBlock *paragraph = find_text(&document, "Hello bold next outside.");
     TEST_ASSERT(heading != NULL && paragraph != NULL);
     TEST_ASSERT_INT((int)heading->heading_level, 1);
-    TEST_ASSERT(text_has_span(heading, BACA_STYLE_HEADING, NULL));
-    TEST_ASSERT(text_has_span(heading, (BacaTextStyle)(BACA_STYLE_HEADING | BACA_STYLE_ITALIC), NULL));
-    TEST_ASSERT(text_has_span(paragraph, BACA_STYLE_BOLD, NULL));
-    TEST_ASSERT(text_has_span(paragraph, BACA_STYLE_NONE, "OEBPS/Text/nested/chapter2.xhtml#deep"));
-    TEST_ASSERT(text_has_span(paragraph, BACA_STYLE_NONE, "https://example.test/reference"));
+    TEST_ASSERT(text_has_span(heading, MEREADER_TUI_STYLE_HEADING, NULL));
+    TEST_ASSERT(text_has_span(heading, (MereaderTuiTextStyle)(MEREADER_TUI_STYLE_HEADING | MEREADER_TUI_STYLE_ITALIC), NULL));
+    TEST_ASSERT(text_has_span(paragraph, MEREADER_TUI_STYLE_BOLD, NULL));
+    TEST_ASSERT(text_has_span(paragraph, MEREADER_TUI_STYLE_NONE, "OEBPS/Text/nested/chapter2.xhtml#deep"));
+    TEST_ASSERT(text_has_span(paragraph, MEREADER_TUI_STYLE_NONE, "https://example.test/reference"));
 
-    const BacaImageBlock *pixel = find_image(&document, "Pixel");
-    const BacaImageBlock *linked = find_image(&document, "Linked");
-    const BacaImageBlock *vector = find_image(&document, "Vector");
-    const BacaImageBlock *svg_href = find_image(&document, "SVG Href");
-    const BacaImageBlock *responsive = find_image(&document, "Responsive");
-    const BacaImageBlock *broken = find_image(&document, "Broken");
-    const BacaImageBlock *data = find_image(&document, "Data");
+    const MereaderTuiImageBlock *pixel = find_image(&document, "Pixel");
+    const MereaderTuiImageBlock *linked = find_image(&document, "Linked");
+    const MereaderTuiImageBlock *vector = find_image(&document, "Vector");
+    const MereaderTuiImageBlock *svg_href = find_image(&document, "SVG Href");
+    const MereaderTuiImageBlock *responsive = find_image(&document, "Responsive");
+    const MereaderTuiImageBlock *broken = find_image(&document, "Broken");
+    const MereaderTuiImageBlock *data = find_image(&document, "Data");
     TEST_ASSERT(pixel != NULL && linked != NULL && vector != NULL && svg_href != NULL && responsive != NULL &&
                 broken != NULL && data != NULL);
     TEST_ASSERT_STR(pixel->uri, "OEBPS/Images/pixel.png");
@@ -622,12 +622,12 @@ static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
         "root-body", "top", "intro", "next", "legacy-next", "raster", "image-link", "linked",
         "svg-image", "svg-href-image", "picture", "picture-source", "picture-fallback", "tail", "tail-name",
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(anchors); index++) {
-        BacaString target = {0};
-        TEST_ASSERT(baca_string_append(&target, "OEBPS/Text/chapter%23one%3F.xhtml#", &error));
-        TEST_ASSERT(baca_string_append(&target, anchors[index], &error));
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(anchors); index++) {
+        MereaderTuiString target = {0};
+        TEST_ASSERT(mereader_tui_string_append(&target, "OEBPS/Text/chapter%23one%3F.xhtml#", &error));
+        TEST_ASSERT(mereader_tui_string_append(&target, anchors[index], &error));
         TEST_ASSERT_MSG(document_has_anchor(&document, target.data), "missing anchor %s", target.data);
-        baca_string_free(&target);
+        mereader_tui_string_free(&target);
     }
     TEST_ASSERT(document_has_anchor(&document, "OEBPS/Text/nested/chapter2.xhtml#deep"));
     TEST_ASSERT_SIZE(document.toc_count, 2U);
@@ -638,69 +638,69 @@ static BacaTestResult test_epub2_normalization_toc_resources_and_cleanup(void) {
     TEST_ASSERT_STR(document.toc[1].target, "OEBPS/Text/nested/chapter2.xhtml#deep");
     TEST_ASSERT_INT((int)document.toc[1].depth, 1);
     TEST_ASSERT_SIZE(document.toc[1].section_index, 1U);
-    TEST_ASSERT(baca_document_current_toc(&document, document.sections[1].id) == &document.toc[1]);
+    TEST_ASSERT(mereader_tui_document_current_toc(&document, document.sections[1].id) == &document.toc[1]);
 
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, "OEBPS/Images/pixel.png", &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, "OEBPS/Images/pixel.png", &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, sizeof(pixel_png));
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
     TEST_ASSERT_STR(resource.mime_type, "image/png");
-    baca_resource_free(&resource);
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, "OEBPS/Images/vector.svg", &resource, &error), "%s",
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, "OEBPS/Images/vector.svg", &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(resource.mime_type, "image/svg+xml");
     TEST_ASSERT(buffer_contains(resource.data, resource.length, "<svg", 4U));
-    baca_resource_free(&resource);
-    baca_document_close(&document);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_close(&document);
     TEST_ASSERT(document.path == NULL && document.backend == NULL && document.blocks == NULL);
 
-    TEST_ASSERT(baca_test_write_text("document/owned-cleanup/marker", "owned"));
-    char *cleanup = baca_test_path("document/owned-cleanup");
+    TEST_ASSERT(mereader_tui_test_write_text("document/owned-cleanup/marker", "owned"));
+    char *cleanup = mereader_tui_test_path("document/owned-cleanup");
     TEST_ASSERT(cleanup != NULL);
-    TEST_ASSERT_MSG(baca_epub_open(&document, path, cleanup, &error), "%s", error.message);
-    TEST_ASSERT(baca_directory_exists(cleanup));
-    baca_document_close(&document);
-    TEST_ASSERT(!baca_directory_exists(cleanup));
+    TEST_ASSERT_MSG(mereader_tui_epub_open(&document, path, cleanup, &error), "%s", error.message);
+    TEST_ASSERT(mereader_tui_directory_exists(cleanup));
+    mereader_tui_document_close(&document);
+    TEST_ASSERT(!mereader_tui_directory_exists(cleanup));
     free(cleanup);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_epub_image_probe_uses_held_archive(void) {
+static MereaderTuiTestResult test_epub_image_probe_uses_held_archive(void) {
     char *path = NULL;
     TEST_ASSERT(build_epub2(&path));
-    BacaError error = {0};
-    BacaString held_string = {0};
-    TEST_ASSERT(baca_string_append(&held_string, path, &error));
-    TEST_ASSERT(baca_string_append(&held_string, ".held", &error));
-    char *held_path = baca_string_take(&held_string);
+    MereaderTuiError error = {0};
+    MereaderTuiString held_string = {0};
+    TEST_ASSERT(mereader_tui_string_append(&held_string, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&held_string, ".held", &error));
+    char *held_path = mereader_tui_string_take(&held_string);
     TEST_ASSERT(held_path != NULL);
     (void)unlink(held_path);
 
-    BacaDocument document = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    const BacaImageBlock *pixel = find_image(&document, "Pixel");
+    MereaderTuiDocument document = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    const MereaderTuiImageBlock *pixel = find_image(&document, "Pixel");
     TEST_ASSERT(pixel != NULL && pixel->intrinsic_width == 0 && pixel->intrinsic_height == 0);
     TEST_ASSERT(rename(path, held_path) == 0);
     TEST_ASSERT(unlink(held_path) == 0);
-    TEST_ASSERT(baca_write_file(path, "replacement", 11U, &error));
+    TEST_ASSERT(mereader_tui_write_file(path, "replacement", 11U, &error));
 
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     pixel = find_image(&document, "Pixel");
     TEST_ASSERT(pixel != NULL && !pixel->broken);
     TEST_ASSERT_INT(pixel->intrinsic_width, 1);
     TEST_ASSERT_INT(pixel->intrinsic_height, 1);
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, pixel->uri, &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, pixel->uri, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, sizeof(pixel_png));
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
-    baca_resource_free(&resource);
-    baca_document_close(&document);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_close(&document);
     free(held_path);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool build_epub3(char **path) {
@@ -732,22 +732,22 @@ static bool build_epub3(char **path) {
         {.name = "OEBPS/Images/page.svg", .data = page, .length = sizeof(page) - 1U},
         {.name = "OEBPS/nav.xhtml", .data = nav, .length = sizeof(nav) - 1U},
     };
-    return create_epub("document/epub3.epub", opf, members, BACA_ARRAY_LEN(members), path);
+    return create_epub("document/epub3.epub", opf, members, MEREADER_TUI_ARRAY_LEN(members), path);
 }
 
-static BacaTestResult test_epub3_nav_and_svg_spine(void) {
+static MereaderTuiTestResult test_epub3_nav_and_svg_spine(void) {
     char *path = NULL;
     TEST_ASSERT(build_epub3(&path));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    baca_document_probe_images(&document, true);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT_SIZE(document.section_count, 3U);
     TEST_ASSERT_STR(document.sections[1].id, "OEBPS/Images/page.svg");
     TEST_ASSERT(!document.sections[1].linear);
     TEST_ASSERT_SIZE(document.sections[1].block_count, 1U);
-    const BacaBlock *svg_block = &document.blocks[document.sections[1].first_block];
-    TEST_ASSERT_INT(svg_block->kind, BACA_BLOCK_IMAGE);
+    const MereaderTuiBlock *svg_block = &document.blocks[document.sections[1].first_block];
+    TEST_ASSERT_INT(svg_block->kind, MEREADER_TUI_BLOCK_IMAGE);
     TEST_ASSERT_STR(svg_block->value.image.uri, "OEBPS/Images/page.svg");
     TEST_ASSERT_INT(svg_block->value.image.intrinsic_width, 2);
     TEST_ASSERT_INT(svg_block->value.image.intrinsic_height, 2);
@@ -757,9 +757,9 @@ static BacaTestResult test_epub3_nav_and_svg_spine(void) {
     TEST_ASSERT_INT((int)document.toc[1].depth, 1);
     TEST_ASSERT_STR(document.toc[1].target, "OEBPS/Images/page.svg");
     TEST_ASSERT_STR(document.toc[2].target, "OEBPS/two.xhtml#second");
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool build_minimal_epub(const char *relative, const char *extra_manifest, const char *extra_spine,
@@ -771,15 +771,15 @@ static bool build_minimal_epub(const char *relative, const char *extra_manifest,
         "<item id=\"chapter\" href=\"chapter.xhtml\" media-type=\"application/xhtml+xml\"/>";
     static const char middle[] = "</manifest><spine><itemref idref=\"chapter\"/>";
     static const char suffix[] = "</spine></package>";
-    BacaString opf = {0};
-    BacaError error = {0};
-    bool built = baca_string_append(&opf, prefix, &error) && baca_string_append(&opf, extra_manifest, &error) &&
-                 baca_string_append(&opf, middle, &error) && baca_string_append(&opf, extra_spine, &error) &&
-                 baca_string_append(&opf, suffix, &error);
+    MereaderTuiString opf = {0};
+    MereaderTuiError error = {0};
+    bool built = mereader_tui_string_append(&opf, prefix, &error) && mereader_tui_string_append(&opf, extra_manifest, &error) &&
+                 mereader_tui_string_append(&opf, middle, &error) && mereader_tui_string_append(&opf, extra_spine, &error) &&
+                 mereader_tui_string_append(&opf, suffix, &error);
     static const char chapter[] = "<html><body><p id=\"start\">Minimal body</p></body></html>";
     FixtureMember *members = calloc(extra_count + 1U, sizeof(*members));
     if (!built || members == NULL) {
-        baca_string_free(&opf);
+        mereader_tui_string_free(&opf);
         free(members);
         return false;
     }
@@ -793,76 +793,76 @@ static bool build_minimal_epub(const char *relative, const char *extra_manifest,
     }
     bool created = create_epub(relative, opf.data, members, extra_count + 1U, path);
     free(members);
-    baca_string_free(&opf);
+    mereader_tui_string_free(&opf);
     return created;
 }
 
-static BacaTestResult test_missing_toc_fallback(void) {
+static MereaderTuiTestResult test_missing_toc_fallback(void) {
     char *path = NULL;
     TEST_ASSERT(build_minimal_epub("document/no-toc.epub", "", "", NULL, 0U, &path));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_SIZE(document.toc_count, 0U);
     TEST_ASSERT_SIZE(document.section_count, 1U);
     TEST_ASSERT(find_text(&document, "Minimal body") != NULL);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_document_instance_identity_changes_on_reopen(void) {
+static MereaderTuiTestResult test_document_instance_identity_changes_on_reopen(void) {
     char *path = NULL;
     TEST_ASSERT(build_minimal_epub("document/instance-id.epub", "", "", NULL, 0U, &path));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     const uint64_t first_instance_id = document.instance_id;
     TEST_ASSERT(first_instance_id != 0U);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     TEST_ASSERT(document.instance_id == 0U);
 
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT(document.instance_id != 0U && document.instance_id != first_instance_id);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
 
     document.instance_id = first_instance_id;
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
     document.instance_id = 0U;
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_data_resources(void) {
-    BacaDocument document = {0};
-    BacaResource resource = {0};
-    BacaError error = {0};
-    TEST_ASSERT(baca_document_load_resource(&document, "data:image/png;base64,iVBORw0KGgo=", &resource, &error));
+static MereaderTuiTestResult test_data_resources(void) {
+    MereaderTuiDocument document = {0};
+    MereaderTuiResource resource = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "data:image/png;base64,iVBORw0KGgo=", &resource, &error));
     TEST_ASSERT_STR(resource.mime_type, "image/png");
     TEST_ASSERT_SIZE(resource.length, 8U);
     TEST_ASSERT(memcmp(resource.data, "\x89PNG\r\n\x1a\n", 8U) == 0);
-    baca_resource_free(&resource);
-    TEST_ASSERT(baca_document_load_resource(&document, "data:text/plain,a%20b%00c", &resource, &error));
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "data:text/plain,a%20b%00c", &resource, &error));
     TEST_ASSERT_SIZE(resource.length, 5U);
     TEST_ASSERT(memcmp(resource.data, "a b\0c", 5U) == 0);
-    baca_resource_free(&resource);
-    TEST_ASSERT(!baca_document_load_resource(&document, "data:text/plain;base64,%%%", &resource, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
-    return BACA_TEST_PASS;
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT(!mereader_tui_document_load_resource(&document, "data:text/plain;base64,%%%", &resource, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_png_structure_resource_and_probe(void) {
+static MereaderTuiTestResult test_standalone_png_structure_resource_and_probe(void) {
     static const char relative[] = "document/standalone image.png";
-    TEST_ASSERT(baca_test_write(relative, pixel_png, sizeof(pixel_png)));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, pixel_png, sizeof(pixel_png)));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
-    TEST_ASSERT_STR(baca_document_format_name(document.format), "image");
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
+    TEST_ASSERT_STR(mereader_tui_document_format_name(document.format), "image");
     TEST_ASSERT_STR(document.metadata.title, "standalone image.png");
     TEST_ASSERT_STR(document.metadata.format, "Image");
     TEST_ASSERT_SIZE(document.section_count, 1U);
@@ -871,7 +871,7 @@ static BacaTestResult test_standalone_png_structure_resource_and_probe(void) {
     TEST_ASSERT_SIZE(document.sections[0].first_block, 0U);
     TEST_ASSERT_SIZE(document.sections[0].block_count, 1U);
     TEST_ASSERT(document.sections[0].linear);
-    TEST_ASSERT_INT(document.blocks[0].kind, BACA_BLOCK_IMAGE);
+    TEST_ASSERT_INT(document.blocks[0].kind, MEREADER_TUI_BLOCK_IMAGE);
     TEST_ASSERT_STR(document.blocks[0].section_id, path);
     TEST_ASSERT_STR(document.blocks[0].value.image.uri, path);
     TEST_ASSERT_STR(document.blocks[0].value.image.alt, "standalone image.png");
@@ -880,64 +880,64 @@ static BacaTestResult test_standalone_png_structure_resource_and_probe(void) {
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 0);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
 
-    BacaString wrong_uri = {0};
-    TEST_ASSERT(baca_string_append(&wrong_uri, path, &error));
-    TEST_ASSERT(baca_string_append(&wrong_uri, "#other", &error));
-    BacaResource resource = {0};
-    TEST_ASSERT(!baca_document_load_resource(&document, wrong_uri.data, &resource, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_NOT_FOUND);
-    baca_string_free(&wrong_uri);
+    MereaderTuiString wrong_uri = {0};
+    TEST_ASSERT(mereader_tui_string_append(&wrong_uri, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&wrong_uri, "#other", &error));
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT(!mereader_tui_document_load_resource(&document, wrong_uri.data, &resource, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_NOT_FOUND);
+    mereader_tui_string_free(&wrong_uri);
 
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, path, &resource, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, path, &resource, &error), "%s", error.message);
     TEST_ASSERT(resource.data != NULL && resource.data != pixel_png);
     TEST_ASSERT_SIZE(resource.length, sizeof(pixel_png));
     TEST_ASSERT(resource.mime_type == NULL);
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
     resource.data[0] = 0U;
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
     TEST_ASSERT(resource.data == NULL && resource.length == 0U && resource.mime_type == NULL);
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, path, &resource, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, path, &resource, &error), "%s", error.message);
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
 
-    baca_document_probe_images(&document, false);
+    mereader_tui_document_probe_images(&document, false);
     TEST_ASSERT(document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 0);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 0);
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 1);
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     TEST_ASSERT(document.path == NULL && document.blocks == NULL && document.sections == NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_snapshot_survives_replacement_and_mutation(void) {
+static MereaderTuiTestResult test_standalone_snapshot_survives_replacement_and_mutation(void) {
     static const char relative[] = "document/stable-snapshot.png";
-    TEST_ASSERT(baca_test_write(relative, pixel_png, sizeof(pixel_png)));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, pixel_png, sizeof(pixel_png)));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
-    BacaString held_path_string = {0};
-    BacaError error = {0};
-    TEST_ASSERT(baca_string_append(&held_path_string, path, &error));
-    TEST_ASSERT(baca_string_append(&held_path_string, ".held", &error));
-    char *held_path = baca_string_take(&held_path_string);
+    MereaderTuiString held_path_string = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(mereader_tui_string_append(&held_path_string, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&held_path_string, ".held", &error));
+    char *held_path = mereader_tui_string_take(&held_path_string);
     TEST_ASSERT(held_path != NULL);
     (void)unlink(held_path);
 
     struct stat original_status;
     TEST_ASSERT(stat(path, &original_status) == 0);
-    BacaDocument document = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_STR(document.path, path);
     TEST_ASSERT(rename(path, held_path) == 0);
 
     unsigned char replacement[sizeof(pixel_png)];
     memset(replacement, 0x5a, sizeof(replacement));
-    TEST_ASSERT(baca_write_file(path, replacement, sizeof(replacement), &error));
+    TEST_ASSERT(mereader_tui_write_file(path, replacement, sizeof(replacement), &error));
     struct stat held_status;
     struct stat replacement_status;
     TEST_ASSERT(stat(held_path, &held_status) == 0);
@@ -947,104 +947,104 @@ static BacaTestResult test_standalone_snapshot_survives_replacement_and_mutation
                 replacement_status.st_ino != original_status.st_ino);
     TEST_ASSERT(replacement_status.st_size == original_status.st_size);
 
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, document.path, &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, document.path, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, sizeof(pixel_png));
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
-    baca_resource_free(&resource);
-    baca_document_probe_images(&document, true);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 1);
 
     unsigned char mutation[sizeof(pixel_png)];
     memset(mutation, 0xa5, sizeof(mutation));
-    TEST_ASSERT(baca_write_file(held_path, mutation, sizeof(mutation), &error));
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, document.path, &resource, &error), "%s",
+    TEST_ASSERT(mereader_tui_write_file(held_path, mutation, sizeof(mutation), &error));
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, document.path, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, sizeof(pixel_png));
     TEST_ASSERT(memcmp(resource.data, pixel_png, sizeof(pixel_png)) == 0);
-    baca_resource_free(&resource);
-    baca_document_probe_images(&document, true);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 1);
 
     TEST_ASSERT(unlink(held_path) == 0);
-    char *export_directory = baca_make_temp_directory("mereader-tui-image-test-", &error);
+    char *export_directory = mereader_tui_make_temp_directory("mereader-tui-image-test-", &error);
     TEST_ASSERT_MSG(export_directory != NULL, "%s", error.message);
-    char *export_path = baca_path_join(export_directory, "stable-snapshot.png", &error);
+    char *export_path = mereader_tui_path_join(export_directory, "stable-snapshot.png", &error);
     TEST_ASSERT(export_path != NULL);
-    TEST_ASSERT_MSG(baca_image_export_original(&document, export_path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_image_export_original(&document, export_path, &error), "%s", error.message);
     struct stat export_status;
     TEST_ASSERT(stat(export_path, &export_status) == 0 && S_ISREG(export_status.st_mode));
     TEST_ASSERT((export_status.st_mode & (S_IRWXG | S_IRWXO)) == 0);
     TEST_ASSERT_SIZE((size_t)export_status.st_size, sizeof(pixel_png));
-    TEST_ASSERT(!baca_image_export_original(&document, export_path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_IO);
+    TEST_ASSERT(!mereader_tui_image_export_original(&document, export_path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_IO);
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     int reused_descriptor = open(path, O_RDONLY | O_CLOEXEC);
     TEST_ASSERT(reused_descriptor >= 0);
     TEST_ASSERT(close(reused_descriptor) == 0);
 
-    BacaBuffer exported = {0};
-    BacaBuffer replacement_bytes = {0};
-    TEST_ASSERT_MSG(baca_read_file(export_path, &exported, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_read_file(path, &replacement_bytes, &error), "%s", error.message);
+    MereaderTuiBuffer exported = {0};
+    MereaderTuiBuffer replacement_bytes = {0};
+    TEST_ASSERT_MSG(mereader_tui_read_file(export_path, &exported, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_read_file(path, &replacement_bytes, &error), "%s", error.message);
     TEST_ASSERT_SIZE(exported.length, sizeof(pixel_png));
     TEST_ASSERT_SIZE(replacement_bytes.length, sizeof(replacement));
     TEST_ASSERT(memcmp(exported.data, pixel_png, sizeof(pixel_png)) == 0);
     TEST_ASSERT(memcmp(replacement_bytes.data, replacement, sizeof(replacement)) == 0);
-    baca_buffer_free(&replacement_bytes);
-    baca_buffer_free(&exported);
-    TEST_ASSERT(baca_remove_tree(export_directory, &error));
+    mereader_tui_buffer_free(&replacement_bytes);
+    mereader_tui_buffer_free(&exported);
+    TEST_ASSERT(mereader_tui_remove_tree(export_directory, &error));
     free(export_path);
     free(export_directory);
     free(held_path);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_backend_rejects_detected_identity_mismatch(void) {
+static MereaderTuiTestResult test_standalone_backend_rejects_detected_identity_mismatch(void) {
     static const char relative[] = "document/identity-mismatch.png";
-    TEST_ASSERT(baca_test_write(relative, pixel_png, sizeof(pixel_png)));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, pixel_png, sizeof(pixel_png)));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
-    BacaError error = {0};
-    BacaString held_string = {0};
-    TEST_ASSERT(baca_string_append(&held_string, path, &error));
-    TEST_ASSERT(baca_string_append(&held_string, ".held", &error));
-    char *held_path = baca_string_take(&held_string);
+    MereaderTuiError error = {0};
+    MereaderTuiString held_string = {0};
+    TEST_ASSERT(mereader_tui_string_append(&held_string, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&held_string, ".held", &error));
+    char *held_path = mereader_tui_string_take(&held_string);
     TEST_ASSERT(held_path != NULL);
     (void)unlink(held_path);
 
     struct stat detected_identity;
     TEST_ASSERT(stat(path, &detected_identity) == 0);
     TEST_ASSERT(rename(path, held_path) == 0);
-    TEST_ASSERT(baca_write_file(path, pixel_png, sizeof(pixel_png), &error));
+    TEST_ASSERT(mereader_tui_write_file(path, pixel_png, sizeof(pixel_png), &error));
 
-    BacaDocument document = {.path = baca_strdup(path, &error)};
+    MereaderTuiDocument document = {.path = mereader_tui_strdup(path, &error)};
     TEST_ASSERT(document.path != NULL);
-    TEST_ASSERT(!baca_image_open(&document, document.path, &detected_identity, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_image_open(&document, document.path, &detected_identity, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "format detection") != NULL);
     TEST_ASSERT(document.backend == NULL && document.ops == NULL);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(held_path);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_large_export_streams_held_original(void) {
+static MereaderTuiTestResult test_standalone_large_export_streams_held_original(void) {
     static const char relative[] = "document/large-export.bmp";
     static const unsigned char start_marker[] = {'B', 'M', 'o', 'r', 'i', 'g', 'i', 'n', 'a', 'l'};
     static const unsigned char end_marker[] = {'e', 'n', 'd', '-', 'o', 'r', 'i', 'g', 'i', 'n', 'a', 'l'};
-    TEST_ASSERT(baca_test_write(relative, NULL, 0U));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, NULL, 0U));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
-    const off_t size = (off_t)BACA_GRAPHICS_MAX_INPUT_BYTES + 1;
+    const off_t size = (off_t)MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES + 1;
     int source = open(path, O_WRONLY | O_CLOEXEC);
     TEST_ASSERT(source >= 0);
     TEST_ASSERT(ftruncate(source, size) == 0);
@@ -1053,25 +1053,25 @@ static BacaTestResult test_standalone_large_export_streams_held_original(void) {
                 (ssize_t)sizeof(end_marker));
     TEST_ASSERT(close(source) == 0);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    BacaString held_string = {0};
-    TEST_ASSERT(baca_string_append(&held_string, path, &error));
-    TEST_ASSERT(baca_string_append(&held_string, ".held", &error));
-    char *held_path = baca_string_take(&held_string);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiString held_string = {0};
+    TEST_ASSERT(mereader_tui_string_append(&held_string, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&held_string, ".held", &error));
+    char *held_path = mereader_tui_string_take(&held_string);
     TEST_ASSERT(held_path != NULL);
     (void)unlink(held_path);
     TEST_ASSERT(rename(path, held_path) == 0);
     TEST_ASSERT(unlink(held_path) == 0);
-    TEST_ASSERT(baca_write_file(path, pixel_png, sizeof(pixel_png), &error));
+    TEST_ASSERT(mereader_tui_write_file(path, pixel_png, sizeof(pixel_png), &error));
 
-    char *directory = baca_make_temp_directory("mereader-tui-image-large-test-", &error);
+    char *directory = mereader_tui_make_temp_directory("mereader-tui-image-large-test-", &error);
     TEST_ASSERT_MSG(directory != NULL, "%s", error.message);
-    char *destination = baca_path_join(directory, "large-export.bmp", &error);
+    char *destination = mereader_tui_path_join(directory, "large-export.bmp", &error);
     TEST_ASSERT(destination != NULL);
-    TEST_ASSERT_MSG(baca_image_export_original(&document, destination, &error), "%s", error.message);
-    baca_document_close(&document);
+    TEST_ASSERT_MSG(mereader_tui_image_export_original(&document, destination, &error), "%s", error.message);
+    mereader_tui_document_close(&document);
 
     struct stat exported_status;
     TEST_ASSERT(stat(destination, &exported_status) == 0 && S_ISREG(exported_status.st_mode));
@@ -1086,144 +1086,144 @@ static BacaTestResult test_standalone_large_export_streams_held_original(void) {
     TEST_ASSERT(close(exported) == 0);
     TEST_ASSERT(memcmp(actual_start, start_marker, sizeof(start_marker)) == 0);
     TEST_ASSERT(memcmp(actual_end, end_marker, sizeof(end_marker)) == 0);
-    TEST_ASSERT(baca_remove_tree(directory, &error));
+    TEST_ASSERT(mereader_tui_remove_tree(directory, &error));
     free(destination);
     free(directory);
     free(held_path);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_export_cap_and_partial_cleanup(void) {
+static MereaderTuiTestResult test_standalone_export_cap_and_partial_cleanup(void) {
     static const char over_cap_relative[] = "document/export-over-cap.bmp";
-    TEST_ASSERT(baca_test_write(over_cap_relative, NULL, 0U));
-    char *over_cap_path = baca_test_path(over_cap_relative);
+    TEST_ASSERT(mereader_tui_test_write(over_cap_relative, NULL, 0U));
+    char *over_cap_path = mereader_tui_test_path(over_cap_relative);
     TEST_ASSERT(over_cap_path != NULL);
     int source = open(over_cap_path, O_WRONLY | O_CLOEXEC);
     TEST_ASSERT(source >= 0);
-    TEST_ASSERT(ftruncate(source, (off_t)BACA_DOCUMENT_MAX_RETAINED_BYTES + 1) == 0);
+    TEST_ASSERT(ftruncate(source, (off_t)MEREADER_TUI_DOCUMENT_MAX_RETAINED_BYTES + 1) == 0);
     TEST_ASSERT(close(source) == 0);
 
-    BacaError error = {0};
-    BacaDocument over_cap = {0};
-    TEST_ASSERT_MSG(baca_document_open(&over_cap, over_cap_path, &error), "%s", error.message);
-    char *directory = baca_make_temp_directory("mereader-tui-image-cap-test-", &error);
+    MereaderTuiError error = {0};
+    MereaderTuiDocument over_cap = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&over_cap, over_cap_path, &error), "%s", error.message);
+    char *directory = mereader_tui_make_temp_directory("mereader-tui-image-cap-test-", &error);
     TEST_ASSERT_MSG(directory != NULL, "%s", error.message);
-    char *destination = baca_path_join(directory, "over-cap.bmp", &error);
+    char *destination = mereader_tui_path_join(directory, "over-cap.bmp", &error);
     TEST_ASSERT(destination != NULL);
-    TEST_ASSERT(!baca_image_export_original(&over_cap, destination, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_image_export_original(&over_cap, destination, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "256 MiB") != NULL);
     errno = 0;
     TEST_ASSERT(lstat(destination, &(struct stat){0}) != 0 && errno == ENOENT);
-    baca_document_close(&over_cap);
-    TEST_ASSERT(baca_remove_tree(directory, &error));
+    mereader_tui_document_close(&over_cap);
+    TEST_ASSERT(mereader_tui_remove_tree(directory, &error));
     free(destination);
     free(directory);
     free(over_cap_path);
 
     static const char partial_relative[] = "document/export-partial.bmp";
-    TEST_ASSERT(baca_test_write(partial_relative, NULL, 0U));
-    char *partial_path = baca_test_path(partial_relative);
+    TEST_ASSERT(mereader_tui_test_write(partial_relative, NULL, 0U));
+    char *partial_path = mereader_tui_test_path(partial_relative);
     TEST_ASSERT(partial_path != NULL);
     source = open(partial_path, O_WRONLY | O_CLOEXEC);
     TEST_ASSERT(source >= 0);
     TEST_ASSERT(ftruncate(source, 1024 * 1024) == 0);
     TEST_ASSERT(close(source) == 0);
-    BacaDocument partial = {0};
-    TEST_ASSERT_MSG(baca_document_open(&partial, partial_path, &error), "%s", error.message);
-    directory = baca_make_temp_directory("mereader-tui-image-partial-test-", &error);
+    MereaderTuiDocument partial = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&partial, partial_path, &error), "%s", error.message);
+    directory = mereader_tui_make_temp_directory("mereader-tui-image-partial-test-", &error);
     TEST_ASSERT_MSG(directory != NULL, "%s", error.message);
-    destination = baca_path_join(directory, "partial.bmp", &error);
+    destination = mereader_tui_path_join(directory, "partial.bmp", &error);
     TEST_ASSERT(destination != NULL);
 
     const pid_t child = fork();
     TEST_ASSERT(child >= 0);
     if (child == 0) {
         const struct rlimit limit = {.rlim_cur = 4096U, .rlim_max = 4096U};
-        BacaError child_error = {0};
+        MereaderTuiError child_error = {0};
         const bool ready = signal(SIGXFSZ, SIG_IGN) != SIG_ERR &&
                            setrlimit(RLIMIT_FSIZE, &limit) == 0;
-        const bool exported = ready && baca_image_export_original(&partial, destination, &child_error);
+        const bool exported = ready && mereader_tui_image_export_original(&partial, destination, &child_error);
         errno = 0;
         const bool removed = lstat(destination, &(struct stat){0}) != 0 && errno == ENOENT;
-        _exit(!exported && child_error.code == BACA_ERROR_IO && removed ? 0 : 1);
+        _exit(!exported && child_error.code == MEREADER_TUI_ERROR_IO && removed ? 0 : 1);
     }
     int status = 0;
     TEST_ASSERT(waitpid(child, &status, 0) == child);
     TEST_ASSERT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     errno = 0;
     TEST_ASSERT(lstat(destination, &(struct stat){0}) != 0 && errno == ENOENT);
-    baca_document_close(&partial);
-    TEST_ASSERT(baca_remove_tree(directory, &error));
+    mereader_tui_document_close(&partial);
+    TEST_ASSERT(mereader_tui_remove_tree(directory, &error));
     free(destination);
     free(directory);
     free(partial_path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_corrupt_extensions_use_placeholder(void) {
+static MereaderTuiTestResult test_standalone_corrupt_extensions_use_placeholder(void) {
     static const char corrupt[] = "not an image";
     static const char *const extensions[] = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"};
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(extensions); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(extensions); ++index) {
         char relative[64] = {0};
         const int length = snprintf(relative, sizeof(relative), "document/corrupt.%s", extensions[index]);
         TEST_ASSERT(length > 0 && (size_t)length < sizeof(relative));
-        TEST_ASSERT(baca_test_write(relative, corrupt, sizeof(corrupt) - 1U));
-        char *path = baca_test_path(relative);
+        TEST_ASSERT(mereader_tui_test_write(relative, corrupt, sizeof(corrupt) - 1U));
+        char *path = mereader_tui_test_path(relative);
         TEST_ASSERT(path != NULL);
 
-        BacaDocument document = {0};
-        BacaError error = {0};
-        TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-        TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
+        MereaderTuiDocument document = {0};
+        MereaderTuiError error = {0};
+        TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+        TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
         TEST_ASSERT(!document.blocks[0].value.image.broken);
-        baca_document_probe_images(&document, true);
+        mereader_tui_document_probe_images(&document, true);
         TEST_ASSERT(document.blocks[0].value.image.broken);
         TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 0);
         TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 0);
 
-        BacaResource resource = {0};
-        TEST_ASSERT_MSG(baca_document_load_resource(&document, path, &resource, &error), "%s", error.message);
+        MereaderTuiResource resource = {0};
+        TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, path, &resource, &error), "%s", error.message);
         TEST_ASSERT_SIZE(resource.length, sizeof(corrupt) - 1U);
         TEST_ASSERT(resource.mime_type == NULL);
         TEST_ASSERT(memcmp(resource.data, corrupt, sizeof(corrupt) - 1U) == 0);
-        baca_resource_free(&resource);
-        baca_document_close(&document);
+        mereader_tui_resource_free(&resource);
+        mereader_tui_document_close(&document);
         free(path);
     }
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_png_magic_without_image_extension(void) {
+static MereaderTuiTestResult test_standalone_png_magic_without_image_extension(void) {
     static const char relative[] = "document/png-magic.unknown";
-    TEST_ASSERT(baca_test_write(relative, pixel_png, sizeof(pixel_png)));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, pixel_png, sizeof(pixel_png)));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
     TEST_ASSERT_STR(document.blocks[0].value.image.uri, path);
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 1);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_valid_jpeg_decode_and_probe(void) {
-    BacaDocument decoder = {0};
-    BacaResource jpeg = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&decoder, pixel_jpeg_data_uri, &jpeg, &error), "%s",
+static MereaderTuiTestResult test_standalone_valid_jpeg_decode_and_probe(void) {
+    MereaderTuiDocument decoder = {0};
+    MereaderTuiResource jpeg = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&decoder, pixel_jpeg_data_uri, &jpeg, &error), "%s",
                     error.message);
     int width = 0;
     int height = 0;
-    TEST_ASSERT_MSG(baca_graphics_probe_resource(&jpeg, &width, &height, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_graphics_probe_resource(&jpeg, &width, &height, &error), "%s", error.message);
     TEST_ASSERT_INT(width, 2);
     TEST_ASSERT_INT(height, 3);
     const StandaloneFormatFixture fixture = {
@@ -1233,12 +1233,12 @@ static BacaTestResult test_standalone_valid_jpeg_decode_and_probe(void) {
         .data = jpeg.data,
         .length = jpeg.length,
     };
-    const BacaTestResult result = test_valid_standalone_format(&fixture);
-    baca_resource_free(&jpeg);
+    const MereaderTuiTestResult result = test_valid_standalone_format(&fixture);
+    mereader_tui_resource_free(&jpeg);
     return result;
 }
 
-static BacaTestResult test_standalone_valid_static_gif_decode_and_probe(void) {
+static MereaderTuiTestResult test_standalone_valid_static_gif_decode_and_probe(void) {
     const StandaloneFormatFixture fixture = {
         .name = "gif",
         .extension = "gif",
@@ -1249,7 +1249,7 @@ static BacaTestResult test_standalone_valid_static_gif_decode_and_probe(void) {
     return test_valid_standalone_format(&fixture);
 }
 
-static BacaTestResult test_standalone_valid_webp_magic_decode_and_probe(void) {
+static MereaderTuiTestResult test_standalone_valid_webp_magic_decode_and_probe(void) {
     const StandaloneFormatFixture fixture = {
         .name = "webp",
         .extension = "webp",
@@ -1261,7 +1261,7 @@ static BacaTestResult test_standalone_valid_webp_magic_decode_and_probe(void) {
     return test_valid_standalone_format(&fixture);
 }
 
-static BacaTestResult test_standalone_valid_bmp_magic_decode_and_probe(void) {
+static MereaderTuiTestResult test_standalone_valid_bmp_magic_decode_and_probe(void) {
     const StandaloneFormatFixture fixture = {
         .name = "bmp",
         .extension = "bmp",
@@ -1272,7 +1272,7 @@ static BacaTestResult test_standalone_valid_bmp_magic_decode_and_probe(void) {
     return test_valid_standalone_format(&fixture);
 }
 
-static BacaTestResult test_standalone_valid_svg_magic_decode_and_probe(void) {
+static MereaderTuiTestResult test_standalone_valid_svg_magic_decode_and_probe(void) {
     const StandaloneFormatFixture fixture = {
         .name = "svg",
         .extension = "svg",
@@ -1284,72 +1284,72 @@ static BacaTestResult test_standalone_valid_svg_magic_decode_and_probe(void) {
     return test_valid_standalone_format(&fixture);
 }
 
-static BacaTestResult test_standalone_avif_is_unsupported(void) {
+static MereaderTuiTestResult test_standalone_avif_is_unsupported(void) {
     static const unsigned char avif[] = {
         0x00U, 0x00U, 0x00U, 0x18U, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f',
         0x00U, 0x00U, 0x00U, 0x00U, 'a', 'v', 'i', 'f', 'm', 'i', 'f', '1',
     };
     static const char relative[] = "document/unsupported.avif";
-    TEST_ASSERT(baca_test_write(relative, avif, sizeof(avif)));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, avif, sizeof(avif)));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
-    TEST_ASSERT(document.path == NULL && document.format == BACA_FORMAT_UNKNOWN);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
+    TEST_ASSERT(document.path == NULL && document.format == MEREADER_TUI_FORMAT_UNKNOWN);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_standalone_oversized_input_uses_placeholder(void) {
+static MereaderTuiTestResult test_standalone_oversized_input_uses_placeholder(void) {
     static const char relative[] = "document/oversized.bmp";
-    TEST_ASSERT(baca_test_write(relative, NULL, 0U));
-    char *path = baca_test_path(relative);
+    TEST_ASSERT(mereader_tui_test_write(relative, NULL, 0U));
+    char *path = mereader_tui_test_path(relative);
     TEST_ASSERT(path != NULL);
     int descriptor = open(path, O_WRONLY | O_CLOEXEC);
     TEST_ASSERT(descriptor >= 0);
-    const off_t oversized = (off_t)BACA_GRAPHICS_MAX_INPUT_BYTES + 1;
+    const off_t oversized = (off_t)MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES + 1;
     TEST_ASSERT(ftruncate(descriptor, oversized) == 0);
     TEST_ASSERT(close(descriptor) == 0);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_IMAGE);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_IMAGE);
 
-    BacaString held_path_string = {0};
-    TEST_ASSERT(baca_string_append(&held_path_string, path, &error));
-    TEST_ASSERT(baca_string_append(&held_path_string, ".held", &error));
-    char *held_path = baca_string_take(&held_path_string);
+    MereaderTuiString held_path_string = {0};
+    TEST_ASSERT(mereader_tui_string_append(&held_path_string, path, &error));
+    TEST_ASSERT(mereader_tui_string_append(&held_path_string, ".held", &error));
+    char *held_path = mereader_tui_string_take(&held_path_string);
     TEST_ASSERT(held_path != NULL);
     (void)unlink(held_path);
     TEST_ASSERT(rename(path, held_path) == 0);
-    TEST_ASSERT(baca_write_file(path, pixel_png, sizeof(pixel_png), &error));
+    TEST_ASSERT(mereader_tui_write_file(path, pixel_png, sizeof(pixel_png), &error));
 
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(document.blocks[0].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 0);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_height, 0);
 
-    BacaResource resource = {0};
-    TEST_ASSERT(!baca_document_load_resource(&document, path, &resource, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT(!mereader_tui_document_load_resource(&document, path, &resource, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "size limit") != NULL);
     TEST_ASSERT(resource.data == NULL && resource.length == 0U && resource.mime_type == NULL);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(held_path);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_fifo_and_special_files_are_rejected_without_blocking(void) {
-    char *fifo = baca_test_path("document/nonblocking.fifo");
+static MereaderTuiTestResult test_fifo_and_special_files_are_rejected_without_blocking(void) {
+    char *fifo = mereader_tui_test_path("document/nonblocking.fifo");
     TEST_ASSERT(fifo != NULL);
-    char *directory = baca_path_dirname(fifo, NULL);
+    char *directory = mereader_tui_path_dirname(fifo, NULL);
     TEST_ASSERT(directory != NULL);
-    TEST_ASSERT(baca_mkdirs(directory, NULL));
+    TEST_ASSERT(mereader_tui_mkdirs(directory, NULL));
     free(directory);
     (void)unlink(fifo);
     TEST_ASSERT(mkfifo(fifo, 0600) == 0);
@@ -1358,74 +1358,74 @@ static BacaTestResult test_fifo_and_special_files_are_rejected_without_blocking(
     TEST_ASSERT_MSG(document_open_returns_without_blocking(fifo, &result),
                     "opening a FIFO blocked instead of rejecting it");
     TEST_ASSERT(!result.opened);
-    TEST_ASSERT(result.code != BACA_ERROR_NONE);
+    TEST_ASSERT(result.code != MEREADER_TUI_ERROR_NONE);
 
     result = (DocumentOpenResult){0};
     TEST_ASSERT_MSG(document_open_returns_without_blocking("/dev/null", &result),
                     "opening a special file did not return");
     TEST_ASSERT(!result.opened);
-    TEST_ASSERT(result.code != BACA_ERROR_NONE);
+    TEST_ASSERT(result.code != MEREADER_TUI_ERROR_NONE);
     free(fifo);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_image_probe_dedupe_placeholder_and_aggregate_limit(void) {
+static MereaderTuiTestResult test_image_probe_dedupe_placeholder_and_aggregate_limit(void) {
     char *path = NULL;
     TEST_ASSERT(create_numbered_probe_archive("document/probe-same.zip", "same", 1U, pixel_png,
                                               sizeof(pixel_png), &path));
     ProbeBackend backend = {.resource_size = sizeof(pixel_png)};
-    BacaDocument document = {
+    MereaderTuiDocument document = {
         .path = path,
-        .format = BACA_FORMAT_EPUB,
+        .format = MEREADER_TUI_FORMAT_EPUB,
         .backend = &backend,
         .ops = &probe_document_ops,
     };
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT(append_probe_image(&document, "same-0.png", &error));
     TEST_ASSERT(append_probe_image(&document, "same-0.png", &error));
-    baca_document_probe_images(&document, false);
+    mereader_tui_document_probe_images(&document, false);
     TEST_ASSERT_SIZE(backend.loads, 0U);
     TEST_ASSERT(document.blocks[0].value.image.broken && document.blocks[1].value.image.broken);
 
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT_SIZE(backend.loads, 1U);
     TEST_ASSERT(!document.blocks[0].value.image.broken && !document.blocks[1].value.image.broken);
     TEST_ASSERT_INT(document.blocks[0].value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(document.blocks[1].value.image.intrinsic_height, 1);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
 
     path = NULL;
     TEST_ASSERT(create_numbered_probe_archive("document/probe-count.zip", "image",
-                                              BACA_GRAPHICS_MAX_PROBES + 5U, "x", 1U, &path));
+                                              MEREADER_TUI_GRAPHICS_MAX_PROBES + 5U, "x", 1U, &path));
     backend = (ProbeBackend){.resource_size = 1U, .corrupt = true};
-    document = (BacaDocument){
+    document = (MereaderTuiDocument){
         .path = path,
-        .format = BACA_FORMAT_EPUB,
+        .format = MEREADER_TUI_FORMAT_EPUB,
         .backend = &backend,
         .ops = &probe_document_ops,
     };
-    for (size_t index = 0U; index < BACA_GRAPHICS_MAX_PROBES + 5U; ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_GRAPHICS_MAX_PROBES + 5U; ++index) {
         char uri[64] = {0};
         const int length = snprintf(uri, sizeof(uri), "image-%zu.png", index);
         TEST_ASSERT(length > 0 && (size_t)length < sizeof(uri));
         TEST_ASSERT(append_probe_image(&document, uri, &error));
     }
-    baca_document_probe_images(&document, true);
-    TEST_ASSERT_SIZE(backend.loads, BACA_GRAPHICS_MAX_PROBES);
+    mereader_tui_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, MEREADER_TUI_GRAPHICS_MAX_PROBES);
     TEST_ASSERT(document.blocks[0].value.image.broken);
     TEST_ASSERT(document.blocks[document.block_count - 1U].value.image.broken);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
 
     path = NULL;
     TEST_ASSERT(create_numbered_probe_archive("document/probe-budget.zip", "budget", 6U, "x", 1U,
                                               &path));
-    char *oversized_path = baca_strdup(path, &error);
+    char *oversized_path = mereader_tui_strdup(path, &error);
     TEST_ASSERT(oversized_path != NULL);
 
-    backend = (ProbeBackend){.resource_size = BACA_GRAPHICS_MAX_INPUT_BYTES, .corrupt = true};
-    document = (BacaDocument){
+    backend = (ProbeBackend){.resource_size = MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES, .corrupt = true};
+    document = (MereaderTuiDocument){
         .path = path,
-        .format = BACA_FORMAT_EPUB,
+        .format = MEREADER_TUI_FORMAT_EPUB,
         .backend = &backend,
         .ops = &probe_document_ops,
     };
@@ -1435,32 +1435,32 @@ static BacaTestResult test_image_probe_dedupe_placeholder_and_aggregate_limit(vo
         TEST_ASSERT(length > 0 && (size_t)length < sizeof(uri));
         TEST_ASSERT(append_probe_image(&document, uri, &error));
     }
-    baca_document_probe_images(&document, true);
-    TEST_ASSERT_SIZE(backend.loads, BACA_GRAPHICS_MAX_PROBE_BYTES / BACA_GRAPHICS_MAX_INPUT_BYTES);
-    baca_document_close(&document);
+    mereader_tui_document_probe_images(&document, true);
+    TEST_ASSERT_SIZE(backend.loads, MEREADER_TUI_GRAPHICS_MAX_PROBE_BYTES / MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES);
+    mereader_tui_document_close(&document);
 
     backend = (ProbeBackend){
         .resource_size = 1U,
         .override_uri = "budget-5.png",
-        .override_size = BACA_GRAPHICS_MAX_INPUT_BYTES + 1U,
+        .override_size = MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES + 1U,
         .corrupt = true,
     };
-    document = (BacaDocument){
+    document = (MereaderTuiDocument){
         .path = oversized_path,
-        .format = BACA_FORMAT_EPUB,
+        .format = MEREADER_TUI_FORMAT_EPUB,
         .backend = &backend,
         .ops = &probe_document_ops,
     };
     TEST_ASSERT(append_probe_image(&document, "budget-5.png", &error));
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT_SIZE(backend.loads, 0U);
     TEST_ASSERT(document.blocks[0].value.image.broken);
-    baca_document_close(&document);
-    return BACA_TEST_PASS;
+    mereader_tui_document_close(&document);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_traversal_errors(void) {
-    char *path = baca_test_path("document/archive-traversal.epub");
+static MereaderTuiTestResult test_traversal_errors(void) {
+    char *path = mereader_tui_test_path("document/archive-traversal.epub");
     TEST_ASSERT(path != NULL);
     int zip_error = 0;
     zip_t *archive = zip_open(path, ZIP_CREATE | ZIP_TRUNCATE, &zip_error);
@@ -1468,10 +1468,10 @@ static BacaTestResult test_traversal_errors(void) {
     TEST_ASSERT(zip_add_bytes(archive, "mimetype", "application/epub+zip", 20U, true, NULL));
     TEST_ASSERT(zip_add_bytes(archive, "../escape", "x", 1U, false, NULL));
     TEST_ASSERT(close_archive(archive));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "unsafe EPUB archive path") != NULL);
     free(path);
 
@@ -1482,17 +1482,17 @@ static BacaTestResult test_traversal_errors(void) {
         "</manifest><spine><itemref idref=\"bad\"/></spine></package>";
     path = NULL;
     TEST_ASSERT(create_epub("document/reference-traversal.epub", unsafe_opf, NULL, 0U, &path));
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "escapes the document root") != NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool patch_member_size(const char *path, const char *member_name, uint32_t size) {
-    BacaError error = {0};
-    BacaBuffer archive = {0};
-    if (!baca_read_file(path, &archive, &error)) {
+    MereaderTuiError error = {0};
+    MereaderTuiBuffer archive = {0};
+    if (!mereader_tui_read_file(path, &archive, &error)) {
         return false;
     }
     bool patched = false;
@@ -1518,30 +1518,30 @@ static bool patch_member_size(const char *path, const char *member_name, uint32_
         }
         offset += 45U + filename_length + extra_length + comment_length;
     }
-    bool written = patched && baca_write_file(path, archive.data, archive.length, &error);
-    baca_buffer_free(&archive);
+    bool written = patched && mereader_tui_write_file(path, archive.data, archive.length, &error);
+    mereader_tui_buffer_free(&archive);
     return written;
 }
 
-static BacaTestResult test_oversized_member_error(void) {
+static MereaderTuiTestResult test_oversized_member_error(void) {
     static const FixtureMember extra[] = {
         {.name = "OEBPS/huge.bin", .data = "x", .length = 1U},
     };
     char *path = NULL;
     TEST_ASSERT(build_minimal_epub("document/oversized.epub",
                                    "<item id=\"huge\" href=\"huge.bin\" media-type=\"application/octet-stream\"/>",
-                                   "", extra, BACA_ARRAY_LEN(extra), &path));
+                                   "", extra, MEREADER_TUI_ARRAY_LEN(extra), &path));
     TEST_ASSERT(patch_member_size(path, "OEBPS/huge.bin", 64U * 1024U * 1024U + 1U));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "size limit") != NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_encryption_document_error(void) {
+static MereaderTuiTestResult test_encryption_document_error(void) {
     static const char encryption[] =
         "<?xml version=\"1.0\"?>"
         "<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
@@ -1552,18 +1552,18 @@ static BacaTestResult test_encryption_document_error(void) {
         {.name = "META-INF/encryption.xml", .data = encryption, .length = sizeof(encryption) - 1U},
     };
     char *path = NULL;
-    TEST_ASSERT(build_minimal_epub("document/encrypted-metadata.epub", "", "", extra, BACA_ARRAY_LEN(extra),
+    TEST_ASSERT(build_minimal_epub("document/encrypted-metadata.epub", "", "", extra, MEREADER_TUI_ARRAY_LEN(extra),
                                    &path));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
     TEST_ASSERT(strstr(error.message, "encrypted EPUB content") != NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_encrypted_zip_member_error(void) {
+static MereaderTuiTestResult test_encrypted_zip_member_error(void) {
     char *path = NULL;
     static const char opf[] =
         "<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\">"
@@ -1579,79 +1579,79 @@ static BacaTestResult test_encrypted_zip_member_error(void) {
     if (zip_file_set_encryption(archive, (zip_uint64_t)index, ZIP_EM_AES_256, "test-password") != 0) {
         zip_discard(archive);
         free(path);
-        return baca_test_skip("libzip cannot create AES-encrypted fixtures");
+        return mereader_tui_test_skip("libzip cannot create AES-encrypted fixtures");
     }
     TEST_ASSERT(close_archive(archive));
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
     TEST_ASSERT(strstr(error.message, "encrypted EPUB members") != NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static char *configured_mobitool_path(const char *configured) {
     if (configured == NULL || configured[0] == '\0' || strchr(configured, '/') == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    return baca_realpath(configured, &error);
+    MereaderTuiError error = {0};
+    return mereader_tui_realpath(configured, &error);
 }
 
-static BacaTestResult test_optional_real_mobi(void) {
+static MereaderTuiTestResult test_optional_real_mobi(void) {
     const char *configured_tool = getenv("MEREADER_TUI_TEST_MOBITOOL");
     const char *configured_sample = getenv("MEREADER_TUI_TEST_MOBI_SAMPLE");
     if (configured_tool == NULL || configured_tool[0] == '\0' || configured_sample == NULL ||
         configured_sample[0] == '\0') {
-        return baca_test_skip(
+        return mereader_tui_test_skip(
             "set MEREADER_TUI_TEST_MOBITOOL and MEREADER_TUI_TEST_MOBI_SAMPLE for real conversion");
     }
     char *tool = configured_mobitool_path(configured_tool);
-    BacaError error = {0};
-    char *sample = baca_realpath(configured_sample, &error);
+    MereaderTuiError error = {0};
+    char *sample = mereader_tui_realpath(configured_sample, &error);
     if (tool == NULL || access(tool, X_OK) != 0 || sample == NULL) {
         free(tool);
         free(sample);
-        return baca_test_fail_at(__FILE__, __LINE__, "configured MOBI tool/sample is not accessible");
+        return mereader_tui_test_fail_at(__FILE__, __LINE__, "configured MOBI tool/sample is not accessible");
     }
-    TEST_ASSERT(baca_test_mkdir("mobi-bin"));
-    char *shim = baca_test_path("mobi-bin/mobitool");
-    char *bin = baca_test_path("mobi-bin");
+    TEST_ASSERT(mereader_tui_test_mkdir("mobi-bin"));
+    char *shim = mereader_tui_test_path("mobi-bin/mobitool");
+    char *bin = mereader_tui_test_path("mobi-bin");
     TEST_ASSERT(shim != NULL && bin != NULL);
     TEST_ASSERT(symlink(tool, shim) == 0);
     const char *old_path_value = getenv("PATH");
-    char *old_path = baca_strdup(old_path_value == NULL ? "" : old_path_value, &error);
+    char *old_path = mereader_tui_strdup(old_path_value == NULL ? "" : old_path_value, &error);
     TEST_ASSERT(old_path != NULL);
-    BacaString path_value = {0};
-    TEST_ASSERT(baca_string_append(&path_value, bin, &error));
-    TEST_ASSERT(baca_string_append_char(&path_value, ':', &error));
-    TEST_ASSERT(baca_string_append(&path_value, old_path, &error));
+    MereaderTuiString path_value = {0};
+    TEST_ASSERT(mereader_tui_string_append(&path_value, bin, &error));
+    TEST_ASSERT(mereader_tui_string_append_char(&path_value, ':', &error));
+    TEST_ASSERT(mereader_tui_string_append(&path_value, old_path, &error));
     TEST_ASSERT(setenv("PATH", path_value.data, 1) == 0);
 
-    size_t before = baca_test_count_directories("tmp", "mereader-tui-mobi-");
+    size_t before = mereader_tui_test_count_directories("tmp", "mereader-tui-mobi-");
     TEST_ASSERT(before != SIZE_MAX);
-    BacaDocument document = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, sample, &error), "%s", error.message);
-    size_t during = baca_test_count_directories("tmp", "mereader-tui-mobi-");
+    MereaderTuiDocument document = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, sample, &error), "%s", error.message);
+    size_t during = mereader_tui_test_count_directories("tmp", "mereader-tui-mobi-");
     TEST_ASSERT_SIZE(during, before + 1U);
-    TEST_ASSERT(document.format == BACA_FORMAT_MOBI || document.format == BACA_FORMAT_AZW);
+    TEST_ASSERT(document.format == MEREADER_TUI_FORMAT_MOBI || document.format == MEREADER_TUI_FORMAT_AZW);
     TEST_ASSERT(document.block_count > 0U && document.section_count > 0U);
     TEST_ASSERT(document.metadata.title != NULL || document.metadata.creator != NULL);
-    baca_document_close(&document);
-    TEST_ASSERT_SIZE(baca_test_count_directories("tmp", "mereader-tui-mobi-"), before);
+    mereader_tui_document_close(&document);
+    TEST_ASSERT_SIZE(mereader_tui_test_count_directories("tmp", "mereader-tui-mobi-"), before);
     TEST_ASSERT(setenv("PATH", old_path, 1) == 0);
-    baca_string_free(&path_value);
+    mereader_tui_string_free(&path_value);
     free(old_path);
     free(shim);
     free(bin);
     free(tool);
     free(sample);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_document_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_document_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "epub2_normalization_toc_resources_and_cleanup",
          .function = test_epub2_normalization_toc_resources_and_cleanup},
         {.name = "epub_image_probe_uses_held_archive",
@@ -1698,6 +1698,6 @@ const BacaTestCase *baca_document_test_cases(size_t *count) {
         {.name = "encrypted_zip_member_error", .function = test_encrypted_zip_member_error},
         {.name = "optional_real_mobi", .function = test_optional_real_mobi},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

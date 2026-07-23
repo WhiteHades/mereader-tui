@@ -1,6 +1,6 @@
 #include "test_support.h"
 
-#include "baca/remote.h"
+#include "mereader-tui/remote.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -50,7 +50,7 @@ static void remote_server_respond(int client, const char *request) {
         const int length = snprintf(response, sizeof(response),
                                     "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
                                     "Content-Length: %" PRIuMAX "\r\nConnection: close\r\n\r\n",
-                                    (uintmax_t)BACA_REMOTE_MAX_BYTES + 1U);
+                                    (uintmax_t)MEREADER_TUI_REMOTE_MAX_BYTES + 1U);
         if (length > 0 && (size_t)length < sizeof(response)) {
             (void)remote_write_all(client, response, (size_t)length);
         }
@@ -140,7 +140,7 @@ static bool remote_url(char output[256], uint16_t port, const char *path) {
     return length > 0 && (size_t)length < 256U;
 }
 
-static BacaTestResult test_fetch_redirect_limits_and_offline_cache(void) {
+static MereaderTuiTestResult test_fetch_redirect_limits_and_offline_cache(void) {
     uint16_t port = 0U;
     const pid_t server = remote_server_start(&port);
     TEST_ASSERT(server > 0);
@@ -154,67 +154,67 @@ static BacaTestResult test_fetch_redirect_limits_and_offline_cache(void) {
     TEST_ASSERT(remote_url(large_url, port, "/large"));
     TEST_ASSERT(remote_url(missing_url, port, "/missing"));
 
-    BacaError error = {0};
-    BacaRemoteFile file = {0};
-    TEST_ASSERT_MSG(baca_remote_fetch(plain_url, &file, &error), "%s", error.message);
+    MereaderTuiError error = {0};
+    MereaderTuiRemoteFile file = {0};
+    TEST_ASSERT_MSG(mereader_tui_remote_fetch(plain_url, &file, &error), "%s", error.message);
     TEST_ASSERT(strstr(file.url, "#") == NULL);
-    TEST_ASSERT_STR(baca_path_extension(file.path), ".txt");
-    BacaBuffer contents = {0};
-    TEST_ASSERT_MSG(baca_read_file(file.path, &contents, &error), "%s", error.message);
+    TEST_ASSERT_STR(mereader_tui_path_extension(file.path), ".txt");
+    MereaderTuiBuffer contents = {0};
+    TEST_ASSERT_MSG(mereader_tui_read_file(file.path, &contents, &error), "%s", error.message);
     TEST_ASSERT_SIZE(contents.length, 12U);
     TEST_ASSERT(memcmp(contents.data, "remote text\n", 12U) == 0);
-    baca_buffer_free(&contents);
+    mereader_tui_buffer_free(&contents);
     struct stat status;
     TEST_ASSERT(stat(file.path, &status) == 0 && S_ISREG(status.st_mode));
     TEST_ASSERT((status.st_mode & 0777U) == 0600U);
-    char *cached_path = baca_strdup(file.path, &error);
+    char *cached_path = mereader_tui_strdup(file.path, &error);
     TEST_ASSERT_MSG(cached_path != NULL, "%s", error.message);
-    baca_remote_file_free(&file);
+    mereader_tui_remote_file_free(&file);
 
-    TEST_ASSERT_MSG(baca_remote_fetch(redirect_url, &file, &error), "%s", error.message);
-    TEST_ASSERT_STR(baca_path_extension(file.path), ".txt");
-    baca_remote_file_free(&file);
+    TEST_ASSERT_MSG(mereader_tui_remote_fetch(redirect_url, &file, &error), "%s", error.message);
+    TEST_ASSERT_STR(mereader_tui_path_extension(file.path), ".txt");
+    mereader_tui_remote_file_free(&file);
 
-    TEST_ASSERT(!baca_remote_fetch(large_url, &file, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
-    baca_error_clear(&error);
-    TEST_ASSERT(!baca_remote_fetch(missing_url, &file, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_EXTERNAL);
-    baca_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_remote_fetch(large_url, &file, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_remote_fetch(missing_url, &file, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_EXTERNAL);
+    mereader_tui_error_clear(&error);
 
     remote_server_stop(server);
-    TEST_ASSERT_MSG(baca_remote_fetch(plain_url, &file, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_remote_fetch(plain_url, &file, &error), "%s", error.message);
     TEST_ASSERT_STR(file.path, cached_path);
-    baca_remote_file_free(&file);
+    mereader_tui_remote_file_free(&file);
     free(cached_path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_rejects_credentials_and_non_http_urls(void) {
-    BacaRemoteFile file = {0};
-    BacaError error = {0};
-    TEST_ASSERT(baca_remote_is_url("HTTP://example.test/book.epub"));
-    TEST_ASSERT(baca_remote_is_url("https://example.test/book.epub"));
-    TEST_ASSERT(!baca_remote_is_url("ftp://example.test/book.epub"));
-    TEST_ASSERT(!baca_remote_is_url("/books/http://example.epub"));
-    TEST_ASSERT(!baca_remote_fetch("ftp://example.test/book.epub", &file, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
-    baca_error_clear(&error);
-    TEST_ASSERT(!baca_remote_fetch("https://user:secret@example.test/book.epub", &file, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_error_clear(&error);
-    TEST_ASSERT(!baca_remote_fetch("https://[invalid", &file, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    return BACA_TEST_PASS;
+static MereaderTuiTestResult test_rejects_credentials_and_non_http_urls(void) {
+    MereaderTuiRemoteFile file = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(mereader_tui_remote_is_url("HTTP://example.test/book.epub"));
+    TEST_ASSERT(mereader_tui_remote_is_url("https://example.test/book.epub"));
+    TEST_ASSERT(!mereader_tui_remote_is_url("ftp://example.test/book.epub"));
+    TEST_ASSERT(!mereader_tui_remote_is_url("/books/http://example.epub"));
+    TEST_ASSERT(!mereader_tui_remote_fetch("ftp://example.test/book.epub", &file, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_remote_fetch("https://user:secret@example.test/book.epub", &file, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_remote_fetch("https://[invalid", &file, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_remote_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_remote_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "fetch_redirect_limits_and_offline_cache",
          .function = test_fetch_redirect_limits_and_offline_cache},
         {.name = "rejects_credentials_and_non_http_urls",
          .function = test_rejects_credentials_and_non_http_urls},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

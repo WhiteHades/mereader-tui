@@ -1,6 +1,6 @@
 #include "test_support.h"
 
-#include "baca/document.h"
+#include "mereader-tui/document.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -32,13 +32,13 @@ static bool text_pty_write(int descriptor, const char *value, size_t length) {
     return true;
 }
 
-static bool text_pty_drain(int descriptor, BacaString *output) {
+static bool text_pty_drain(int descriptor, MereaderTuiString *output) {
     char buffer[4096] = {0};
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     for (;;) {
         const ssize_t length = read(descriptor, buffer, sizeof(buffer));
         if (length > 0) {
-            if (!baca_string_append_n(output, buffer, (size_t)length, &error)) {
+            if (!mereader_tui_string_append_n(output, buffer, (size_t)length, &error)) {
                 return false;
             }
         } else if (length < 0 && errno == EINTR) {
@@ -51,7 +51,7 @@ static bool text_pty_drain(int descriptor, BacaString *output) {
     }
 }
 
-static bool text_pty_wait_for(int descriptor, BacaString *output, size_t start, const char *needle) {
+static bool text_pty_wait_for(int descriptor, MereaderTuiString *output, size_t start, const char *needle) {
     for (unsigned attempt = 0U; attempt < 500U; ++attempt) {
         struct pollfd input = {.fd = descriptor, .events = POLLIN};
         const int ready = poll(&input, 1U, 20);
@@ -65,7 +65,7 @@ static bool text_pty_wait_for(int descriptor, BacaString *output, size_t start, 
     return false;
 }
 
-static bool text_pty_wait_for_exit(pid_t child, int descriptor, BacaString *output, int *status) {
+static bool text_pty_wait_for_exit(pid_t child, int descriptor, MereaderTuiString *output, int *status) {
     for (unsigned attempt = 0U; attempt < 500U; ++attempt) {
         (void)text_pty_drain(descriptor, output);
         const pid_t waited = waitpid(child, status, WNOHANG);
@@ -81,31 +81,31 @@ static bool text_pty_wait_for_exit(pid_t child, int descriptor, BacaString *outp
     return false;
 }
 
-static bool run_vim_navigation_pty(BacaString *output, unsigned *stage) {
+static bool run_vim_navigation_pty(MereaderTuiString *output, unsigned *stage) {
     *stage = 0U;
     static const char markers[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd";
-    BacaString fixture = {0};
-    BacaError error = {0};
+    MereaderTuiString fixture = {0};
+    MereaderTuiError error = {0};
     for (size_t line = 0U; line < sizeof(markers) - 1U; ++line) {
         char value[32] = {0};
         for (size_t column = 0U; column < 8U; ++column) {
             value[column] = markers[(line + column) % (sizeof(markers) - 1U)];
         }
         value[8] = '\n';
-        if (!baca_string_append_n(&fixture, value, 9U, &error)) {
-            baca_string_free(&fixture);
+        if (!mereader_tui_string_append_n(&fixture, value, 9U, &error)) {
+            mereader_tui_string_free(&fixture);
             return false;
         }
     }
     const bool prepared =
-        baca_test_write_text("text/vim/reader.txt", fixture.data) &&
-        baca_test_write_text("text/vim/config/mereader-tui/config.ini", "[General]\nMaxTextWidth=40\nPageScrollDuration=0\n"
+        mereader_tui_test_write_text("text/vim/reader.txt", fixture.data) &&
+        mereader_tui_test_write_text("text/vim/config/mereader-tui/config.ini", "[General]\nMaxTextWidth=40\nPageScrollDuration=0\n"
                                                                 "ImageMode=placeholder\n") &&
-        baca_test_mkdir("text/vim/cache");
-    baca_string_free(&fixture);
-    char *path = baca_test_path("text/vim/reader.txt");
-    char *config = baca_test_path("text/vim/config");
-    char *cache = baca_test_path("text/vim/cache");
+        mereader_tui_test_mkdir("text/vim/cache");
+    mereader_tui_string_free(&fixture);
+    char *path = mereader_tui_test_path("text/vim/reader.txt");
+    char *config = mereader_tui_test_path("text/vim/config");
+    char *cache = mereader_tui_test_path("text/vim/cache");
     if (!prepared || path == NULL || config == NULL || cache == NULL) {
         free(cache);
         free(config);
@@ -222,48 +222,48 @@ static bool run_vim_navigation_pty(BacaString *output, unsigned *stage) {
     return completed && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static BacaTestResult test_utf8_markdown_and_empty_documents(void) {
+static MereaderTuiTestResult test_utf8_markdown_and_empty_documents(void) {
     static const unsigned char text[] = {
         0xefU, 0xbbU, 0xbfU, 'F', 'i', 'r', 's', 't',  '\r', '\n', 'S', 'e', 'c', 'o', 'n',
         'd',   '\r',  'T',   'h', 'i', 'r', 'd', '\n', '\n', 'F',  'o', 'u', 'r', 't', 'h',
     };
-    TEST_ASSERT(baca_test_write("text/sample.txt", text, sizeof(text)));
-    char *path = baca_test_path("text/sample.txt");
+    TEST_ASSERT(mereader_tui_test_write("text/sample.txt", text, sizeof(text)));
+    char *path = mereader_tui_test_path("text/sample.txt");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_TEXT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_TEXT);
     TEST_ASSERT_STR(document.metadata.title, "sample.txt");
     TEST_ASSERT_STR(document.metadata.format, "Plain Text");
     TEST_ASSERT_SIZE(document.block_count, 1U);
     TEST_ASSERT_SIZE(document.section_count, 1U);
     TEST_ASSERT_STR(document.blocks[0].value.text.text, "First\nSecond\nThird\n\nFourth");
     TEST_ASSERT(!document.blocks[0].value.text.preformatted);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
 
-    TEST_ASSERT(baca_test_write_text("text/readme.md", "# Heading\n\n**literal markdown**\n"));
-    path = baca_test_path("text/readme.md");
+    TEST_ASSERT(mereader_tui_test_write_text("text/readme.md", "# Heading\n\n**literal markdown**\n"));
+    path = mereader_tui_test_path("text/readme.md");
     TEST_ASSERT(path != NULL);
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_STR(document.metadata.format, "Markdown");
     TEST_ASSERT_STR(document.blocks[0].value.text.text, "# Heading\n\n**literal markdown**\n");
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
 
-    TEST_ASSERT(baca_test_write("text/empty.txt", NULL, 0U));
-    path = baca_test_path("text/empty.txt");
+    TEST_ASSERT(mereader_tui_test_write("text/empty.txt", NULL, 0U));
+    path = mereader_tui_test_path("text/empty.txt");
     TEST_ASSERT(path != NULL);
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_SIZE(document.block_count, 1U);
     TEST_ASSERT_STR(document.blocks[0].value.text.text, "");
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_utf16_byte_orders(void) {
+static MereaderTuiTestResult test_utf16_byte_orders(void) {
     static const unsigned char little_endian[] = {
         0xffU, 0xfeU, 0x48U, 0x00U, 0xe9U, 0x00U, 0x0dU, 0x00U, 0x0aU, 0x00U, 0x16U, 0x4eU, 0x4cU, 0x75U,
     };
@@ -279,21 +279,21 @@ static BacaTestResult test_utf16_byte_orders(void) {
         {.name = "text/little.txt", .data = little_endian, .length = sizeof(little_endian)},
         {.name = "text/big.txt", .data = big_endian, .length = sizeof(big_endian)},
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(fixtures); ++index) {
-        TEST_ASSERT(baca_test_write(fixtures[index].name, fixtures[index].data, fixtures[index].length));
-        char *path = baca_test_path(fixtures[index].name);
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(fixtures); ++index) {
+        TEST_ASSERT(mereader_tui_test_write(fixtures[index].name, fixtures[index].data, fixtures[index].length));
+        char *path = mereader_tui_test_path(fixtures[index].name);
         TEST_ASSERT(path != NULL);
-        BacaDocument document = {0};
-        BacaError error = {0};
-        TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+        MereaderTuiDocument document = {0};
+        MereaderTuiError error = {0};
+        TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
         TEST_ASSERT_STR(document.blocks[0].value.text.text, expected);
-        baca_document_close(&document);
+        mereader_tui_document_close(&document);
         free(path);
     }
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_invalid_binary_and_oversized_text(void) {
+static MereaderTuiTestResult test_invalid_binary_and_oversized_text(void) {
     static const unsigned char invalid_utf8[] = {0xc3U, 0x28U};
     static const unsigned char embedded_nul[] = {'a', 0x00U, 'b'};
     static const unsigned char odd_utf16[] = {0xffU, 0xfeU, 0x41U};
@@ -306,53 +306,53 @@ static BacaTestResult test_invalid_binary_and_oversized_text(void) {
         {.name = "text/nul.txt", .data = embedded_nul, .length = sizeof(embedded_nul)},
         {.name = "text/odd.txt", .data = odd_utf16, .length = sizeof(odd_utf16)},
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(fixtures); ++index) {
-        TEST_ASSERT(baca_test_write(fixtures[index].name, fixtures[index].data, fixtures[index].length));
-        char *path = baca_test_path(fixtures[index].name);
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(fixtures); ++index) {
+        TEST_ASSERT(mereader_tui_test_write(fixtures[index].name, fixtures[index].data, fixtures[index].length));
+        char *path = mereader_tui_test_path(fixtures[index].name);
         TEST_ASSERT(path != NULL);
-        BacaDocument document = {0};
-        BacaError error = {0};
-        TEST_ASSERT(!baca_document_open(&document, path, &error));
-        TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+        MereaderTuiDocument document = {0};
+        MereaderTuiError error = {0};
+        TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+        TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
         free(path);
     }
 
-    char *path = baca_test_path("text/oversized.txt");
+    char *path = mereader_tui_test_path("text/oversized.txt");
     TEST_ASSERT(path != NULL);
     int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     TEST_ASSERT(descriptor >= 0);
     TEST_ASSERT(ftruncate(descriptor, (off_t)TEST_TEXT_MAX_BYTES + 1) == 0);
     TEST_ASSERT(close(descriptor) == 0);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_vim_counts_and_jump_history(void) {
-    BacaString output = {0};
+static MereaderTuiTestResult test_vim_counts_and_jump_history(void) {
+    MereaderTuiString output = {0};
     unsigned stage = 0U;
     const bool ran = run_vim_navigation_pty(&output, &stage);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
     const char *tail = output.data == NULL || output.length <= 800U ? captured : output.data + output.length - 800U;
-    const BacaTestResult result =
-        ran ? BACA_TEST_PASS
-            : baca_test_fail_at(__FILE__, __LINE__,
+    const MereaderTuiTestResult result =
+        ran ? MEREADER_TUI_TEST_PASS
+            : mereader_tui_test_fail_at(__FILE__, __LINE__,
                                 "Vim navigation PTY failed at stage %u after %zu bytes; tail: %.800s", stage,
                                 output.length, tail);
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     return result;
 }
 
-const BacaTestCase *baca_text_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_text_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "utf8_markdown_and_empty_documents", .function = test_utf8_markdown_and_empty_documents},
         {.name = "utf16_byte_orders", .function = test_utf16_byte_orders},
         {.name = "invalid_binary_and_oversized_text", .function = test_invalid_binary_and_oversized_text},
         {.name = "vim_counts_and_jump_history", .function = test_vim_counts_and_jump_history},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

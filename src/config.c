@@ -1,4 +1,4 @@
-#include "baca/config.h"
+#include "mereader-tui/config.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -10,19 +10,19 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-typedef struct BacaIniEntry {
+typedef struct MereaderTuiIniEntry {
     char *section;
     char *key;
     char *value;
-} BacaIniEntry;
+} MereaderTuiIniEntry;
 
-typedef struct BacaIni {
-    BacaIniEntry *items;
+typedef struct MereaderTuiIni {
+    MereaderTuiIniEntry *items;
     size_t length;
     size_t capacity;
-} BacaIni;
+} MereaderTuiIni;
 
-static const char BACA_DEFAULT_CONFIG[] =
+static const char MEREADER_TUI_DEFAULT_CONFIG[] =
     "[General]\n"
     "# pick your favorite image viewer\n"
     "PreferredImageViewer = auto\n"
@@ -81,7 +81,7 @@ static const char BACA_DEFAULT_CONFIG[] =
     "CloseOrQuit = q,escape\n"
     "Screenshot = f12\n";
 
-static void baca_ini_free(BacaIni *ini) {
+static void mereader_tui_ini_free(MereaderTuiIni *ini) {
     if (ini == nullptr) {
         return;
     }
@@ -91,55 +91,55 @@ static void baca_ini_free(BacaIni *ini) {
         free(ini->items[index].value);
     }
     free(ini->items);
-    *ini = (BacaIni){0};
+    *ini = (MereaderTuiIni){0};
 }
 
-static char *baca_ini_copy_trimmed(const char *start, const char *end, BacaError *error) {
+static char *mereader_tui_ini_copy_trimmed(const char *start, const char *end, MereaderTuiError *error) {
     while (start < end && isspace((unsigned char)*start)) {
         ++start;
     }
     while (end > start && isspace((unsigned char)end[-1])) {
         --end;
     }
-    return baca_strndup(start, (size_t)(end - start), error);
+    return mereader_tui_strndup(start, (size_t)(end - start), error);
 }
 
-static char *baca_ini_unescape_percent(const char *value, BacaError *error) {
-    BacaString result = {0};
+static char *mereader_tui_ini_unescape_percent(const char *value, MereaderTuiError *error) {
+    MereaderTuiString result = {0};
     for (size_t index = 0U; value[index] != '\0'; ++index) {
         if (value[index] == '%' && value[index + 1U] == '%') {
-            if (!baca_string_append_char(&result, '%', error)) {
-                baca_string_free(&result);
+            if (!mereader_tui_string_append_char(&result, '%', error)) {
+                mereader_tui_string_free(&result);
                 return nullptr;
             }
             ++index;
-        } else if (!baca_string_append_char(&result, value[index], error)) {
-            baca_string_free(&result);
+        } else if (!mereader_tui_string_append_char(&result, value[index], error)) {
+            mereader_tui_string_free(&result);
             return nullptr;
         }
     }
-    if (!baca_string_append_n(&result, "", 0U, error)) {
-        baca_string_free(&result);
+    if (!mereader_tui_string_append_n(&result, "", 0U, error)) {
+        mereader_tui_string_free(&result);
         return nullptr;
     }
-    return baca_string_take(&result);
+    return mereader_tui_string_take(&result);
 }
 
-static bool baca_ini_add(BacaIni *ini, const char *section, const char *key, const char *value, size_t line_number,
-                         BacaError *error) {
+static bool mereader_tui_ini_add(MereaderTuiIni *ini, const char *section, const char *key, const char *value, size_t line_number,
+                         MereaderTuiError *error) {
     for (size_t index = 0U; index < ini->length; ++index) {
-        if (baca_casecmp(ini->items[index].section, section) == 0 &&
-            baca_casecmp(ini->items[index].key, key) == 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "duplicate INI option '%s.%s' on line %zu", section, key,
+        if (mereader_tui_casecmp(ini->items[index].section, section) == 0 &&
+            mereader_tui_casecmp(ini->items[index].key, key) == 0) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "duplicate INI option '%s.%s' on line %zu", section, key,
                            line_number);
             return false;
         }
     }
 
-    BacaError reserve_error = {0};
-    BacaIniEntry *items = baca_array_reserve(ini->items, &ini->capacity, sizeof(*ini->items), ini->length + 1U,
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiIniEntry *items = mereader_tui_array_reserve(ini->items, &ini->capacity, sizeof(*ini->items), ini->length + 1U,
                                              &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != nullptr) {
             *error = reserve_error;
         }
@@ -147,10 +147,10 @@ static bool baca_ini_add(BacaIni *ini, const char *section, const char *key, con
     }
     ini->items = items;
 
-    BacaIniEntry entry = {0};
-    entry.section = baca_strdup(section, error);
-    entry.key = baca_strdup(key, error);
-    entry.value = baca_ini_unescape_percent(value, error);
+    MereaderTuiIniEntry entry = {0};
+    entry.section = mereader_tui_strdup(section, error);
+    entry.key = mereader_tui_strdup(key, error);
+    entry.value = mereader_tui_ini_unescape_percent(value, error);
     if (entry.section == nullptr || entry.key == nullptr || entry.value == nullptr) {
         free(entry.section);
         free(entry.key);
@@ -161,7 +161,7 @@ static bool baca_ini_add(BacaIni *ini, const char *section, const char *key, con
     return true;
 }
 
-static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *ini, BacaError *error) {
+static bool mereader_tui_ini_parse(const unsigned char *data, size_t length, MereaderTuiIni *ini, MereaderTuiError *error) {
     char *section = nullptr;
     size_t offset = 0U;
     size_t line_number = 0U;
@@ -181,7 +181,7 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
         }
         if (memchr(data + line_start, '\0', line_end - line_start) != nullptr) {
             free(section);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "INI contains a null byte on line %zu", line_number);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "INI contains a null byte on line %zu", line_number);
             return false;
         }
 
@@ -198,7 +198,7 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
             const char *closing = memchr(start + 1, ']', (size_t)(end - start - 1));
             if (closing == nullptr) {
                 free(section);
-                baca_error_set(error, BACA_ERROR_CORRUPT, "unterminated INI section on line %zu", line_number);
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "unterminated INI section on line %zu", line_number);
                 return false;
             }
             const char *trailing = closing + 1;
@@ -207,12 +207,12 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
             }
             if (trailing < end && *trailing != '#' && *trailing != ';') {
                 free(section);
-                baca_error_set(error, BACA_ERROR_CORRUPT, "unexpected text after INI section on line %zu",
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "unexpected text after INI section on line %zu",
                                line_number);
                 return false;
             }
 
-            char *new_section = baca_ini_copy_trimmed(start + 1, closing, error);
+            char *new_section = mereader_tui_ini_copy_trimmed(start + 1, closing, error);
             if (new_section == nullptr) {
                 free(section);
                 return false;
@@ -220,7 +220,7 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
             if (new_section[0] == '\0') {
                 free(new_section);
                 free(section);
-                baca_error_set(error, BACA_ERROR_CORRUPT, "empty INI section on line %zu", line_number);
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "empty INI section on line %zu", line_number);
                 return false;
             }
             free(section);
@@ -229,7 +229,7 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
         }
 
         if (section == nullptr) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "INI option appears before a section on line %zu",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "INI option appears before a section on line %zu",
                            line_number);
             return false;
         }
@@ -242,12 +242,12 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
         }
         if (delimiter == nullptr) {
             free(section);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "INI option has no delimiter on line %zu", line_number);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "INI option has no delimiter on line %zu", line_number);
             return false;
         }
 
-        char *key = baca_ini_copy_trimmed(start, delimiter, error);
-        char *value = baca_ini_copy_trimmed(delimiter + 1, end, error);
+        char *key = mereader_tui_ini_copy_trimmed(start, delimiter, error);
+        char *value = mereader_tui_ini_copy_trimmed(delimiter + 1, end, error);
         if (key == nullptr || value == nullptr) {
             free(key);
             free(value);
@@ -258,10 +258,10 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
             free(key);
             free(value);
             free(section);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "empty INI option on line %zu", line_number);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "empty INI option on line %zu", line_number);
             return false;
         }
-        bool added = baca_ini_add(ini, section, key, value, line_number, error);
+        bool added = mereader_tui_ini_add(ini, section, key, value, line_number, error);
         free(key);
         free(value);
         if (!added) {
@@ -274,24 +274,24 @@ static bool baca_ini_parse(const unsigned char *data, size_t length, BacaIni *in
     return true;
 }
 
-static const char *baca_ini_get(const BacaIni *ini, const char *section, const char *key,
+static const char *mereader_tui_ini_get(const MereaderTuiIni *ini, const char *section, const char *key,
                                 const char *fallback) {
     for (size_t index = 0U; index < ini->length; ++index) {
-        if (baca_casecmp(ini->items[index].section, section) == 0 &&
-            baca_casecmp(ini->items[index].key, key) == 0) {
+        if (mereader_tui_casecmp(ini->items[index].section, section) == 0 &&
+            mereader_tui_casecmp(ini->items[index].key, key) == 0) {
             return ini->items[index].value;
         }
     }
     for (size_t index = 0U; index < ini->length; ++index) {
-        if (baca_casecmp(ini->items[index].section, "DEFAULT") == 0 &&
-            baca_casecmp(ini->items[index].key, key) == 0) {
+        if (mereader_tui_casecmp(ini->items[index].section, "DEFAULT") == 0 &&
+            mereader_tui_casecmp(ini->items[index].key, key) == 0) {
             return ini->items[index].value;
         }
     }
     return fallback;
 }
 
-static bool baca_config_parse_positive_width(const char *value, int *width, bool *percent) {
+static bool mereader_tui_config_parse_positive_width(const char *value, int *width, bool *percent) {
     errno = 0;
     char *end = nullptr;
     long parsed = strtol(value, &end, 10);
@@ -306,56 +306,56 @@ static bool baca_config_parse_positive_width(const char *value, int *width, bool
     return true;
 }
 
-static bool baca_config_parse_justification(const char *value, BacaJustification *justification,
-                                            BacaError *error) {
-    if (baca_casecmp(value, "justify") == 0 || baca_casecmp(value, "full") == 0) {
-        *justification = BACA_JUSTIFY_FULL;
-    } else if (baca_casecmp(value, "center") == 0) {
-        *justification = BACA_JUSTIFY_CENTER;
-    } else if (baca_casecmp(value, "right") == 0) {
-        *justification = BACA_JUSTIFY_RIGHT;
-    } else if (baca_casecmp(value, "left") == 0 || baca_casecmp(value, "default") == 0) {
-        *justification = BACA_JUSTIFY_LEFT;
+static bool mereader_tui_config_parse_justification(const char *value, MereaderTuiJustification *justification,
+                                            MereaderTuiError *error) {
+    if (mereader_tui_casecmp(value, "justify") == 0 || mereader_tui_casecmp(value, "full") == 0) {
+        *justification = MEREADER_TUI_JUSTIFY_FULL;
+    } else if (mereader_tui_casecmp(value, "center") == 0) {
+        *justification = MEREADER_TUI_JUSTIFY_CENTER;
+    } else if (mereader_tui_casecmp(value, "right") == 0) {
+        *justification = MEREADER_TUI_JUSTIFY_RIGHT;
+    } else if (mereader_tui_casecmp(value, "left") == 0 || mereader_tui_casecmp(value, "default") == 0) {
+        *justification = MEREADER_TUI_JUSTIFY_LEFT;
     } else {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "invalid General.TextJustification value '%s'", value);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid General.TextJustification value '%s'", value);
         return false;
     }
     return true;
 }
 
-static bool baca_config_parse_image_mode(const char *value, BacaImageMode *mode, BacaError *error) {
-    if (baca_casecmp(value, "auto") == 0) {
-        *mode = BACA_IMAGE_MODE_AUTO;
-    } else if (baca_casecmp(value, "kitty") == 0) {
-        *mode = BACA_IMAGE_MODE_KITTY;
-    } else if (baca_casecmp(value, "ansi") == 0) {
-        *mode = BACA_IMAGE_MODE_ANSI;
-    } else if (baca_casecmp(value, "placeholder") == 0) {
-        *mode = BACA_IMAGE_MODE_PLACEHOLDER;
+static bool mereader_tui_config_parse_image_mode(const char *value, MereaderTuiImageMode *mode, MereaderTuiError *error) {
+    if (mereader_tui_casecmp(value, "auto") == 0) {
+        *mode = MEREADER_TUI_IMAGE_MODE_AUTO;
+    } else if (mereader_tui_casecmp(value, "kitty") == 0) {
+        *mode = MEREADER_TUI_IMAGE_MODE_KITTY;
+    } else if (mereader_tui_casecmp(value, "ansi") == 0) {
+        *mode = MEREADER_TUI_IMAGE_MODE_ANSI;
+    } else if (mereader_tui_casecmp(value, "placeholder") == 0) {
+        *mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
     } else {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "invalid General.ImageMode value '%s'", value);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid General.ImageMode value '%s'", value);
         return false;
     }
     return true;
 }
 
-static bool baca_config_parse_bool(const char *section, const char *key, const char *value, bool *result,
-                                   BacaError *error) {
-    if (baca_casecmp(value, "1") == 0 || baca_casecmp(value, "yes") == 0 ||
-        baca_casecmp(value, "true") == 0 || baca_casecmp(value, "on") == 0) {
+static bool mereader_tui_config_parse_bool(const char *section, const char *key, const char *value, bool *result,
+                                   MereaderTuiError *error) {
+    if (mereader_tui_casecmp(value, "1") == 0 || mereader_tui_casecmp(value, "yes") == 0 ||
+        mereader_tui_casecmp(value, "true") == 0 || mereader_tui_casecmp(value, "on") == 0) {
         *result = true;
         return true;
     }
-    if (baca_casecmp(value, "0") == 0 || baca_casecmp(value, "no") == 0 ||
-        baca_casecmp(value, "false") == 0 || baca_casecmp(value, "off") == 0) {
+    if (mereader_tui_casecmp(value, "0") == 0 || mereader_tui_casecmp(value, "no") == 0 ||
+        mereader_tui_casecmp(value, "false") == 0 || mereader_tui_casecmp(value, "off") == 0) {
         *result = false;
         return true;
     }
-    baca_error_set(error, BACA_ERROR_CORRUPT, "invalid %s.%s boolean value '%s'", section, key, value);
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid %s.%s boolean value '%s'", section, key, value);
     return false;
 }
 
-static bool baca_config_parse_duration(const char *value, double *duration, BacaError *error) {
+static bool mereader_tui_config_parse_duration(const char *value, double *duration, MereaderTuiError *error) {
     const unsigned char *cursor = (const unsigned char *)value;
     bool negative = false;
     if (*cursor == '+' || *cursor == '-') {
@@ -410,14 +410,14 @@ static bool baca_config_parse_duration(const char *value, double *duration, Baca
     }
 
     if (!has_digit || *cursor != '\0' || !isfinite(parsed) || parsed < 0.0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "invalid General.PageScrollDuration value '%s'", value);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid General.PageScrollDuration value '%s'", value);
         return false;
     }
     *duration = parsed;
     return true;
 }
 
-static int baca_config_hex_digit(unsigned char character) {
+static int mereader_tui_config_hex_digit(unsigned char character) {
     if (character >= '0' && character <= '9') {
         return (int)(character - '0');
     }
@@ -430,14 +430,14 @@ static int baca_config_hex_digit(unsigned char character) {
     return -1;
 }
 
-static bool baca_config_parse_color(const char *value, uint32_t *color) {
+static bool mereader_tui_config_parse_color(const char *value, uint32_t *color) {
     const char *digits = value[0] == '#' ? value + 1 : value;
     size_t digit_count = strlen(digits);
     if (digit_count == 6U || (value[0] == '#' && digit_count == 3U)) {
         uint32_t parsed = 0U;
         bool valid = true;
         for (size_t index = 0U; index < digit_count; ++index) {
-            int digit = baca_config_hex_digit((unsigned char)digits[index]);
+            int digit = mereader_tui_config_hex_digit((unsigned char)digits[index]);
             if (digit < 0) {
                 valid = false;
                 break;
@@ -466,8 +466,8 @@ static bool baca_config_parse_color(const char *value, uint32_t *color) {
         {"blue", 0x0000ffU},    {"teal", 0x008080U},   {"aqua", 0x00ffffU},
         {"cyan", 0x00ffffU},    {"orange", 0xffa500U},
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(named_colors); ++index) {
-        if (baca_casecmp(value, named_colors[index].name) == 0) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(named_colors); ++index) {
+        if (mereader_tui_casecmp(value, named_colors[index].name) == 0) {
             *color = named_colors[index].value;
             return true;
         }
@@ -475,7 +475,7 @@ static bool baca_config_parse_color(const char *value, uint32_t *color) {
     return false;
 }
 
-static void baca_key_list_free(BacaKeyList *list) {
+static void mereader_tui_key_list_free(MereaderTuiKeyList *list) {
     if (list == nullptr) {
         return;
     }
@@ -483,22 +483,22 @@ static void baca_key_list_free(BacaKeyList *list) {
         free(list->items[index]);
     }
     free(list->items);
-    *list = (BacaKeyList){0};
+    *list = (MereaderTuiKeyList){0};
 }
 
-static bool baca_config_parse_key_list(const char *value, BacaKeyList *list, BacaError *error) {
+static bool mereader_tui_config_parse_key_list(const char *value, MereaderTuiKeyList *list, MereaderTuiError *error) {
     size_t count = 1U;
     for (const char *cursor = value; *cursor != '\0'; ++cursor) {
         if (*cursor == ',') {
             if (count == SIZE_MAX) {
-                baca_error_set(error, BACA_ERROR_MEMORY, "keymap item count overflow");
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "keymap item count overflow");
                 return false;
             }
             ++count;
         }
     }
 
-    char **items = baca_reallocarray(nullptr, count, sizeof(*items), error);
+    char **items = mereader_tui_reallocarray(nullptr, count, sizeof(*items), error);
     if (items == nullptr) {
         return false;
     }
@@ -510,10 +510,10 @@ static bool baca_config_parse_key_list(const char *value, BacaKeyList *list, Bac
         if (*cursor != ',' && *cursor != '\0') {
             continue;
         }
-        items[index] = baca_ini_copy_trimmed(start, cursor, error);
+        items[index] = mereader_tui_ini_copy_trimmed(start, cursor, error);
         if (items[index] == nullptr) {
-            BacaKeyList partial = {.items = items, .length = index};
-            baca_key_list_free(&partial);
+            MereaderTuiKeyList partial = {.items = items, .length = index};
+            mereader_tui_key_list_free(&partial);
             return false;
         }
         ++index;
@@ -528,96 +528,96 @@ static bool baca_config_parse_key_list(const char *value, BacaKeyList *list, Bac
     return true;
 }
 
-static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError *error) {
-    BacaConfig result = {
+static bool mereader_tui_config_build(const MereaderTuiIni *ini, MereaderTuiConfig *config, MereaderTuiError *error) {
+    MereaderTuiConfig result = {
         .max_text_width = 80,
-        .justification = BACA_JUSTIFY_LEFT,
+        .justification = MEREADER_TUI_JUSTIFY_LEFT,
         .dark = {.background = 0x1d1c2bU, .foreground = 0xcdd6f4U, .accent = 0xcba6f7U},
         .light = {.background = 0xeff1f5U, .foreground = 0x4c4f69U, .accent = 0x8839efU},
     };
-    (void)baca_config_parse_positive_width(baca_ini_get(ini, "General", "MaxTextWidth", "80"),
+    (void)mereader_tui_config_parse_positive_width(mereader_tui_ini_get(ini, "General", "MaxTextWidth", "80"),
                                            &result.max_text_width, &result.max_text_width_percent);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Background", "#1d1c2b"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Background", "#1d1c2b"),
                                   &result.dark.background);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Foreground", "#cdd6f4"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Foreground", "#cdd6f4"),
                                   &result.dark.foreground);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Dark", "Accent", "#cba6f7"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Accent", "#cba6f7"),
                                   &result.dark.accent);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Background", "#eff1f5"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Light", "Background", "#eff1f5"),
                                   &result.light.background);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Foreground", "#4c4f69"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Light", "Foreground", "#4c4f69"),
                                   &result.light.foreground);
-    (void)baca_config_parse_color(baca_ini_get(ini, "Color Light", "Accent", "#8839ef"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Light", "Accent", "#8839ef"),
                                   &result.light.accent);
 
-    const char *image_mode = baca_ini_get(ini, "General", "ImageMode", nullptr);
+    const char *image_mode = mereader_tui_ini_get(ini, "General", "ImageMode", nullptr);
     if (image_mode != nullptr) {
         result.image_mode_explicit = true;
-        if (!baca_config_parse_image_mode(image_mode, &result.image_mode, error)) {
-            baca_config_free(&result);
+        if (!mereader_tui_config_parse_image_mode(image_mode, &result.image_mode, error)) {
+            mereader_tui_config_free(&result);
             return false;
         }
-        result.show_image_as_ansi = result.image_mode != BACA_IMAGE_MODE_PLACEHOLDER;
-    } else if (!baca_config_parse_bool("General", "ShowImageAsANSI",
-                                       baca_ini_get(ini, "General", "ShowImageAsANSI", "yes"),
+        result.show_image_as_ansi = result.image_mode != MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
+    } else if (!mereader_tui_config_parse_bool("General", "ShowImageAsANSI",
+                                       mereader_tui_ini_get(ini, "General", "ShowImageAsANSI", "yes"),
                                        &result.show_image_as_ansi, error)) {
-        baca_config_free(&result);
+        mereader_tui_config_free(&result);
         return false;
     } else {
-        result.image_mode = result.show_image_as_ansi ? BACA_IMAGE_MODE_AUTO : BACA_IMAGE_MODE_PLACEHOLDER;
+        result.image_mode = result.show_image_as_ansi ? MEREADER_TUI_IMAGE_MODE_AUTO : MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
     }
 
     result.preferred_image_viewer =
-        baca_strdup(baca_ini_get(ini, "General", "PreferredImageViewer", "auto"), error);
-    result.library_path = baca_strdup(baca_ini_get(ini, "General", "LibraryPath", "auto"), error);
+        mereader_tui_strdup(mereader_tui_ini_get(ini, "General", "PreferredImageViewer", "auto"), error);
+    result.library_path = mereader_tui_strdup(mereader_tui_ini_get(ini, "General", "LibraryPath", "auto"), error);
     if (result.preferred_image_viewer == nullptr || result.library_path == nullptr ||
-        !baca_config_parse_justification(baca_ini_get(ini, "General", "TextJustification", "justify"),
+        !mereader_tui_config_parse_justification(mereader_tui_ini_get(ini, "General", "TextJustification", "justify"),
                                          &result.justification, error) ||
-        !baca_config_parse_bool("General", "Pretty", baca_ini_get(ini, "General", "Pretty", "no"),
+        !mereader_tui_config_parse_bool("General", "Pretty", mereader_tui_ini_get(ini, "General", "Pretty", "no"),
                                 &result.pretty, error) ||
-        !baca_config_parse_duration(baca_ini_get(ini, "General", "PageScrollDuration", "0.2"),
+        !mereader_tui_config_parse_duration(mereader_tui_ini_get(ini, "General", "PageScrollDuration", "0.2"),
                                     &result.page_scroll_duration, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ToggleLightDark", "c"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "ToggleLightDark", "c"),
                                     &result.keymaps.toggle_dark, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "TogglePdfView", "v"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "TogglePdfView", "v"),
                                     &result.keymaps.toggle_pdf_view, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ScrollDown", "down,j"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "ScrollDown", "down,j"),
                                     &result.keymaps.scroll_down, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "ScrollUp", "up,k"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "ScrollUp", "up,k"),
                                     &result.keymaps.scroll_up, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "PageDown", "ctrl+f,pagedown,l,space"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "PageDown", "ctrl+f,pagedown,l,space"),
                                     &result.keymaps.page_down, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "PageUp", "ctrl+b,pageup,h"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "PageUp", "ctrl+b,pageup,h"),
                                     &result.keymaps.page_up, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "Home", "home,gg"), &result.keymaps.home,
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "Home", "home,gg"), &result.keymaps.home,
                                     error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "End", "end,G"), &result.keymaps.end,
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "End", "end,G"), &result.keymaps.end,
                                     error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenToc", "tab"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "OpenToc", "tab"),
                                     &result.keymaps.open_toc, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "AddBookmark", "b"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "AddBookmark", "b"),
                                     &result.keymaps.add_bookmark, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenBookmarks", "B"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "OpenBookmarks", "B"),
                                     &result.keymaps.open_bookmarks, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenMetadata", "M"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "OpenMetadata", "M"),
                                     &result.keymaps.open_metadata, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "OpenHelp", "question_mark,f1"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "OpenHelp", "question_mark,f1"),
                                     &result.keymaps.open_help, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "SearchForward", "slash"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "SearchForward", "slash"),
                                     &result.keymaps.search_forward, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "SearchBackward", "f2"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "SearchBackward", "f2"),
                                     &result.keymaps.search_backward, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "NextMatch", "n"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "NextMatch", "n"),
                                     &result.keymaps.next_match, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "PreviousMatch", "N"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "PreviousMatch", "N"),
                                     &result.keymaps.previous_match, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "Confirm", "enter"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "Confirm", "enter"),
                                     &result.keymaps.confirm, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "CloseOrQuit", "q,escape"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "CloseOrQuit", "q,escape"),
                                     &result.keymaps.close, error) ||
-        !baca_config_parse_key_list(baca_ini_get(ini, "Keymaps", "Screenshot", "f12"),
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Keymaps", "Screenshot", "f12"),
                                     &result.keymaps.screenshot, error)) {
-        baca_config_free(&result);
+        mereader_tui_config_free(&result);
         return false;
     }
 
@@ -625,17 +625,17 @@ static bool baca_config_build(const BacaIni *ini, BacaConfig *config, BacaError 
     return true;
 }
 
-static bool baca_config_output_empty(const BacaConfig *config) {
+static bool mereader_tui_config_output_empty(const MereaderTuiConfig *config) {
     if (config->preferred_image_viewer != nullptr || config->library_path != nullptr || config->max_text_width != 0 ||
-        config->max_text_width_percent || config->justification != BACA_JUSTIFY_LEFT || config->pretty ||
-        config->page_scroll_duration != 0.0 || config->image_mode != BACA_IMAGE_MODE_AUTO ||
+        config->max_text_width_percent || config->justification != MEREADER_TUI_JUSTIFY_LEFT || config->pretty ||
+        config->page_scroll_duration != 0.0 || config->image_mode != MEREADER_TUI_IMAGE_MODE_AUTO ||
         config->image_mode_explicit || config->show_image_as_ansi || config->dark.background != 0U ||
         config->dark.foreground != 0U || config->dark.accent != 0U || config->light.background != 0U ||
         config->light.foreground != 0U || config->light.accent != 0U) {
         return false;
     }
 
-    const BacaKeyList *lists[] = {
+    const MereaderTuiKeyList *lists[] = {
         &config->keymaps.toggle_dark,      &config->keymaps.scroll_down,
         &config->keymaps.scroll_up,        &config->keymaps.page_down,
         &config->keymaps.page_up,          &config->keymaps.home,
@@ -647,7 +647,7 @@ static bool baca_config_output_empty(const BacaConfig *config) {
         &config->keymaps.confirm,          &config->keymaps.close,
         &config->keymaps.screenshot,       &config->keymaps.toggle_pdf_view,
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(lists); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(lists); ++index) {
         if (lists[index]->items != nullptr || lists[index]->length != 0U) {
             return false;
         }
@@ -655,47 +655,47 @@ static bool baca_config_output_empty(const BacaConfig *config) {
     return true;
 }
 
-bool baca_config_load_path(BacaConfig *config, const char *path, BacaError *error) {
+bool mereader_tui_config_load_path(MereaderTuiConfig *config, const char *path, MereaderTuiError *error) {
     if (config == nullptr || path == nullptr || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid config path");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid config path");
         return false;
     }
-    if (!baca_config_output_empty(config)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "config output is not empty");
-        return false;
-    }
-
-    BacaBuffer contents = {0};
-    if (!baca_read_file(path, &contents, error)) {
+    if (!mereader_tui_config_output_empty(config)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "config output is not empty");
         return false;
     }
 
-    BacaIni ini = {0};
-    bool parsed = baca_ini_parse(contents.data, contents.length, &ini, error);
-    baca_buffer_free(&contents);
+    MereaderTuiBuffer contents = {0};
+    if (!mereader_tui_read_file(path, &contents, error)) {
+        return false;
+    }
+
+    MereaderTuiIni ini = {0};
+    bool parsed = mereader_tui_ini_parse(contents.data, contents.length, &ini, error);
+    mereader_tui_buffer_free(&contents);
     if (!parsed) {
-        baca_ini_free(&ini);
+        mereader_tui_ini_free(&ini);
         return false;
     }
 
-    bool built = baca_config_build(&ini, config, error);
-    baca_ini_free(&ini);
+    bool built = mereader_tui_config_build(&ini, config, error);
+    mereader_tui_ini_free(&ini);
     return built;
 }
 
-static bool baca_config_create_file(const char *path, BacaError *error) {
+static bool mereader_tui_config_create_file(const char *path, MereaderTuiError *error) {
     int descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (descriptor < 0) {
         if (errno == EEXIST) {
             return true;
         }
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not create config '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create config '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
-    const unsigned char *cursor = (const unsigned char *)BACA_DEFAULT_CONFIG;
-    size_t remaining = strlen(BACA_DEFAULT_CONFIG);
+    const unsigned char *cursor = (const unsigned char *)MEREADER_TUI_DEFAULT_CONFIG;
+    size_t remaining = strlen(MEREADER_TUI_DEFAULT_CONFIG);
     while (remaining != 0U) {
         size_t chunk = remaining > 1048576U ? 1048576U : remaining;
         ssize_t written = write(descriptor, cursor, chunk);
@@ -711,29 +711,29 @@ static bool baca_config_create_file(const char *path, BacaError *error) {
         int saved_errno = written == 0 ? EIO : errno;
         (void)close(descriptor);
         (void)unlink(path);
-        baca_error_set(error, BACA_ERROR_IO, "could not write config '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not write config '%s': %s", path, strerror(saved_errno));
         return false;
     }
     if (close(descriptor) != 0) {
         int saved_errno = errno;
         (void)unlink(path);
-        baca_error_set(error, BACA_ERROR_IO, "could not close config '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not close config '%s': %s", path, strerror(saved_errno));
         return false;
     }
     return true;
 }
 
-bool baca_config_load(BacaConfig *config, BacaError *error) {
+bool mereader_tui_config_load(MereaderTuiConfig *config, MereaderTuiError *error) {
     if (config == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "config output is null");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "config output is null");
         return false;
     }
-    if (!baca_config_output_empty(config)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "config output is not empty");
+    if (!mereader_tui_config_output_empty(config)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "config output is not empty");
         return false;
     }
 
-    char *path = baca_xdg_config_path("config.ini", error);
+    char *path = mereader_tui_xdg_config_path("config.ini", error);
     if (path == nullptr) {
         return false;
     }
@@ -742,31 +742,31 @@ bool baca_config_load(BacaConfig *config, BacaError *error) {
     if (stat(path, &status) != 0) {
         if (errno != ENOENT && errno != ENOTDIR) {
             int saved_errno = errno;
-            baca_error_set(error, BACA_ERROR_IO, "could not inspect config '%s': %s", path,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not inspect config '%s': %s", path,
                            strerror(saved_errno));
             free(path);
             return false;
         }
 
-        char *directory = baca_path_dirname(path, error);
-        if (directory == nullptr || !baca_mkdirs(directory, error) || !baca_config_create_file(path, error)) {
+        char *directory = mereader_tui_path_dirname(path, error);
+        if (directory == nullptr || !mereader_tui_mkdirs(directory, error) || !mereader_tui_config_create_file(path, error)) {
             free(directory);
             free(path);
             return false;
         }
         free(directory);
     } else if (!S_ISREG(status.st_mode)) {
-        baca_error_set(error, BACA_ERROR_IO, "config path '%s' is not a regular file", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "config path '%s' is not a regular file", path);
         free(path);
         return false;
     }
 
-    bool loaded = baca_config_load_path(config, path, error);
+    bool loaded = mereader_tui_config_load_path(config, path, error);
     free(path);
     return loaded;
 }
 
-static bool baca_config_token_equals(const char *start, const char *end, const char *expected) {
+static bool mereader_tui_config_token_equals(const char *start, const char *end, const char *expected) {
     while (start < end && isspace((unsigned char)*start) != 0) {
         ++start;
     }
@@ -785,18 +785,18 @@ static bool baca_config_token_equals(const char *start, const char *end, const c
     return true;
 }
 
-static bool baca_config_write_atomic(const char *path, const char *data, size_t length, BacaError *error) {
-    BacaString temporary = {0};
-    if (!baca_string_append(&temporary, path, error) ||
-        !baca_string_append(&temporary, ".tmp.XXXXXX", error)) {
-        baca_string_free(&temporary);
+static bool mereader_tui_config_write_atomic(const char *path, const char *data, size_t length, MereaderTuiError *error) {
+    MereaderTuiString temporary = {0};
+    if (!mereader_tui_string_append(&temporary, path, error) ||
+        !mereader_tui_string_append(&temporary, ".tmp.XXXXXX", error)) {
+        mereader_tui_string_free(&temporary);
         return false;
     }
     int descriptor = mkstemp(temporary.data);
     if (descriptor < 0) {
         const int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not create temporary config: %s", strerror(saved_errno));
-        baca_string_free(&temporary);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create temporary config: %s", strerror(saved_errno));
+        mereader_tui_string_free(&temporary);
         return false;
     }
     bool written = fchmod(descriptor, 0600) == 0;
@@ -824,40 +824,40 @@ static bool baca_config_write_atomic(const char *path, const char *data, size_t 
     if (!written) {
         const int saved_errno = errno == 0 ? EIO : errno;
         (void)unlink(temporary.data);
-        baca_error_set(error, BACA_ERROR_IO, "could not save config '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not save config '%s': %s", path, strerror(saved_errno));
     }
-    baca_string_free(&temporary);
+    mereader_tui_string_free(&temporary);
     return written;
 }
 
-static bool baca_config_append_value(BacaString *output, const char *value, BacaError *error) {
+static bool mereader_tui_config_append_value(MereaderTuiString *output, const char *value, MereaderTuiError *error) {
     for (const char *cursor = value; *cursor != '\0'; ++cursor) {
-        if (!baca_string_append_char(output, *cursor, error) ||
-            (*cursor == '%' && !baca_string_append_char(output, '%', error))) {
+        if (!mereader_tui_string_append_char(output, *cursor, error) ||
+            (*cursor == '%' && !mereader_tui_string_append_char(output, '%', error))) {
             return false;
         }
     }
     return true;
 }
 
-bool baca_config_save_library_path(const char *library_path, BacaError *error) {
+bool mereader_tui_config_save_library_path(const char *library_path, MereaderTuiError *error) {
     if (library_path == nullptr || library_path[0] == '\0' || strchr(library_path, '\n') != nullptr ||
         strchr(library_path, '\r') != nullptr || isspace((unsigned char)library_path[0]) != 0 ||
         isspace((unsigned char)library_path[strlen(library_path) - 1U]) != 0) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid library path");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid library path");
         return false;
     }
-    char *path = baca_xdg_config_path("config.ini", error);
+    char *path = mereader_tui_xdg_config_path("config.ini", error);
     if (path == nullptr) {
         return false;
     }
-    BacaBuffer contents = {0};
-    if (!baca_read_file(path, &contents, error)) {
+    MereaderTuiBuffer contents = {0};
+    if (!mereader_tui_read_file(path, &contents, error)) {
         free(path);
         return false;
     }
 
-    BacaString output = {0};
+    MereaderTuiString output = {0};
     const char *cursor = (const char *)contents.data;
     const char *end = cursor + contents.length;
     bool in_general = false;
@@ -879,7 +879,7 @@ bool baca_config_save_library_path(const char *library_path, BacaError *error) {
         if (trimmed < content_end && *trimmed == '[') {
             const char *closing = memchr(trimmed + 1, ']', (size_t)(content_end - trimmed - 1));
             section_line = closing != nullptr;
-            general_line = section_line && baca_config_token_equals(trimmed + 1, closing, "General");
+            general_line = section_line && mereader_tui_config_token_equals(trimmed + 1, closing, "General");
             if (section_line) {
                 in_general = general_line;
             }
@@ -892,45 +892,45 @@ bool baca_config_save_library_path(const char *library_path, BacaError *error) {
             if (delimiter == nullptr || (colon != nullptr && colon < delimiter)) {
                 delimiter = colon;
             }
-            library_line = delimiter != nullptr && baca_config_token_equals(trimmed, delimiter, "LibraryPath");
+            library_line = delimiter != nullptr && mereader_tui_config_token_equals(trimmed, delimiter, "LibraryPath");
         }
         if (built && library_line && !replaced) {
-            built = baca_string_append(&output, "LibraryPath = ", error) &&
-                    baca_config_append_value(&output, library_path, error) &&
-                    baca_string_append_char(&output, '\n', error);
+            built = mereader_tui_string_append(&output, "LibraryPath = ", error) &&
+                    mereader_tui_config_append_value(&output, library_path, error) &&
+                    mereader_tui_string_append_char(&output, '\n', error);
             replaced = built;
         } else if (built) {
-            built = baca_string_append_n(&output, cursor, (size_t)(next - cursor), error);
+            built = mereader_tui_string_append_n(&output, cursor, (size_t)(next - cursor), error);
         }
         cursor = next;
     }
     if (built && !replaced) {
         if (output.length > 0U && output.data[output.length - 1U] != '\n') {
-            built = baca_string_append_char(&output, '\n', error);
+            built = mereader_tui_string_append_char(&output, '\n', error);
         }
-        built = built && baca_string_append(&output, "[General]\n", error);
+        built = built && mereader_tui_string_append(&output, "[General]\n", error);
         if (built) {
-            built = baca_string_append(&output, "LibraryPath = ", error) &&
-                    baca_config_append_value(&output, library_path, error) &&
-                    baca_string_append_char(&output, '\n', error);
+            built = mereader_tui_string_append(&output, "LibraryPath = ", error) &&
+                    mereader_tui_config_append_value(&output, library_path, error) &&
+                    mereader_tui_string_append_char(&output, '\n', error);
         }
     }
     if (built) {
-        built = baca_config_write_atomic(path, output.data, output.length, error);
+        built = mereader_tui_config_write_atomic(path, output.data, output.length, error);
     }
-    baca_string_free(&output);
-    baca_buffer_free(&contents);
+    mereader_tui_string_free(&output);
+    mereader_tui_buffer_free(&contents);
     free(path);
     return built;
 }
 
-void baca_config_free(BacaConfig *config) {
+void mereader_tui_config_free(MereaderTuiConfig *config) {
     if (config == nullptr) {
         return;
     }
     free(config->preferred_image_viewer);
     free(config->library_path);
-    BacaKeyList *lists[] = {
+    MereaderTuiKeyList *lists[] = {
         &config->keymaps.toggle_dark,      &config->keymaps.scroll_down,
         &config->keymaps.scroll_up,        &config->keymaps.page_down,
         &config->keymaps.page_up,          &config->keymaps.home,
@@ -942,13 +942,13 @@ void baca_config_free(BacaConfig *config) {
         &config->keymaps.confirm,          &config->keymaps.close,
         &config->keymaps.screenshot,       &config->keymaps.toggle_pdf_view,
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(lists); ++index) {
-        baca_key_list_free(lists[index]);
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(lists); ++index) {
+        mereader_tui_key_list_free(lists[index]);
     }
-    *config = (BacaConfig){0};
+    *config = (MereaderTuiConfig){0};
 }
 
-int baca_config_content_width(const BacaConfig *config, int terminal_width) {
+int mereader_tui_config_content_width(const MereaderTuiConfig *config, int terminal_width) {
     if (config == nullptr || terminal_width <= 0 || config->max_text_width <= 0) {
         return 0;
     }
@@ -966,6 +966,6 @@ int baca_config_content_width(const BacaConfig *config, int terminal_width) {
     return (int)requested;
 }
 
-const char *baca_config_default_text(void) {
-    return BACA_DEFAULT_CONFIG;
+const char *mereader_tui_config_default_text(void) {
+    return MEREADER_TUI_DEFAULT_CONFIG;
 }

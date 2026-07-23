@@ -1,10 +1,10 @@
 #include "test_support.h"
 
-#include "baca/app.h"
-#include "baca/document.h"
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
-#include "baca/layout.h"
+#include "mereader-tui/app.h"
+#include "mereader-tui/document.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
+#include "mereader-tui/layout.h"
 
 #include <cairo-pdf.h>
 #include <cairo.h>
@@ -39,8 +39,8 @@ typedef struct PdfCellCapture {
 } PdfCellCapture;
 
 typedef struct PdfPtyResult {
-    BacaString output;
-    BacaString opened;
+    MereaderTuiString output;
+    MereaderTuiString opened;
     int status;
     bool fixed_rendered;
     bool help_opened;
@@ -199,20 +199,20 @@ static bool pdf_write_all(int descriptor, const void *data, size_t length) {
     return true;
 }
 
-static bool pdf_test_opener(void *user_data, const char *target, const char *preferred, BacaError *error) {
+static bool pdf_test_opener(void *user_data, const char *target, const char *preferred, MereaderTuiError *error) {
     (void)preferred;
     const int descriptor = *(const int *)user_data;
     const size_t length = strlen(target);
     if (!pdf_write_all(descriptor, target, length) || !pdf_write_all(descriptor, "\n", 1U)) {
-        baca_error_set(error, BACA_ERROR_IO, "could not capture PDF opener target");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not capture PDF opener target");
         return false;
     }
     return true;
 }
 
-int baca_pdf_pty_child(void) {
-    const char *path = getenv("BACA_PDF_PTY_PATH");
-    const char *descriptor_value = getenv("BACA_PDF_PTY_OPEN_FD");
+int mereader_tui_pdf_pty_child(void) {
+    const char *path = getenv("MEREADER_TUI_PDF_PTY_PATH");
+    const char *descriptor_value = getenv("MEREADER_TUI_PDF_PTY_OPEN_FD");
     if (path == NULL || descriptor_value == NULL) {
         return 121;
     }
@@ -222,29 +222,29 @@ int baca_pdf_pty_child(void) {
         return 122;
     }
     int descriptor = (int)parsed;
-    BacaApp app = {0};
-    BacaError error = {0};
-    if (!baca_app_init(&app, path, true, &error)) {
+    MereaderTuiApp app = {0};
+    MereaderTuiError error = {0};
+    if (!mereader_tui_app_init(&app, path, true, &error)) {
         (void)fprintf(stderr, "PDF PTY init: %s\n", error.message);
         return 120;
     }
-    const char *initial_progress = getenv("BACA_PDF_PTY_INITIAL_PROGRESS");
+    const char *initial_progress = getenv("MEREADER_TUI_PDF_PTY_INITIAL_PROGRESS");
     if (initial_progress != NULL) {
         errno = 0;
         char *progress_end = NULL;
         const double parsed_progress = strtod(initial_progress, &progress_end);
         if (errno != 0 || progress_end == initial_progress || *progress_end != '\0' ||
             !isfinite(parsed_progress) || parsed_progress < 0.0 || parsed_progress > 1.0) {
-            (void)baca_app_free(&app, NULL);
+            (void)mereader_tui_app_free(&app, NULL);
             return 123;
         }
         app.saved_progress = parsed_progress;
     }
     app.external_opener = pdf_test_opener;
     app.external_opener_data = &descriptor;
-    const int run_result = baca_app_run(&app, &error);
-    BacaError free_error = {0};
-    if (!baca_app_free(&app, &free_error)) {
+    const int run_result = mereader_tui_app_run(&app, &error);
+    MereaderTuiError free_error = {0};
+    if (!mereader_tui_app_free(&app, &free_error)) {
         (void)fprintf(stderr, "PDF PTY save: %s\n", free_error.message);
         (void)close(descriptor);
         return 119;
@@ -253,13 +253,13 @@ int baca_pdf_pty_child(void) {
     return run_result;
 }
 
-static bool pdf_drain_fd(int descriptor, BacaString *output) {
+static bool pdf_drain_fd(int descriptor, MereaderTuiString *output) {
     char buffer[8192] = {0};
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     for (;;) {
         const ssize_t length = read(descriptor, buffer, sizeof(buffer));
         if (length > 0) {
-            if (!baca_string_append_n(output, buffer, (size_t)length, &error)) {
+            if (!mereader_tui_string_append_n(output, buffer, (size_t)length, &error)) {
                 return false;
             }
         } else if (length < 0 && errno == EINTR) {
@@ -272,7 +272,7 @@ static bool pdf_drain_fd(int descriptor, BacaString *output) {
     }
 }
 
-static bool pdf_wait_for(int descriptor, BacaString *output, size_t start, const char *needle) {
+static bool pdf_wait_for(int descriptor, MereaderTuiString *output, size_t start, const char *needle) {
     for (unsigned attempt = 0U; attempt < 750U; ++attempt) {
         struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
         const int ready = poll(&poll_descriptor, 1U, 20);
@@ -289,7 +289,7 @@ static bool pdf_wait_for(int descriptor, BacaString *output, size_t start, const
     return false;
 }
 
-static bool pdf_drain_until_idle(int descriptor, BacaString *output) {
+static bool pdf_drain_until_idle(int descriptor, MereaderTuiString *output) {
     for (unsigned attempt = 0U; attempt < 50U; ++attempt) {
         struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
         const int ready = poll(&poll_descriptor, 1U, 100);
@@ -348,30 +348,30 @@ static char *create_key_conflict_epub_fixture(const char *relative) {
         "</metadata><manifest><item id=\"chapter\" href=\"chapter.xhtml\" "
         "media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"chapter\"/>"
         "</spine></package>";
-    BacaString chapter = {0};
-    BacaError error = {0};
-    if (!baca_string_append(&chapter,
+    MereaderTuiString chapter = {0};
+    MereaderTuiError error = {0};
+    if (!mereader_tui_string_append(&chapter,
                             "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>NON_PDF_START</p>",
                             &error)) {
         return NULL;
     }
     for (int line = 0; line < 40; ++line) {
-        if (!baca_string_append(&chapter, "<p>filler line</p>", &error)) {
-            baca_string_free(&chapter);
+        if (!mereader_tui_string_append(&chapter, "<p>filler line</p>", &error)) {
+            mereader_tui_string_free(&chapter);
             return NULL;
         }
     }
-    if (!baca_string_append(&chapter, "<p>CONFLICT_TARGET</p></body></html>", &error)) {
-        baca_string_free(&chapter);
+    if (!mereader_tui_string_append(&chapter, "<p>CONFLICT_TARGET</p></body></html>", &error)) {
+        mereader_tui_string_free(&chapter);
         return NULL;
     }
 
-    char *path = baca_test_path(relative);
-    char *directory = path == NULL ? NULL : baca_path_dirname(path, &error);
-    if (path == NULL || directory == NULL || !baca_mkdirs(directory, &error)) {
+    char *path = mereader_tui_test_path(relative);
+    char *directory = path == NULL ? NULL : mereader_tui_path_dirname(path, &error);
+    if (path == NULL || directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
-        baca_string_free(&chapter);
+        mereader_tui_string_free(&chapter);
         return NULL;
     }
     free(directory);
@@ -379,7 +379,7 @@ static char *create_key_conflict_epub_fixture(const char *relative) {
     zip_t *archive = zip_open(path, ZIP_CREATE | ZIP_TRUNCATE, &zip_error);
     if (archive == NULL) {
         free(path);
-        baca_string_free(&chapter);
+        mereader_tui_string_free(&chapter);
         return NULL;
     }
     const bool added = pdf_zip_add(archive, "mimetype", mimetype, true) &&
@@ -388,33 +388,33 @@ static char *create_key_conflict_epub_fixture(const char *relative) {
                        pdf_zip_add(archive, "OEBPS/chapter.xhtml", chapter.data, false);
     if (!added) {
         zip_discard(archive);
-        baca_string_free(&chapter);
+        mereader_tui_string_free(&chapter);
         free(path);
         return NULL;
     }
     if (zip_close(archive) != 0) {
         zip_discard(archive);
-        baca_string_free(&chapter);
+        mereader_tui_string_free(&chapter);
         free(path);
         return NULL;
     }
-    baca_string_free(&chapter);
+    mereader_tui_string_free(&chapter);
     return path;
 }
 
 static char *create_raw_page_pdf_fixture(const char *relative, const char *width, const char *height) {
-    BacaString pdf = {0};
-    BacaError error = {0};
+    MereaderTuiString pdf = {0};
+    MereaderTuiError error = {0};
     size_t offsets[5] = {0};
-    if (!baca_string_append(&pdf, "%PDF-1.7\n%TEST\n", &error)) {
+    if (!mereader_tui_string_append(&pdf, "%PDF-1.7\n%TEST\n", &error)) {
         return NULL;
     }
     offsets[1] = pdf.length;
-    if (!baca_string_append(&pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n", &error)) {
+    if (!mereader_tui_string_append(&pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n", &error)) {
         goto fail;
     }
     offsets[2] = pdf.length;
-    if (!baca_string_append(&pdf, "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n", &error)) {
+    if (!mereader_tui_string_append(&pdf, "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n", &error)) {
         goto fail;
     }
     offsets[3] = pdf.length;
@@ -424,11 +424,11 @@ static char *create_raw_page_pdf_fixture(const char *relative, const char *width
                                      "/Resources << >> /Contents 4 0 R >>\nendobj\n",
                                      width, height);
     if (page_length <= 0 || (size_t)page_length >= sizeof(page) ||
-        !baca_string_append_n(&pdf, page, (size_t)page_length, &error)) {
+        !mereader_tui_string_append_n(&pdf, page, (size_t)page_length, &error)) {
         goto fail;
     }
     offsets[4] = pdf.length;
-    if (!baca_string_append(&pdf, "4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n", &error)) {
+    if (!mereader_tui_string_append(&pdf, "4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n", &error)) {
         goto fail;
     }
     const size_t xref = pdf.length;
@@ -441,26 +441,26 @@ static char *create_raw_page_pdf_fixture(const char *relative, const char *width
         "startxref\n%zu\n%%%%EOF\n",
         offsets[1], offsets[2], offsets[3], offsets[4], xref);
     if (trailer_length <= 0 || (size_t)trailer_length >= sizeof(trailer) ||
-        !baca_string_append_n(&pdf, trailer, (size_t)trailer_length, &error) ||
-        !baca_test_write(relative, pdf.data, pdf.length)) {
+        !mereader_tui_string_append_n(&pdf, trailer, (size_t)trailer_length, &error) ||
+        !mereader_tui_test_write(relative, pdf.data, pdf.length)) {
         goto fail;
     }
-    baca_string_free(&pdf);
-    return baca_test_path(relative);
+    mereader_tui_string_free(&pdf);
+    return mereader_tui_test_path(relative);
 
 fail:
-    baca_string_free(&pdf);
+    mereader_tui_string_free(&pdf);
     return NULL;
 }
 
 static char *create_tall_link_pdf_fixture(const char *relative) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -527,36 +527,36 @@ static char *create_pdf_actions_fixture(const char *relative) {
         {malformed_annotation, sizeof(malformed_annotation) - 1U},
     };
 
-    BacaString pdf = {0};
-    BacaError error = {0};
-    size_t offsets[BACA_ARRAY_LEN(objects)] = {0};
-    if (!baca_string_append(&pdf, "%PDF-1.7\n%TEST\n", &error)) {
+    MereaderTuiString pdf = {0};
+    MereaderTuiError error = {0};
+    size_t offsets[MEREADER_TUI_ARRAY_LEN(objects)] = {0};
+    if (!mereader_tui_string_append(&pdf, "%PDF-1.7\n%TEST\n", &error)) {
         return NULL;
     }
-    for (size_t object = 1U; object < BACA_ARRAY_LEN(objects); ++object) {
+    for (size_t object = 1U; object < MEREADER_TUI_ARRAY_LEN(objects); ++object) {
         offsets[object] = pdf.length;
         char header[32] = {0};
         const int header_length = snprintf(header, sizeof(header), "%zu 0 obj\n", object);
         if (header_length <= 0 || (size_t)header_length >= sizeof(header) ||
-            !baca_string_append_n(&pdf, header, (size_t)header_length, &error) ||
-            !baca_string_append_n(&pdf, objects[object].value, objects[object].length, &error) ||
-            !baca_string_append(&pdf, "\nendobj\n", &error)) {
-            baca_string_free(&pdf);
+            !mereader_tui_string_append_n(&pdf, header, (size_t)header_length, &error) ||
+            !mereader_tui_string_append_n(&pdf, objects[object].value, objects[object].length, &error) ||
+            !mereader_tui_string_append(&pdf, "\nendobj\n", &error)) {
+            mereader_tui_string_free(&pdf);
             return NULL;
         }
     }
 
     const size_t xref = pdf.length;
-    if (!baca_string_append(&pdf, "xref\n0 14\n0000000000 65535 f \n", &error)) {
-        baca_string_free(&pdf);
+    if (!mereader_tui_string_append(&pdf, "xref\n0 14\n0000000000 65535 f \n", &error)) {
+        mereader_tui_string_free(&pdf);
         return NULL;
     }
-    for (size_t object = 1U; object < BACA_ARRAY_LEN(objects); ++object) {
+    for (size_t object = 1U; object < MEREADER_TUI_ARRAY_LEN(objects); ++object) {
         char entry[32] = {0};
         const int entry_length = snprintf(entry, sizeof(entry), "%010zu 00000 n \n", offsets[object]);
         if (entry_length <= 0 || (size_t)entry_length >= sizeof(entry) ||
-            !baca_string_append_n(&pdf, entry, (size_t)entry_length, &error)) {
-            baca_string_free(&pdf);
+            !mereader_tui_string_append_n(&pdf, entry, (size_t)entry_length, &error)) {
+            mereader_tui_string_free(&pdf);
             return NULL;
         }
     }
@@ -568,20 +568,20 @@ static char *create_pdf_actions_fixture(const char *relative) {
         "startxref\n%zu\n%%%%EOF\n",
         xref);
     const bool written = trailer_length > 0 && (size_t)trailer_length < sizeof(trailer) &&
-                         baca_string_append_n(&pdf, trailer, (size_t)trailer_length, &error) &&
-                         baca_test_write(relative, pdf.data, pdf.length);
-    baca_string_free(&pdf);
-    return written ? baca_test_path(relative) : NULL;
+                         mereader_tui_string_append_n(&pdf, trailer, (size_t)trailer_length, &error) &&
+                         mereader_tui_test_write(relative, pdf.data, pdf.length);
+    mereader_tui_string_free(&pdf);
+    return written ? mereader_tui_test_path(relative) : NULL;
 }
 
 static char *create_pdf_fixture(const char *relative, bool huge_page, bool varied_pages) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -648,13 +648,13 @@ static char *create_pdf_fixture(const char *relative, bool huge_page, bool varie
 }
 
 static char *create_many_page_pdf_fixture(const char *relative) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -678,13 +678,13 @@ static char *create_many_page_pdf_fixture(const char *relative) {
 }
 
 static char *create_many_outline_pdf_fixture(const char *relative) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -714,13 +714,13 @@ static char *create_many_outline_pdf_fixture(const char *relative) {
 }
 
 static char *create_link_budget_pdf_fixture(const char *relative) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -728,8 +728,8 @@ static char *create_link_budget_pdf_fixture(const char *relative) {
     free(directory);
 
     static const char prefix[] = "https://budget.test/";
-    char *target = baca_reallocarray(NULL, PDF_STRESS_TARGET_BYTES, sizeof(*target), &error);
-    char *attributes = baca_reallocarray(NULL, PDF_STRESS_TARGET_BYTES + 7U, sizeof(*attributes), &error);
+    char *target = mereader_tui_reallocarray(NULL, PDF_STRESS_TARGET_BYTES, sizeof(*target), &error);
+    char *attributes = mereader_tui_reallocarray(NULL, PDF_STRESS_TARGET_BYTES + 7U, sizeof(*attributes), &error);
     if (target == NULL || attributes == NULL) {
         free(attributes);
         free(target);
@@ -770,13 +770,13 @@ static char *create_link_budget_pdf_fixture(const char *relative) {
 }
 
 static char *create_tall_destination_pdf_fixture(const char *relative) {
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return NULL;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -816,13 +816,13 @@ static char *create_tall_destination_pdf_fixture(const char *relative) {
 static bool run_pdf_pty(PdfPtyResult *result) {
     char *path = create_pdf_fixture("pdf/pty/reader.pdf", false, false);
     if (path == NULL ||
-        !baca_test_write_text("pdf/pty/config/mereader-tui/config.ini",
+        !mereader_tui_test_write_text("pdf/pty/config/mereader-tui/config.ini",
                               "[General]\nImageMode=kitty\nMaxTextWidth=80\nPageScrollDuration=0\n"
                               "[Keymaps]\nTogglePdfView=ctrl+x\nOpenHelp=z\n")) {
         free(path);
         return false;
     }
-    char *config_root = baca_test_path("pdf/pty/config");
+    char *config_root = mereader_tui_test_path("pdf/pty/config");
     if (config_root == NULL) {
         free(path);
         return false;
@@ -861,9 +861,9 @@ static bool run_pdf_pty(PdfPtyResult *result) {
         (void)setenv("XDG_CONFIG_HOME", config_root, 1);
         char descriptor[32] = {0};
         (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
-        (void)setenv("BACA_PDF_PTY_CHILD", "1", 1);
-        (void)setenv("BACA_PDF_PTY_PATH", path, 1);
-        (void)setenv("BACA_PDF_PTY_OPEN_FD", descriptor, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_CHILD", "1", 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_PATH", path, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_OPEN_FD", descriptor, 1);
         (void)execl("./build/tests/test_mereader_tui", "test_mereader_tui", (char *)NULL);
         _exit(127);
     }
@@ -1014,17 +1014,17 @@ cleanup:
 }
 
 static bool pdf_saved_progress(const char *cache_root, const char *path, double *progress) {
-    BacaError error = {0};
-    char *database_path = baca_path_join(cache_root, "mereader-tui/mereader-tui.db", &error);
+    MereaderTuiError error = {0};
+    char *database_path = mereader_tui_path_join(cache_root, "mereader-tui/mereader-tui.db", &error);
     if (database_path == NULL) {
         return false;
     }
-    BacaDatabase database = {0};
-    BacaHistory history = {0};
+    MereaderTuiDatabase database = {0};
+    MereaderTuiHistory history = {0};
     bool found = false;
-    if (baca_database_open(&database, database_path, &error) &&
-        baca_database_migrate(&database, &error) &&
-        baca_database_history(&database, false, &history, &error)) {
+    if (mereader_tui_database_open(&database, database_path, &error) &&
+        mereader_tui_database_migrate(&database, &error) &&
+        mereader_tui_database_history(&database, false, &history, &error)) {
         for (size_t index = 0U; index < history.length; ++index) {
             if (history.items[index].filepath != NULL && strcmp(history.items[index].filepath, path) == 0) {
                 *progress = history.items[index].reading_progress;
@@ -1033,20 +1033,20 @@ static bool pdf_saved_progress(const char *cache_root, const char *path, double 
             }
         }
     }
-    baca_history_free(&history);
-    baca_database_close(&database);
+    mereader_tui_history_free(&history);
+    mereader_tui_database_close(&database);
     free(database_path);
     return found;
 }
 
 static bool run_pdf_progress_pty(const char *name, const char *path, const struct winsize *size,
                                  bool restored_complete, bool press_end, double *progress,
-                                 BacaString *output) {
+                                 MereaderTuiString *output) {
     char config_relative[192] = {0};
     const int config_length = snprintf(config_relative, sizeof(config_relative),
                                         "pdf/progress/%s/config/mereader-tui/config.ini", name);
     if (config_length <= 0 || (size_t)config_length >= sizeof(config_relative) ||
-        !baca_test_write_text(config_relative,
+        !mereader_tui_test_write_text(config_relative,
                               "[General]\nImageMode=kitty\nMaxTextWidth=80\nPageScrollDuration=0\n")) {
         return false;
     }
@@ -1063,11 +1063,11 @@ static bool run_pdf_progress_pty(const char *name, const char *path, const struc
                                            root_relative);
     if (config_root_length <= 0 || (size_t)config_root_length >= sizeof(config_root_relative) ||
         cache_root_length <= 0 || (size_t)cache_root_length >= sizeof(cache_root_relative) ||
-        !baca_test_mkdir(cache_root_relative)) {
+        !mereader_tui_test_mkdir(cache_root_relative)) {
         return false;
     }
-    char *config_root = baca_test_path(config_root_relative);
-    char *cache_root = baca_test_path(cache_root_relative);
+    char *config_root = mereader_tui_test_path(config_root_relative);
+    char *cache_root = mereader_tui_test_path(cache_root_relative);
     if (config_root == NULL || cache_root == NULL) {
         free(cache_root);
         free(config_root);
@@ -1101,15 +1101,15 @@ static bool run_pdf_progress_pty(const char *name, const char *path, const struc
         (void)setenv("XDG_CONFIG_HOME", config_root, 1);
         (void)setenv("XDG_CACHE_HOME", cache_root, 1);
         if (restored_complete) {
-            (void)setenv("BACA_PDF_PTY_INITIAL_PROGRESS", "1", 1);
+            (void)setenv("MEREADER_TUI_PDF_PTY_INITIAL_PROGRESS", "1", 1);
         } else {
-            (void)unsetenv("BACA_PDF_PTY_INITIAL_PROGRESS");
+            (void)unsetenv("MEREADER_TUI_PDF_PTY_INITIAL_PROGRESS");
         }
         char descriptor[32] = {0};
         (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
-        (void)setenv("BACA_PDF_PTY_CHILD", "1", 1);
-        (void)setenv("BACA_PDF_PTY_PATH", path, 1);
-        (void)setenv("BACA_PDF_PTY_OPEN_FD", descriptor, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_CHILD", "1", 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_PATH", path, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_OPEN_FD", descriptor, 1);
         (void)execl("./build/tests/test_mereader_tui", "test_mereader_tui", (char *)NULL);
         _exit(127);
     }
@@ -1152,18 +1152,18 @@ static bool run_pdf_progress_pty(const char *name, const char *path, const struc
     return ok;
 }
 
-static bool run_non_pdf_key_conflict_pty(BacaString *output) {
+static bool run_non_pdf_key_conflict_pty(MereaderTuiString *output) {
     char *path = create_key_conflict_epub_fixture("pdf/key-conflict/reader.epub");
     if (path == NULL ||
-        !baca_test_write_text("pdf/key-conflict/config/mereader-tui/config.ini",
+        !mereader_tui_test_write_text("pdf/key-conflict/config/mereader-tui/config.ini",
                               "[General]\nImageMode=placeholder\nMaxTextWidth=80\nPageScrollDuration=0\n"
                               "[Keymaps]\nConfirm=v\nTogglePdfView=v\n") ||
-        !baca_test_mkdir("pdf/key-conflict/cache")) {
+        !mereader_tui_test_mkdir("pdf/key-conflict/cache")) {
         free(path);
         return false;
     }
-    char *config_root = baca_test_path("pdf/key-conflict/config");
-    char *cache_root = baca_test_path("pdf/key-conflict/cache");
+    char *config_root = mereader_tui_test_path("pdf/key-conflict/config");
+    char *cache_root = mereader_tui_test_path("pdf/key-conflict/cache");
     if (config_root == NULL || cache_root == NULL) {
         free(cache_root);
         free(config_root);
@@ -1229,7 +1229,7 @@ static bool run_non_pdf_key_conflict_pty(BacaString *output) {
     return ok && completed && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static bool pdf_wait_for_child_exit(pid_t child, int master, BacaString *output, int *status) {
+static bool pdf_wait_for_child_exit(pid_t child, int master, MereaderTuiString *output, int *status) {
     for (unsigned attempt = 0U; attempt < 750U; ++attempt) {
         (void)pdf_drain_fd(master, output);
         const pid_t waited = waitpid(child, status, WNOHANG);
@@ -1245,19 +1245,19 @@ static bool pdf_wait_for_child_exit(pid_t child, int master, BacaString *output,
     return false;
 }
 
-static bool run_pdf_current_page_search_pty(BacaString *output, unsigned *stage) {
+static bool run_pdf_current_page_search_pty(MereaderTuiString *output, unsigned *stage) {
     *stage = 0U;
     char *path = create_tall_destination_pdf_fixture("pdf/search-pty/reader.pdf");
     if (path == NULL ||
-        !baca_test_write_text("pdf/search-pty/config/mereader-tui/config.ini",
+        !mereader_tui_test_write_text("pdf/search-pty/config/mereader-tui/config.ini",
                                "[General]\nImageMode=kitty\nMaxTextWidth=80\nPageScrollDuration=0\n"
                                "[Keymaps]\nTogglePdfView=ctrl+x\nSearchBackward=u\n") ||
-        !baca_test_mkdir("pdf/search-pty/cache")) {
+        !mereader_tui_test_mkdir("pdf/search-pty/cache")) {
         free(path);
         return false;
     }
-    char *config_root = baca_test_path("pdf/search-pty/config");
-    char *cache_root = baca_test_path("pdf/search-pty/cache");
+    char *config_root = mereader_tui_test_path("pdf/search-pty/config");
+    char *cache_root = mereader_tui_test_path("pdf/search-pty/cache");
     if (config_root == NULL || cache_root == NULL) {
         free(cache_root);
         free(config_root);
@@ -1299,12 +1299,12 @@ static bool run_pdf_current_page_search_pty(BacaString *output, unsigned *stage)
         (void)unsetenv("STY");
         (void)setenv("XDG_CONFIG_HOME", config_root, 1);
         (void)setenv("XDG_CACHE_HOME", cache_root, 1);
-        (void)setenv("BACA_PDF_PTY_INITIAL_PROGRESS", "0.5", 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_INITIAL_PROGRESS", "0.5", 1);
         char descriptor[32] = {0};
         (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
-        (void)setenv("BACA_PDF_PTY_CHILD", "1", 1);
-        (void)setenv("BACA_PDF_PTY_PATH", path, 1);
-        (void)setenv("BACA_PDF_PTY_OPEN_FD", descriptor, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_CHILD", "1", 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_PATH", path, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_OPEN_FD", descriptor, 1);
         (void)execl("./build/tests/test_mereader_tui", "test_mereader_tui", (char *)NULL);
         _exit(127);
     }
@@ -1355,18 +1355,18 @@ static bool run_pdf_current_page_search_pty(BacaString *output, unsigned *stage)
     return ok && completed && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static bool run_pdf_resize_retry_pty(BacaString *output, unsigned *stage) {
+static bool run_pdf_resize_retry_pty(MereaderTuiString *output, unsigned *stage) {
     *stage = 0U;
     char *path = create_tall_link_pdf_fixture("pdf/resize-retry/reader.pdf");
     if (path == NULL ||
-        !baca_test_write_text("pdf/resize-retry/config/mereader-tui/config.ini",
+        !mereader_tui_test_write_text("pdf/resize-retry/config/mereader-tui/config.ini",
                               "[General]\nImageMode=kitty\nMaxTextWidth=80\nPageScrollDuration=0\n") ||
-        !baca_test_mkdir("pdf/resize-retry/cache")) {
+        !mereader_tui_test_mkdir("pdf/resize-retry/cache")) {
         free(path);
         return false;
     }
-    char *config_root = baca_test_path("pdf/resize-retry/config");
-    char *cache_root = baca_test_path("pdf/resize-retry/cache");
+    char *config_root = mereader_tui_test_path("pdf/resize-retry/config");
+    char *cache_root = mereader_tui_test_path("pdf/resize-retry/cache");
     if (config_root == NULL || cache_root == NULL) {
         free(cache_root);
         free(config_root);
@@ -1408,18 +1408,18 @@ static bool run_pdf_resize_retry_pty(BacaString *output, unsigned *stage) {
         (void)unsetenv("STY");
         (void)setenv("XDG_CONFIG_HOME", config_root, 1);
         (void)setenv("XDG_CACHE_HOME", cache_root, 1);
-        (void)unsetenv("BACA_PDF_PTY_INITIAL_PROGRESS");
+        (void)unsetenv("MEREADER_TUI_PDF_PTY_INITIAL_PROGRESS");
         char descriptor[32] = {0};
         (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
-        (void)setenv("BACA_PDF_PTY_CHILD", "1", 1);
-        (void)setenv("BACA_PDF_PTY_PATH", path, 1);
-        (void)setenv("BACA_PDF_PTY_OPEN_FD", descriptor, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_CHILD", "1", 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_PATH", path, 1);
+        (void)setenv("MEREADER_TUI_PDF_PTY_OPEN_FD", descriptor, 1);
         (void)execl("./build/tests/test_mereader_tui", "test_mereader_tui", (char *)NULL);
         _exit(127);
     }
 
     (void)close(opener_pipe[1]);
-    BacaString opened = {0};
+    MereaderTuiString opened = {0};
     bool ok = fcntl(master, F_SETFL, O_NONBLOCK) == 0 &&
               fcntl(opener_pipe[0], F_SETFL, O_NONBLOCK) == 0 &&
               pdf_wait_for(master, output, 0U, "target image exceeds");
@@ -1478,14 +1478,14 @@ static bool run_pdf_resize_retry_pty(BacaString *output, unsigned *stage) {
     (void)pdf_drain_fd(master, output);
     (void)close(master);
     (void)close(opener_pipe[0]);
-    baca_string_free(&opened);
+    mereader_tui_string_free(&opened);
     free(cache_root);
     free(config_root);
     free(path);
     return ok && completed && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static const BacaImageLink *find_image_link(const BacaImageBlock *image, const char *target) {
+static const MereaderTuiImageLink *find_image_link(const MereaderTuiImageBlock *image, const char *target) {
     for (size_t index = 0U; index < image->link_count; ++index) {
         if (image->links[index].target != NULL && strcmp(image->links[index].target, target) == 0) {
             return &image->links[index];
@@ -1509,26 +1509,26 @@ static bool pdf_target_y(const char *target, double *y) {
     return true;
 }
 
-static BacaTestResult test_destination_types_rotation_and_malformed_uri(void) {
+static MereaderTuiTestResult test_destination_types_rotation_and_malformed_uri(void) {
     char *path = create_pdf_actions_fixture("pdf/actions.pdf");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_SIZE(document.toc_count, 5U);
     static const char *const labels[] = {"XYZ", "FitH", "FitBH", "FitR", "Rotated"};
     static const double expected_y[] = {0.2, 0.25, 0.5, 0.6};
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(labels); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(labels); ++index) {
         TEST_ASSERT_STR(document.toc[index].label, labels[index]);
     }
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(expected_y); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(expected_y); ++index) {
         double y = -1.0;
         TEST_ASSERT(pdf_target_y(document.toc[index].target, &y));
         TEST_ASSERT_DOUBLE(y, expected_y[index], 1e-12);
     }
     TEST_ASSERT_STR(document.toc[4].target, "pdf://page/1");
 
-    const BacaImageBlock *image =
+    const MereaderTuiImageBlock *image =
         &document.blocks[document.sections[0].first_block].value.image;
     TEST_ASSERT_SIZE(image->link_count, 1U);
     const char *uri = image->links[0].target;
@@ -1536,48 +1536,48 @@ static BacaTestResult test_destination_types_rotation_and_malformed_uri(void) {
     TEST_ASSERT(strncmp(uri, "https://valid.test/", 19U) == 0);
     TEST_ASSERT(strstr(uri, "tail") != NULL);
 
-    BacaLayout fixed = {0};
-    TEST_ASSERT_MSG(baca_layout_build_presentation(&fixed, &document, 20, BACA_JUSTIFY_LEFT,
-                                                   BACA_PRESENTATION_FIXED, 1, 1, NULL, &error),
+    MereaderTuiLayout fixed = {0};
+    TEST_ASSERT_MSG(mereader_tui_layout_build_presentation(&fixed, &document, 20, MEREADER_TUI_JUSTIFY_LEFT,
+                                                   MEREADER_TUI_PRESENTATION_FIXED, 1, 1, NULL, &error),
                     "%s", error.message);
-    BacaSearchMatch *matches = NULL;
+    MereaderTuiSearchMatch *matches = NULL;
     size_t match_count = 0U;
-    TEST_ASSERT_MSG(baca_layout_search(&fixed, "tail", &matches, &match_count, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_layout_search(&fixed, "tail", &matches, &match_count, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(match_count, 1U);
     free(matches);
     matches = NULL;
     match_count = 0U;
-    TEST_ASSERT_MSG(baca_layout_search(&fixed, "not-present", &matches, &match_count, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_layout_search(&fixed, "not-present", &matches, &match_count, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(match_count, 0U);
     free(matches);
 
-    baca_layout_free(&fixed);
-    baca_document_close(&document);
+    mereader_tui_layout_free(&fixed);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_ten_thousand_page_indexes_are_direct(void) {
+static MereaderTuiTestResult test_ten_thousand_page_indexes_are_direct(void) {
     enum { PAGE_COUNT = 10000 };
-    BacaDocument document = {
-        .format = BACA_FORMAT_PDF,
-        .default_presentation = BACA_PRESENTATION_FIXED,
+    MereaderTuiDocument document = {
+        .format = MEREADER_TUI_FORMAT_PDF,
+        .default_presentation = MEREADER_TUI_PRESENTATION_FIXED,
     };
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     for (size_t page = 0U; page < PAGE_COUNT; ++page) {
         char target[64] = {0};
         const int length = snprintf(target, sizeof(target), "pdf://page/%zu", page);
         TEST_ASSERT(length > 0 && (size_t)length < sizeof(target));
         const size_t first_block = document.block_count;
-        BacaBlock image = {
-            .kind = BACA_BLOCK_IMAGE,
-            .presentation = BACA_PRESENTATION_FIXED,
-            .section_id = baca_strdup(target, &error),
+        MereaderTuiBlock image = {
+            .kind = MEREADER_TUI_BLOCK_IMAGE,
+            .presentation = MEREADER_TUI_PRESENTATION_FIXED,
+            .section_id = mereader_tui_strdup(target, &error),
             .value.image = {
-                .uri = baca_strdup(target, &error),
-                .anchor = baca_strdup(target, &error),
+                .uri = mereader_tui_strdup(target, &error),
+                .anchor = mereader_tui_strdup(target, &error),
                 .page_index = (int)page,
                 .intrinsic_width = 1,
                 .intrinsic_height = 1,
@@ -1585,41 +1585,41 @@ static BacaTestResult test_ten_thousand_page_indexes_are_direct(void) {
         };
         TEST_ASSERT(image.section_id != NULL && image.value.image.uri != NULL &&
                     image.value.image.anchor != NULL);
-        TEST_ASSERT(baca_document_add_image_block(&document, &image, &error));
-        BacaBlock text = {
-            .kind = BACA_BLOCK_TEXT,
-            .presentation = BACA_PRESENTATION_REFLOW,
-            .section_id = baca_strdup(target, &error),
-            .value.text.text = baca_strdup("needle", &error),
+        TEST_ASSERT(mereader_tui_document_add_image_block(&document, &image, &error));
+        MereaderTuiBlock text = {
+            .kind = MEREADER_TUI_BLOCK_TEXT,
+            .presentation = MEREADER_TUI_PRESENTATION_REFLOW,
+            .section_id = mereader_tui_strdup(target, &error),
+            .value.text.text = mereader_tui_strdup("needle", &error),
         };
         TEST_ASSERT(text.section_id != NULL && text.value.text.text != NULL);
-        TEST_ASSERT(baca_document_add_text_block(&document, &text, &error));
-        BacaSection section = {
-            .id = baca_strdup(target, &error),
+        TEST_ASSERT(mereader_tui_document_add_text_block(&document, &text, &error));
+        MereaderTuiSection section = {
+            .id = mereader_tui_strdup(target, &error),
             .first_block = first_block,
             .block_count = 2U,
             .linear = true,
         };
-        TEST_ASSERT(section.id != NULL && baca_document_add_section(&document, &section, &error));
+        TEST_ASSERT(section.id != NULL && mereader_tui_document_add_section(&document, &section, &error));
     }
 
-    BacaLayout layout = {0};
-    TEST_ASSERT_MSG(baca_layout_build_presentation(&layout, &document, 1, BACA_JUSTIFY_LEFT,
-                                                   BACA_PRESENTATION_FIXED, 1, 1, NULL, &error),
+    MereaderTuiLayout layout = {0};
+    TEST_ASSERT_MSG(mereader_tui_layout_build_presentation(&layout, &document, 1, MEREADER_TUI_JUSTIFY_LEFT,
+                                                   MEREADER_TUI_PRESENTATION_FIXED, 1, 1, NULL, &error),
                     "%s", error.message);
     TEST_ASSERT_SIZE(layout.section_first_line[PAGE_COUNT - 1U], (PAGE_COUNT - 1U) * 2U);
     TEST_ASSERT_SIZE(layout.block_section[(PAGE_COUNT - 1U) * 2U + 1U], PAGE_COUNT - 1U);
     size_t comparisons = 0U;
-    TEST_ASSERT_SIZE(baca_layout_section_for_line(
+    TEST_ASSERT_SIZE(mereader_tui_layout_section_for_line(
                          &layout, layout.section_first_line[PAGE_COUNT - 1U], &comparisons),
                      PAGE_COUNT - 1U);
     TEST_ASSERT(comparisons <= 15U);
-    TEST_ASSERT_SIZE(baca_layout_target_line(&layout, "pdf://page/9999"),
+    TEST_ASSERT_SIZE(mereader_tui_layout_target_line(&layout, "pdf://page/9999"),
                      layout.section_first_line[PAGE_COUNT - 1U]);
 
-    BacaSearchMatch *matches = NULL;
+    MereaderTuiSearchMatch *matches = NULL;
     size_t match_count = 0U;
-    TEST_ASSERT_MSG(baca_layout_search(&layout, "needle", &matches, &match_count, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_layout_search(&layout, "needle", &matches, &match_count, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(match_count, PAGE_COUNT);
     for (size_t page = 0U; page < PAGE_COUNT; ++page) {
@@ -1628,19 +1628,19 @@ static BacaTestResult test_ten_thousand_page_indexes_are_direct(void) {
     }
 
     free(matches);
-    baca_layout_free(&layout);
-    baca_document_close(&document);
-    return BACA_TEST_PASS;
+    mereader_tui_layout_free(&layout);
+    mereader_tui_document_close(&document);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_open_metadata_toc_text_links_and_cleanup(void) {
+static MereaderTuiTestResult test_open_metadata_toc_text_links_and_cleanup(void) {
     char *path = create_pdf_fixture("pdf/fixture.data", false, true);
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_PDF);
-    TEST_ASSERT_INT(document.default_presentation, BACA_PRESENTATION_FIXED);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_PDF);
+    TEST_ASSERT_INT(document.default_presentation, MEREADER_TUI_PRESENTATION_FIXED);
     TEST_ASSERT_STR(document.metadata.title, "mereader-tui PDF Fixture");
     TEST_ASSERT_STR(document.metadata.author, "Fixture Author");
     TEST_ASSERT_STR(document.metadata.description, "Fixture subject");
@@ -1657,23 +1657,23 @@ static BacaTestResult test_open_metadata_toc_text_links_and_cleanup(void) {
     TEST_ASSERT_SIZE(document.sections[0].first_block, 0U);
     TEST_ASSERT(document.sections[0].block_count >= 2U);
 
-    const BacaBlock *first_image = &document.blocks[document.sections[0].first_block];
-    const BacaBlock *first_text = &document.blocks[document.sections[0].first_block + 1U];
-    TEST_ASSERT_INT(first_image->kind, BACA_BLOCK_IMAGE);
-    TEST_ASSERT_INT(first_image->presentation, BACA_PRESENTATION_FIXED);
+    const MereaderTuiBlock *first_image = &document.blocks[document.sections[0].first_block];
+    const MereaderTuiBlock *first_text = &document.blocks[document.sections[0].first_block + 1U];
+    TEST_ASSERT_INT(first_image->kind, MEREADER_TUI_BLOCK_IMAGE);
+    TEST_ASSERT_INT(first_image->presentation, MEREADER_TUI_PRESENTATION_FIXED);
     TEST_ASSERT_INT(first_image->value.image.page_index, 0);
     TEST_ASSERT_INT(first_image->value.image.intrinsic_width, 612);
     TEST_ASSERT_INT(first_image->value.image.intrinsic_height, 792);
-    TEST_ASSERT_INT(first_text->kind, BACA_BLOCK_TEXT);
-    TEST_ASSERT_INT(first_text->presentation, BACA_PRESENTATION_REFLOW);
+    TEST_ASSERT_INT(first_text->kind, MEREADER_TUI_BLOCK_TEXT);
+    TEST_ASSERT_INT(first_text->presentation, MEREADER_TUI_PRESENTATION_REFLOW);
     TEST_ASSERT(strstr(first_text->value.text.text, "First page alpha") != NULL);
     TEST_ASSERT(strstr(first_text->value.text.text, "caf\xc3\xa9") != NULL);
     TEST_ASSERT(strstr(first_text->value.text.text, "\xce\xa9") != NULL);
 
-    const BacaImageBlock *image = &first_image->value.image;
+    const MereaderTuiImageBlock *image = &first_image->value.image;
     TEST_ASSERT_SIZE(image->link_count, 2U);
-    const BacaImageLink *external = find_image_link(image, "https://example.test/pdf-link");
-    const BacaImageLink *internal = find_image_link(image, "pdf://page/1");
+    const MereaderTuiImageLink *external = find_image_link(image, "https://example.test/pdf-link");
+    const MereaderTuiImageLink *internal = find_image_link(image, "pdf://page/1");
     TEST_ASSERT(external != NULL && internal != NULL);
     TEST_ASSERT(external->x >= 0.0 && external->x < 1.0 && external->y >= 0.0 && external->y < 1.0);
     TEST_ASSERT(external->width > 0.0 && external->height > 0.0);
@@ -1691,72 +1691,72 @@ static BacaTestResult test_open_metadata_toc_text_links_and_cleanup(void) {
     TEST_ASSERT_STR(document.toc[2].target, "https://example.test/pdf-outline");
     TEST_ASSERT_SIZE(document.toc[2].section_index, SIZE_MAX);
 
-    const BacaBlock *second_image = &document.blocks[document.sections[1].first_block];
+    const MereaderTuiBlock *second_image = &document.blocks[document.sections[1].first_block];
     TEST_ASSERT_INT(second_image->value.image.intrinsic_width, 792);
     TEST_ASSERT_INT(second_image->value.image.intrinsic_height, 612);
-    const BacaBlock *scanned_text = &document.blocks[document.sections[2].first_block + 1U];
+    const MereaderTuiBlock *scanned_text = &document.blocks[document.sections[2].first_block + 1U];
     TEST_ASSERT_STR(scanned_text->value.text.text, "");
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     TEST_ASSERT(document.path == NULL && document.backend == NULL && document.blocks == NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_fixed_reflow_search_and_link_lines(void) {
+static MereaderTuiTestResult test_fixed_reflow_search_and_link_lines(void) {
     char *path = create_pdf_fixture("pdf/layout.pdf", false, true);
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    BacaLayout fixed = {0};
-    BacaLayout reflow = {0};
-    TEST_ASSERT_MSG(baca_layout_build_presentation(&fixed, &document, 40, BACA_JUSTIFY_LEFT,
-                                                   BACA_PRESENTATION_FIXED, 8, 16, NULL, &error),
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiLayout fixed = {0};
+    MereaderTuiLayout reflow = {0};
+    TEST_ASSERT_MSG(mereader_tui_layout_build_presentation(&fixed, &document, 40, MEREADER_TUI_JUSTIFY_LEFT,
+                                                   MEREADER_TUI_PRESENTATION_FIXED, 8, 16, NULL, &error),
                     "%s", error.message);
     TEST_ASSERT(fixed.line_count > 3U);
     TEST_ASSERT_INT(fixed.lines[fixed.block_first_line[document.sections[0].first_block]].kind,
-                    BACA_LAYOUT_IMAGE);
+                    MEREADER_TUI_LAYOUT_IMAGE);
     for (size_t line = 0U; line < fixed.line_count; ++line) {
-        TEST_ASSERT(fixed.lines[line].kind != BACA_LAYOUT_TEXT);
+        TEST_ASSERT(fixed.lines[line].kind != MEREADER_TUI_LAYOUT_TEXT);
     }
 
-    BacaSearchMatch *matches = NULL;
+    MereaderTuiSearchMatch *matches = NULL;
     size_t match_count = 0U;
-    TEST_ASSERT_MSG(baca_layout_search(&fixed, "needle", &matches, &match_count, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_layout_search(&fixed, "needle", &matches, &match_count, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(match_count, 1U);
-    const size_t second_fixed_line = baca_layout_target_line(&fixed, "pdf://page/1");
-    const size_t third_fixed_line = baca_layout_target_line(&fixed, "pdf://page/2");
+    const size_t second_fixed_line = mereader_tui_layout_target_line(&fixed, "pdf://page/1");
+    const size_t third_fixed_line = mereader_tui_layout_target_line(&fixed, "pdf://page/2");
     TEST_ASSERT(matches[0].line > second_fixed_line && matches[0].line < third_fixed_line);
     TEST_ASSERT_SIZE(matches[0].block_index, document.sections[1].first_block + 1U);
     free(matches);
 
-    TEST_ASSERT_MSG(baca_layout_build_presentation(&reflow, &document, 24, BACA_JUSTIFY_LEFT,
-                                                   BACA_PRESENTATION_REFLOW, 1, 2, NULL, &error),
+    TEST_ASSERT_MSG(mereader_tui_layout_build_presentation(&reflow, &document, 24, MEREADER_TUI_JUSTIFY_LEFT,
+                                                   MEREADER_TUI_PRESENTATION_REFLOW, 1, 2, NULL, &error),
                     "%s", error.message);
     TEST_ASSERT(reflow.line_count > 3U);
     for (size_t line = 0U; line < reflow.line_count; ++line) {
-        TEST_ASSERT(reflow.lines[line].kind != BACA_LAYOUT_IMAGE);
+        TEST_ASSERT(reflow.lines[line].kind != MEREADER_TUI_LAYOUT_IMAGE);
     }
     matches = NULL;
     match_count = 0U;
-    TEST_ASSERT(baca_layout_search(&reflow, "needle", &matches, &match_count, &error));
+    TEST_ASSERT(mereader_tui_layout_search(&reflow, "needle", &matches, &match_count, &error));
     TEST_ASSERT_SIZE(match_count, 1U);
-    TEST_ASSERT(matches[0].line >= baca_layout_target_line(&reflow, "pdf://page/1"));
+    TEST_ASSERT(matches[0].line >= mereader_tui_layout_target_line(&reflow, "pdf://page/1"));
     free(matches);
 
     matches = NULL;
     match_count = 0U;
-    TEST_ASSERT(baca_layout_search(&reflow, "scan-secret", &matches, &match_count, &error));
+    TEST_ASSERT(mereader_tui_layout_search(&reflow, "scan-secret", &matches, &match_count, &error));
     TEST_ASSERT_SIZE(match_count, 0U);
     free(matches);
 
     bool found_external_line = false;
     for (size_t block_index = document.sections[0].first_block;
          block_index < document.sections[0].first_block + document.sections[0].block_count; ++block_index) {
-        const BacaBlock *block = &document.blocks[block_index];
-        if (block->kind == BACA_BLOCK_TEXT && block->value.text.text != NULL &&
+        const MereaderTuiBlock *block = &document.blocks[block_index];
+        if (block->kind == MEREADER_TUI_BLOCK_TEXT && block->value.text.text != NULL &&
             strstr(block->value.text.text, "https://example.test/pdf-link") != NULL) {
             TEST_ASSERT(block->value.text.span_count >= 1U);
             bool found_span = false;
@@ -1772,19 +1772,19 @@ static BacaTestResult test_fixed_reflow_search_and_link_lines(void) {
         }
     }
     TEST_ASSERT(found_external_line);
-    baca_layout_free(&reflow);
-    baca_layout_free(&fixed);
-    baca_document_close(&document);
+    mereader_tui_layout_free(&reflow);
+    mereader_tui_layout_free(&fixed);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_destination_coordinates_and_hidden_search_mapping(void) {
+static MereaderTuiTestResult test_destination_coordinates_and_hidden_search_mapping(void) {
     char *path = create_tall_destination_pdf_fixture("pdf/destinations-and-search.pdf");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_SIZE(document.toc_count, 2U);
     TEST_ASSERT(strncmp(document.toc[0].target, "pdf://page/0#y=", 15U) == 0);
     TEST_ASSERT(strncmp(document.toc[1].target, "pdf://page/0#y=", 15U) == 0);
@@ -1792,23 +1792,23 @@ static BacaTestResult test_destination_coordinates_and_hidden_search_mapping(voi
     TEST_ASSERT_SIZE(document.toc[0].section_index, 0U);
     TEST_ASSERT_SIZE(document.toc[1].section_index, 0U);
 
-    BacaLayout fixed = {0};
-    TEST_ASSERT_MSG(baca_layout_build_presentation(&fixed, &document, 40, BACA_JUSTIFY_LEFT,
-                                                   BACA_PRESENTATION_FIXED, 8, 16, NULL, &error),
+    MereaderTuiLayout fixed = {0};
+    TEST_ASSERT_MSG(mereader_tui_layout_build_presentation(&fixed, &document, 40, MEREADER_TUI_JUSTIFY_LEFT,
+                                                   MEREADER_TUI_PRESENTATION_FIXED, 8, 16, NULL, &error),
                     "%s", error.message);
-    const size_t page_start = baca_layout_target_line(&fixed, "pdf://page/0");
-    const size_t upper_target = baca_layout_target_line(&fixed, document.toc[0].target);
-    const size_t lower_target = baca_layout_target_line(&fixed, document.toc[1].target);
+    const size_t page_start = mereader_tui_layout_target_line(&fixed, "pdf://page/0");
+    const size_t upper_target = mereader_tui_layout_target_line(&fixed, document.toc[0].target);
+    const size_t lower_target = mereader_tui_layout_target_line(&fixed, document.toc[1].target);
     TEST_ASSERT(page_start != SIZE_MAX && upper_target != SIZE_MAX && lower_target != SIZE_MAX);
     TEST_ASSERT(upper_target > page_start && lower_target > upper_target + 20U);
-    TEST_ASSERT_SIZE(baca_layout_target_line(&fixed, "pdf://page/0#y=invalid"), page_start);
+    TEST_ASSERT_SIZE(mereader_tui_layout_target_line(&fixed, "pdf://page/0#y=invalid"), page_start);
     const size_t page_span = fixed.line_count - page_start - 1U;
     TEST_ASSERT_DOUBLE((double)(upper_target - page_start) / (double)page_span, 0.2, 0.03);
     TEST_ASSERT_DOUBLE((double)(lower_target - page_start) / (double)page_span, 0.8, 0.03);
 
-    BacaSearchMatch *matches = NULL;
+    MereaderTuiSearchMatch *matches = NULL;
     size_t match_count = 0U;
-    TEST_ASSERT_MSG(baca_layout_search(&fixed, "CURRENT_MATCH", &matches, &match_count, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_layout_search(&fixed, "CURRENT_MATCH", &matches, &match_count, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(match_count, 2U);
     TEST_ASSERT(matches[0].line > page_start && matches[1].line > matches[0].line + 20U);
@@ -1831,185 +1831,185 @@ static BacaTestResult test_destination_coordinates_and_hidden_search_mapping(voi
     TEST_ASSERT_SIZE(backward, 0U);
 
     free(matches);
-    baca_layout_free(&fixed);
-    baca_document_close(&document);
+    mereader_tui_layout_free(&fixed);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_lazy_render_dimensions_cache_theme_and_clipping(void) {
+static MereaderTuiTestResult test_lazy_render_dimensions_cache_theme_and_clipping(void) {
     char *path = create_pdf_fixture("pdf/render.pdf", false, true);
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
 
-    BacaResource direct = {0};
-    TEST_ASSERT_MSG(baca_document_render_page(&document, 0, 123, 157, 0x112233U, &direct, &error), "%s",
+    MereaderTuiResource direct = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_render_page(&document, 0, 123, 157, 0x112233U, &direct, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(direct.mime_type, "image/png");
     int width = 0;
     int height = 0;
-    TEST_ASSERT(baca_graphics_probe_resource(&direct, &width, &height, &error));
+    TEST_ASSERT(mereader_tui_graphics_probe_resource(&direct, &width, &height, &error));
     TEST_ASSERT_INT(width, 123);
     TEST_ASSERT_INT(height, 157);
-    baca_resource_free(&direct);
+    mereader_tui_resource_free(&direct);
 
-    BacaGraphicsContext *graphics = baca_graphics_create(
-        BACA_GRAPHICS_DEFAULT_CACHE_BYTES, BACA_GRAPHICS_MULTIPLEXER_NONE, 0xffffffU, &error);
+    MereaderTuiGraphicsContext *graphics = mereader_tui_graphics_create(
+        MEREADER_TUI_GRAPHICS_DEFAULT_CACHE_BYTES, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0xffffffU, &error);
     TEST_ASSERT(graphics != NULL);
-    TEST_ASSERT(baca_graphics_set_cell_pixels(graphics, 8, 16, &error));
-    BacaGraphicsSurface first = {0};
-    BacaGraphicsSurface repeated = {0};
-    TEST_ASSERT_MSG(baca_graphics_prepare(graphics, &document, document.sections[0].first_block, 20, 25,
+    TEST_ASSERT(mereader_tui_graphics_set_cell_pixels(graphics, 8, 16, &error));
+    MereaderTuiGraphicsSurface first = {0};
+    MereaderTuiGraphicsSurface repeated = {0};
+    TEST_ASSERT_MSG(mereader_tui_graphics_prepare(graphics, &document, document.sections[0].first_block, 20, 25,
                                           &first, &error),
                     "%s", error.message);
     TEST_ASSERT_INT(first.width, 160);
     TEST_ASSERT_INT(first.height, 400);
     TEST_ASSERT_INT(first.columns, 20);
     TEST_ASSERT_INT(first.rows, 25);
-    TEST_ASSERT_SIZE(baca_graphics_cache_stats(graphics).entries, 1U);
-    TEST_ASSERT(baca_graphics_prepare(graphics, &document, document.sections[0].first_block, 20, 25,
+    TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(graphics).entries, 1U);
+    TEST_ASSERT(mereader_tui_graphics_prepare(graphics, &document, document.sections[0].first_block, 20, 25,
                                       &repeated, &error));
     TEST_ASSERT_INT((int)repeated.image_id, (int)first.image_id);
-    TEST_ASSERT_SIZE(baca_graphics_cache_stats(graphics).entries, 1U);
+    TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(graphics).entries, 1U);
 
-    const BacaGraphicsPlacement placement = {
+    const MereaderTuiGraphicsPlacement placement = {
         .row = -5,
         .column = 2,
         .viewport_rows = 8,
         .viewport_columns = 30,
     };
     PdfCellCapture capture = {0};
-    TEST_ASSERT(baca_graphics_render_cells(&first, &placement, pdf_capture_cell, &capture, &error));
+    TEST_ASSERT(mereader_tui_graphics_render_cells(&first, &placement, pdf_capture_cell, &capture, &error));
     TEST_ASSERT_SIZE(capture.count, 8U * 20U);
     TEST_ASSERT_INT(capture.first_row, 0);
     TEST_ASSERT_INT(capture.last_row, 7);
 
-    baca_graphics_surface_release(&repeated);
-    baca_graphics_surface_release(&first);
-    TEST_ASSERT(baca_graphics_set_background(graphics, 0x000000U, &error));
-    TEST_ASSERT_SIZE(baca_graphics_cache_stats(graphics).entries, 0U);
-    TEST_ASSERT(baca_graphics_set_cell_pixels(graphics, 10, 20, &error));
-    TEST_ASSERT(baca_graphics_prepare(graphics, &document, document.sections[0].first_block, 36, 24,
+    mereader_tui_graphics_surface_release(&repeated);
+    mereader_tui_graphics_surface_release(&first);
+    TEST_ASSERT(mereader_tui_graphics_set_background(graphics, 0x000000U, &error));
+    TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(graphics).entries, 0U);
+    TEST_ASSERT(mereader_tui_graphics_set_cell_pixels(graphics, 10, 20, &error));
+    TEST_ASSERT(mereader_tui_graphics_prepare(graphics, &document, document.sections[0].first_block, 36, 24,
                                       &first, &error));
     TEST_ASSERT_INT(first.width, 360);
     TEST_ASSERT_INT(first.height, 480);
     TEST_ASSERT(first.pixels[0] == 255U && first.pixels[1] == 255U && first.pixels[2] == 255U);
-    baca_graphics_surface_release(&first);
-    baca_graphics_free(graphics);
-    baca_document_close(&document);
+    mereader_tui_graphics_surface_release(&first);
+    mereader_tui_graphics_free(graphics);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_large_vector_page_renders_to_bounded_output(void) {
+static MereaderTuiTestResult test_large_vector_page_renders_to_bounded_output(void) {
     char *path = create_raw_page_pdf_fixture("pdf/vector-large.pdf", "9000", "9000");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     const size_t block_index = document.sections[0].first_block;
     TEST_ASSERT_INT(document.blocks[block_index].value.image.intrinsic_width, 9000);
     TEST_ASSERT_INT(document.blocks[block_index].value.image.intrinsic_height, 9000);
 
-    BacaGraphicsContext *graphics = baca_graphics_create(
-        BACA_GRAPHICS_DEFAULT_CACHE_BYTES, BACA_GRAPHICS_MULTIPLEXER_NONE, 0xffffffU, &error);
+    MereaderTuiGraphicsContext *graphics = mereader_tui_graphics_create(
+        MEREADER_TUI_GRAPHICS_DEFAULT_CACHE_BYTES, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0xffffffU, &error);
     TEST_ASSERT(graphics != NULL);
-    TEST_ASSERT(baca_graphics_set_cell_pixels(graphics, 1, 1, &error));
-    BacaGraphicsSurface surface = {0};
-    TEST_ASSERT_MSG(baca_graphics_prepare(graphics, &document, block_index, 8, 8, &surface, &error), "%s",
+    TEST_ASSERT(mereader_tui_graphics_set_cell_pixels(graphics, 1, 1, &error));
+    MereaderTuiGraphicsSurface surface = {0};
+    TEST_ASSERT_MSG(mereader_tui_graphics_prepare(graphics, &document, block_index, 8, 8, &surface, &error), "%s",
                     error.message);
     TEST_ASSERT_INT(surface.width, 8);
     TEST_ASSERT_INT(surface.height, 8);
-    baca_graphics_surface_release(&surface);
-    baca_graphics_free(graphics);
-    baca_document_close(&document);
+    mereader_tui_graphics_surface_release(&surface);
+    mereader_tui_graphics_free(graphics);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_corrupt_empty_huge_and_output_validation(void) {
-    TEST_ASSERT(baca_test_write_text("pdf/empty.pdf", ""));
-    TEST_ASSERT(baca_test_write_text("pdf/corrupt.pdf", "%PDF-1.7\nnot a document\n"));
-    char *empty = baca_test_path("pdf/empty.pdf");
-    char *corrupt = baca_test_path("pdf/corrupt.pdf");
+static MereaderTuiTestResult test_corrupt_empty_huge_and_output_validation(void) {
+    TEST_ASSERT(mereader_tui_test_write_text("pdf/empty.pdf", ""));
+    TEST_ASSERT(mereader_tui_test_write_text("pdf/corrupt.pdf", "%PDF-1.7\nnot a document\n"));
+    char *empty = mereader_tui_test_path("pdf/empty.pdf");
+    char *corrupt = mereader_tui_test_path("pdf/corrupt.pdf");
     char *huge = create_pdf_fixture("pdf/huge.pdf", true, false);
     TEST_ASSERT(empty != NULL && corrupt != NULL && huge != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, empty, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, empty, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
-    TEST_ASSERT(!baca_document_open(&document, corrupt, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, corrupt, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
-    TEST_ASSERT(!baca_document_open(&document, huge, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, huge, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "dimensions") != NULL);
 
     char *valid = create_pdf_fixture("pdf/output.pdf", false, true);
     TEST_ASSERT(valid != NULL);
-    TEST_ASSERT(baca_document_open(&document, valid, &error));
-    BacaResource occupied = {
+    TEST_ASSERT(mereader_tui_document_open(&document, valid, &error));
+    MereaderTuiResource occupied = {
         .data = (unsigned char *)1,
     };
-    TEST_ASSERT(!baca_document_render_page(&document, 0, 10, 10, 0U, &occupied, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    occupied = (BacaResource){0};
-    TEST_ASSERT(!baca_document_render_page(&document, 99, 10, 10, 0U, &occupied, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    TEST_ASSERT(!baca_document_render_page(&document, 0, 32768, 32768, 0U, &occupied, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_document_close(&document);
+    TEST_ASSERT(!mereader_tui_document_render_page(&document, 0, 10, 10, 0U, &occupied, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    occupied = (MereaderTuiResource){0};
+    TEST_ASSERT(!mereader_tui_document_render_page(&document, 99, 10, 10, 0U, &occupied, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    TEST_ASSERT(!mereader_tui_document_render_page(&document, 0, 32768, 32768, 0U, &occupied, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_document_close(&document);
 
     free(valid);
     free(huge);
     free(corrupt);
     free(empty);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_rotation_password_and_page_count_guards(void) {
+static MereaderTuiTestResult test_rotation_password_and_page_count_guards(void) {
     char *too_many = create_many_page_pdf_fixture("pdf/guards/too-many.pdf");
     TEST_ASSERT(too_many != NULL);
-    TEST_ASSERT(baca_test_write("pdf/guards/rotated.pdf", PDF_ROTATED, sizeof(PDF_ROTATED) - 1U));
-    TEST_ASSERT(baca_test_write("pdf/guards/zero.pdf", PDF_ZERO_PAGE, sizeof(PDF_ZERO_PAGE) - 1U));
-    TEST_ASSERT(baca_test_write("pdf/guards/encrypted.pdf", PDF_ENCRYPTED, sizeof(PDF_ENCRYPTED) - 1U));
-    char *rotated = baca_test_path("pdf/guards/rotated.pdf");
-    char *zero = baca_test_path("pdf/guards/zero.pdf");
-    char *encrypted = baca_test_path("pdf/guards/encrypted.pdf");
+    TEST_ASSERT(mereader_tui_test_write("pdf/guards/rotated.pdf", PDF_ROTATED, sizeof(PDF_ROTATED) - 1U));
+    TEST_ASSERT(mereader_tui_test_write("pdf/guards/zero.pdf", PDF_ZERO_PAGE, sizeof(PDF_ZERO_PAGE) - 1U));
+    TEST_ASSERT(mereader_tui_test_write("pdf/guards/encrypted.pdf", PDF_ENCRYPTED, sizeof(PDF_ENCRYPTED) - 1U));
+    char *rotated = mereader_tui_test_path("pdf/guards/rotated.pdf");
+    char *zero = mereader_tui_test_path("pdf/guards/zero.pdf");
+    char *encrypted = mereader_tui_test_path("pdf/guards/encrypted.pdf");
     TEST_ASSERT(rotated != NULL && zero != NULL && encrypted != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, rotated, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, rotated, &error), "%s", error.message);
     TEST_ASSERT_STR(document.metadata.identifier, "f7d9ae4d4ad2b8b816408cd4f6492860");
     TEST_ASSERT_SIZE(strlen(document.metadata.identifier), 32U);
-    const BacaImageBlock *image = &document.blocks[document.sections[0].first_block].value.image;
+    const MereaderTuiImageBlock *image = &document.blocks[document.sections[0].first_block].value.image;
     TEST_ASSERT_INT(image->intrinsic_width, 100);
     TEST_ASSERT_INT(image->intrinsic_height, 200);
-    BacaResource rendered = {0};
-    TEST_ASSERT(baca_document_render_page(&document, 0, 37, 73, 0xffffffU, &rendered, &error));
+    MereaderTuiResource rendered = {0};
+    TEST_ASSERT(mereader_tui_document_render_page(&document, 0, 37, 73, 0xffffffU, &rendered, &error));
     int width = 0;
     int height = 0;
-    TEST_ASSERT(baca_graphics_probe_resource(&rendered, &width, &height, &error));
+    TEST_ASSERT(mereader_tui_graphics_probe_resource(&rendered, &width, &height, &error));
     TEST_ASSERT_INT(width, 37);
     TEST_ASSERT_INT(height, 73);
-    baca_resource_free(&rendered);
-    baca_document_close(&document);
+    mereader_tui_resource_free(&rendered);
+    mereader_tui_document_close(&document);
 
-    TEST_ASSERT(!baca_document_open(&document, encrypted, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
+    TEST_ASSERT(!mereader_tui_document_open(&document, encrypted, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
     TEST_ASSERT(strstr(error.message, "password required") != NULL);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
-    TEST_ASSERT(!baca_document_open(&document, zero, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, zero, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "no pages") != NULL);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
-    TEST_ASSERT(!baca_document_open(&document, too_many, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, too_many, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "limit of 10000") != NULL);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
 
@@ -2017,38 +2017,38 @@ static BacaTestResult test_rotation_password_and_page_count_guards(void) {
     free(zero);
     free(rotated);
     free(too_many);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_outline_total_node_limit_counts_untitled_nodes(void) {
+static MereaderTuiTestResult test_outline_total_node_limit_counts_untitled_nodes(void) {
     char *path = create_many_outline_pdf_fixture("pdf/guards/too-many-outline-nodes.pdf");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "outline") != NULL && strstr(error.message, "node") != NULL);
     TEST_ASSERT(document.path == NULL && document.backend == NULL);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_aggregate_link_target_budget_precedes_retention(void) {
+static MereaderTuiTestResult test_aggregate_link_target_budget_precedes_retention(void) {
     char *path = create_link_budget_pdf_fixture("pdf/guards/link-target-budget.pdf");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_pdf_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_pdf_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     TEST_ASSERT(strstr(error.message, "link target") != NULL && strstr(error.message, "size") != NULL);
     TEST_ASSERT_SIZE(document.toc_count, PDF_LINK_TARGET_BYTE_LIMIT / PDF_STRESS_TARGET_BYTES);
     TEST_ASSERT(document.retained_bytes < (size_t)PDF_LINK_TARGET_BYTE_LIMIT * 2U);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_tui_one_page_fit_preserves_restored_complete_progress(void) {
+static MereaderTuiTestResult test_tui_one_page_fit_preserves_restored_complete_progress(void) {
     char *path = create_raw_page_pdf_fixture("pdf/progress/one-page-fit.pdf", "612", "100");
     TEST_ASSERT(path != NULL);
     const struct winsize size = {
@@ -2058,24 +2058,24 @@ static BacaTestResult test_tui_one_page_fit_preserves_restored_complete_progress
         .ws_ypixel = 600U,
     };
     double progress = -1.0;
-    BacaString output = {0};
+    MereaderTuiString output = {0};
     const bool ran = run_pdf_progress_pty("one-page-fit", path, &size, true, false, &progress, &output);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
-    BacaTestResult result = BACA_TEST_PASS;
+    MereaderTuiTestResult result = MEREADER_TUI_TEST_PASS;
     if (!ran) {
-        result = baca_test_fail_at(__FILE__, __LINE__,
+        result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                    "one-page PDF progress PTY failed after %zu bytes: %.800s",
                                    output.length, captured);
     } else if (progress != 1.0) {
-        result = baca_test_fail_at(__FILE__, __LINE__,
+        result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                    "one-page restored progress was %.17g, expected exactly 1", progress);
     }
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     free(path);
     return result;
 }
 
-static BacaTestResult test_tui_multi_page_end_persists_complete_progress(void) {
+static MereaderTuiTestResult test_tui_multi_page_end_persists_complete_progress(void) {
     char *path = create_pdf_fixture("pdf/progress/multi-page-end.pdf", false, false);
     TEST_ASSERT(path != NULL);
     const struct winsize size = {
@@ -2085,71 +2085,71 @@ static BacaTestResult test_tui_multi_page_end_persists_complete_progress(void) {
         .ws_ypixel = 240U,
     };
     double progress = -1.0;
-    BacaString output = {0};
+    MereaderTuiString output = {0};
     const bool ran = run_pdf_progress_pty("multi-page-end", path, &size, false, true, &progress, &output);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
-    BacaTestResult result = BACA_TEST_PASS;
+    MereaderTuiTestResult result = MEREADER_TUI_TEST_PASS;
     if (!ran) {
-        result = baca_test_fail_at(__FILE__, __LINE__,
+        result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                    "multi-page PDF End progress PTY failed after %zu bytes: %.800s",
                                    output.length, captured);
     } else if (progress != 1.0) {
-        result = baca_test_fail_at(__FILE__, __LINE__,
+        result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                    "multi-page End progress was %.17g, expected exactly 1", progress);
     }
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     free(path);
     return result;
 }
 
-static BacaTestResult test_non_pdf_v_conflict_uses_configured_action(void) {
-    BacaString output = {0};
+static MereaderTuiTestResult test_non_pdf_v_conflict_uses_configured_action(void) {
+    MereaderTuiString output = {0};
     const bool ran = run_non_pdf_key_conflict_pty(&output);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
-    BacaTestResult result = ran ? BACA_TEST_PASS
-                                : baca_test_fail_at(__FILE__, __LINE__,
+    MereaderTuiTestResult result = ran ? MEREADER_TUI_TEST_PASS
+                                : mereader_tui_test_fail_at(__FILE__, __LINE__,
                                                     "non-PDF v conflict PTY failed after %zu bytes: %.800s",
                                                     output.length, captured);
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     return result;
 }
 
-static BacaTestResult test_tui_current_page_forward_and_backward_search(void) {
-    BacaString output = {0};
+static MereaderTuiTestResult test_tui_current_page_forward_and_backward_search(void) {
+    MereaderTuiString output = {0};
     unsigned stage = 0U;
     const bool ran = run_pdf_current_page_search_pty(&output, &stage);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
     const char *tail = output.data == NULL || output.length <= 800U ? captured : output.data + output.length - 800U;
-    const BacaTestResult result = ran ? BACA_TEST_PASS
-                                      : baca_test_fail_at(__FILE__, __LINE__,
+    const MereaderTuiTestResult result = ran ? MEREADER_TUI_TEST_PASS
+                                      : mereader_tui_test_fail_at(__FILE__, __LINE__,
                                                           "current-page PDF search PTY failed at stage %u after %zu bytes; tail: %.800s",
                                                           stage, output.length, tail);
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     return result;
 }
 
-static BacaTestResult test_tui_failed_render_fallback_opens_document_and_retries_after_resize(void) {
-    BacaString output = {0};
+static MereaderTuiTestResult test_tui_failed_render_fallback_opens_document_and_retries_after_resize(void) {
+    MereaderTuiString output = {0};
     unsigned stage = 0U;
     const bool ran = run_pdf_resize_retry_pty(&output, &stage);
     const char *captured = output.data == NULL ? "(empty)" : output.data;
     const char *tail = output.data == NULL || output.length <= 800U ? captured : output.data + output.length - 800U;
-    const BacaTestResult result = ran ? BACA_TEST_PASS
-                                      : baca_test_fail_at(__FILE__, __LINE__,
+    const MereaderTuiTestResult result = ran ? MEREADER_TUI_TEST_PASS
+                                      : mereader_tui_test_fail_at(__FILE__, __LINE__,
                                                           "PDF fallback click/resize retry PTY failed at stage %u after %zu bytes; tail: %.800s",
                                                           stage, output.length, tail);
-    baca_string_free(&output);
+    mereader_tui_string_free(&output);
     return result;
 }
 
-static BacaTestResult test_tui_fixed_toggle_search_links_resize_and_signal(void) {
+static MereaderTuiTestResult test_tui_fixed_toggle_search_links_resize_and_signal(void) {
     PdfPtyResult result = {0};
     const bool ran = run_pdf_pty(&result);
     const char *output = result.output.data == NULL ? "(empty)" : result.output.data;
     const char *opened = result.opened.data == NULL ? "(empty)" : result.opened.data;
-    BacaTestResult test_result = BACA_TEST_PASS;
+    MereaderTuiTestResult test_result = MEREADER_TUI_TEST_PASS;
     if (!ran) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__,
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                         "PDF PTY workflow stopped early after %zu bytes (fixed=%d help-open=%d help=%d text=%d search=%d "
                                         "resize=%d internal=%d external=%d toc-internal=%d toc-external=%d page=%d); "
                                         "opened: %s; output: %.800s",
@@ -2161,40 +2161,40 @@ static BacaTestResult test_tui_fixed_toggle_search_links_resize_and_signal(void)
                                         result.internal_toc_reached_page, result.external_toc_opened,
                                         result.page_opened, opened, output);
     } else if (!result.fixed_rendered) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "fixed PDF page did not render: %.800s", output);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "fixed PDF page did not render: %.800s", output);
     } else if (!result.help_shows_configured_toggle) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__,
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__,
                                         "PDF help did not show the configured toggle mapping: %.800s", output);
     } else if (!result.toggled_to_text) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "configured PDF toggle did not reveal text: %.800s",
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "configured PDF toggle did not reveal text: %.800s",
                                         output);
     } else if (!result.search_reached_page) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "fixed-view search did not reach page 2: %.800s", output);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "fixed-view search did not reach page 2: %.800s", output);
     } else if (!result.resize_preserved_page) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF resize did not preserve page 2: %.800s", output);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF resize did not preserve page 2: %.800s", output);
     } else if (!result.internal_link_reached_page) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF internal link did not reach page 2: %.800s", output);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF internal link did not reach page 2: %.800s", output);
     } else if (!result.external_link_opened) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF external link was not captured: %s", opened);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF external link was not captured: %s", opened);
     } else if (!result.internal_toc_reached_page) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF internal TOC target did not reach page 2: %.800s",
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF internal TOC target did not reach page 2: %.800s",
                                         output);
     } else if (!result.external_toc_opened) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF external TOC target was not captured: %s", opened);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF external TOC target was not captured: %s", opened);
     } else if (!result.page_opened) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "unmapped PDF page click was not captured: %s", opened);
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "unmapped PDF page click was not captured: %s", opened);
     } else if (!result.completed || !WIFEXITED(result.status) || WEXITSTATUS(result.status) != 128 + SIGTERM) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF PTY child did not exit after SIGTERM");
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF PTY child did not exit after SIGTERM");
     } else if (strstr(output, "d=I,i=") == NULL) {
-        test_result = baca_test_fail_at(__FILE__, __LINE__, "PDF Kitty image was not deleted");
+        test_result = mereader_tui_test_fail_at(__FILE__, __LINE__, "PDF Kitty image was not deleted");
     }
-    baca_string_free(&result.opened);
-    baca_string_free(&result.output);
+    mereader_tui_string_free(&result.opened);
+    mereader_tui_string_free(&result.output);
     return test_result;
 }
 
-const BacaTestCase *baca_pdf_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_pdf_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "open_metadata_toc_text_links_and_cleanup",
          .function = test_open_metadata_toc_text_links_and_cleanup},
         {.name = "fixed_reflow_search_and_link_lines",
@@ -2230,6 +2230,6 @@ const BacaTestCase *baca_pdf_test_cases(size_t *count) {
         {.name = "tui_fixed_toggle_search_links_resize_and_signal",
          .function = test_tui_fixed_toggle_search_links_resize_and_signal},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

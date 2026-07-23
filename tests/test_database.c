@@ -1,6 +1,6 @@
 #include "test_support.h"
 
-#include "baca/database.h"
+#include "mereader-tui/database.h"
 
 #include <errno.h>
 #include <math.h>
@@ -38,23 +38,23 @@ static bool sqlite_scalar_int(sqlite3 *database, const char *sql, int *value) {
     return success;
 }
 
-static bool open_test_database(const char *relative, bool migrate, BacaDatabase *database, BacaError *error) {
-    char *path = baca_test_path(relative);
+static bool open_test_database(const char *relative, bool migrate, MereaderTuiDatabase *database, MereaderTuiError *error) {
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return false;
     }
-    char *directory = baca_path_dirname(path, error);
-    bool opened = directory != NULL && baca_mkdirs(directory, error) && baca_database_open(database, path, error);
+    char *directory = mereader_tui_path_dirname(path, error);
+    bool opened = directory != NULL && mereader_tui_mkdirs(directory, error) && mereader_tui_database_open(database, path, error);
     free(directory);
     free(path);
-    return opened && (!migrate || baca_database_migrate(database, error));
+    return opened && (!migrate || mereader_tui_database_migrate(database, error));
 }
 
-static BacaTestResult test_open_and_migrate_idempotently(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
+static MereaderTuiTestResult test_open_and_migrate_idempotently(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/migrate.db", true, &database, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_migrate(&database, &error), "%s", error.message);
     int metadata_count = -1;
     int table_count = -1;
     TEST_ASSERT(sqlite_scalar_int(database.handle, "SELECT count(*) FROM metadata WHERE version IN (0, 1, 2)",
@@ -66,28 +66,28 @@ static BacaTestResult test_open_and_migrate_idempotently(void) {
                                    &table_count));
     TEST_ASSERT_INT(metadata_count, 3);
     TEST_ASSERT_INT(table_count, 4);
-    baca_database_close(&database);
+    mereader_tui_database_close(&database);
     TEST_ASSERT(database.handle == NULL && database.path == NULL);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_default_path_is_xdg_isolated(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_database_open_default(&database, &error), "%s", error.message);
-    char *expected = baca_test_path("xdg-cache/mereader-tui/mereader-tui.db");
+static MereaderTuiTestResult test_default_path_is_xdg_isolated(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_open_default(&database, &error), "%s", error.message);
+    char *expected = mereader_tui_test_path("xdg-cache/mereader-tui/mereader-tui.db");
     TEST_ASSERT(expected != NULL);
     TEST_ASSERT_STR(database.path, expected);
-    TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
-    TEST_ASSERT(baca_file_exists(expected));
+    TEST_ASSERT_MSG(mereader_tui_database_migrate(&database, &error), "%s", error.message);
+    TEST_ASSERT(mereader_tui_file_exists(expected));
     free(expected);
-    baca_database_close(&database);
-    return BACA_TEST_PASS;
+    mereader_tui_database_close(&database);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_legacy_peewee_schema(void) {
-    TEST_ASSERT(baca_test_mkdir("database"));
-    char *path = baca_test_path("database/legacy.db");
+static MereaderTuiTestResult test_legacy_peewee_schema(void) {
+    TEST_ASSERT(mereader_tui_test_mkdir("database"));
+    char *path = mereader_tui_test_path("database/legacy.db");
     TEST_ASSERT(path != NULL);
     sqlite3 *legacy = NULL;
     TEST_ASSERT(sqlite3_open(path, &legacy) == SQLITE_OK);
@@ -101,27 +101,27 @@ static BacaTestResult test_legacy_peewee_schema(void) {
     TEST_ASSERT(sqlite_execute(legacy, schema));
     TEST_ASSERT(sqlite3_close(legacy) == SQLITE_OK);
 
-    BacaDatabase database = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_database_open(&database, path, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
-    BacaHistory history = {0};
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_open(&database, path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_migrate(&database, &error), "%s", error.message);
+    MereaderTuiHistory history = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 1U);
     TEST_ASSERT_STR(history.items[0].filepath, "/legacy/book.epub");
     TEST_ASSERT_STR(history.items[0].title, "Legacy Title");
     TEST_ASSERT_STR(history.items[0].author, "Legacy Author");
     TEST_ASSERT_DOUBLE(history.items[0].reading_progress, 0.375, 1e-12);
     TEST_ASSERT_STR(history.items[0].last_read, "2023-02-03 04:05:06.000000");
-    baca_history_free(&history);
-    baca_database_close(&database);
+    mereader_tui_history_free(&history);
+    mereader_tui_database_close(&database);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaHistoryEntry history_entry(const char *filepath, const char *title, const char *author,
+static MereaderTuiHistoryEntry history_entry(const char *filepath, const char *title, const char *author,
                                       double progress, const char *last_read) {
-    return (BacaHistoryEntry){
+    return (MereaderTuiHistoryEntry){
         .filepath = (char *)filepath,
         .title = (char *)title,
         .author = (char *)author,
@@ -130,36 +130,36 @@ static BacaHistoryEntry history_entry(const char *filepath, const char *title, c
     };
 }
 
-static BacaTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
-    TEST_ASSERT(baca_test_write_text("database/books/alpha.epub", "alpha"));
-    TEST_ASSERT(baca_test_write_text("database/books/beta.epub", "beta"));
-    char *alpha = baca_test_path("database/books/alpha.epub");
-    char *beta = baca_test_path("database/books/beta.epub");
-    char *missing = baca_test_path("database/books/missing.epub");
+static MereaderTuiTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
+    TEST_ASSERT(mereader_tui_test_write_text("database/books/alpha.epub", "alpha"));
+    TEST_ASSERT(mereader_tui_test_write_text("database/books/beta.epub", "beta"));
+    char *alpha = mereader_tui_test_path("database/books/alpha.epub");
+    char *beta = mereader_tui_test_path("database/books/beta.epub");
+    char *missing = mereader_tui_test_path("database/books/missing.epub");
     TEST_ASSERT(alpha != NULL && beta != NULL && missing != NULL);
 
-    BacaDatabase database = {0};
-    BacaError error = {0};
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/history.db", true, &database, &error), "%s", error.message);
-    BacaHistoryEntry alpha_entry = history_entry(alpha, "First Book", "Alice", 0.1,
+    MereaderTuiHistoryEntry alpha_entry = history_entry(alpha, "First Book", "Alice", 0.1,
                                                  "2024-01-01 00:00:00.000000");
-    BacaHistoryEntry beta_entry = history_entry(beta, "Second Story", "Writer Two", 0.2,
+    MereaderTuiHistoryEntry beta_entry = history_entry(beta, "Second Story", "Writer Two", 0.2,
                                                 "2024-02-01 00:00:00.000000");
-    BacaHistoryEntry missing_entry = history_entry(missing, "Gone Book", NULL, 0.3,
+    MereaderTuiHistoryEntry missing_entry = history_entry(missing, "Gone Book", NULL, 0.3,
                                                    "2024-03-01 00:00:00.000000");
-    BacaHistoryEntry remote_entry = history_entry("https://example.test/book.epub", "Remote Book", NULL, 0.4,
+    MereaderTuiHistoryEntry remote_entry = history_entry("https://example.test/book.epub", "Remote Book", NULL, 0.4,
                                                   "2024-05-01 00:00:00.000000");
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &alpha_entry, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &beta_entry, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &missing_entry, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &remote_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &alpha_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &beta_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &missing_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &remote_entry, &error), "%s", error.message);
     alpha_entry.title = "First Book Revised";
     alpha_entry.reading_progress = 0.75;
     alpha_entry.last_read = "2024-04-01 00:00:00.000000";
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &alpha_entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &alpha_entry, &error), "%s", error.message);
 
-    BacaHistory history = {0};
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    MereaderTuiHistory history = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 4U);
     TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
     TEST_ASSERT_STR(history.items[1].filepath, alpha);
@@ -167,83 +167,83 @@ static BacaTestResult test_save_list_order_nth_fuzzy_and_stale(void) {
     TEST_ASSERT_DOUBLE(history.items[1].reading_progress, 0.75, 1e-12);
     TEST_ASSERT_STR(history.items[2].filepath, missing);
     TEST_ASSERT_STR(history.items[3].filepath, beta);
-    TEST_ASSERT(baca_history_nth(&history, 0U) == NULL);
-    TEST_ASSERT(baca_history_nth(&history, 5U) == NULL);
-    TEST_ASSERT(baca_history_nth(&history, 1U) == &history.items[0]);
-    const BacaHistoryEntry *match = baca_history_best_match(&history, "second writer two");
+    TEST_ASSERT(mereader_tui_history_nth(&history, 0U) == NULL);
+    TEST_ASSERT(mereader_tui_history_nth(&history, 5U) == NULL);
+    TEST_ASSERT(mereader_tui_history_nth(&history, 1U) == &history.items[0]);
+    const MereaderTuiHistoryEntry *match = mereader_tui_history_best_match(&history, "second writer two");
     TEST_ASSERT(match != NULL);
     TEST_ASSERT_STR(match->filepath, beta);
-    TEST_ASSERT(baca_history_best_match(&history, "") == NULL);
-    baca_history_free(&history);
+    TEST_ASSERT(mereader_tui_history_best_match(&history, "") == NULL);
+    mereader_tui_history_free(&history);
 
-    TEST_ASSERT_MSG(baca_database_history(&database, true, &history, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, true, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 3U);
     TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
     TEST_ASSERT_STR(history.items[1].filepath, alpha);
     TEST_ASSERT_STR(history.items[2].filepath, beta);
-    baca_history_free(&history);
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    mereader_tui_history_free(&history);
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 3U);
-    baca_history_free(&history);
+    mereader_tui_history_free(&history);
 
-    TEST_ASSERT_MSG(baca_database_remove_history(&database, beta, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_remove_history(&database, beta, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_remove_history(&database, beta, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_remove_history(&database, beta, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 2U);
     TEST_ASSERT_STR(history.items[0].filepath, "https://example.test/book.epub");
     TEST_ASSERT_STR(history.items[1].filepath, alpha);
-    baca_history_free(&history);
-    baca_database_close(&database);
+    mereader_tui_history_free(&history);
+    mereader_tui_database_close(&database);
     free(alpha);
     free(beta);
     free(missing);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_progress_values(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
+static MereaderTuiTestResult test_progress_values(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/progress.db", true, &database, &error), "%s", error.message);
-    BacaHistoryEntry entry = history_entry("/progress/book.epub", NULL, NULL, -0.25,
+    MereaderTuiHistoryEntry entry = history_entry("/progress/book.epub", NULL, NULL, -0.25,
                                            "2024-01-01 00:00:00");
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &entry, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &entry, &error), "%s", error.message);
     entry.reading_progress = 1.75;
     entry.last_read = "2024-01-02 00:00:00";
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &entry, &error), "%s", error.message);
-    BacaHistory history = {0};
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &entry, &error), "%s", error.message);
+    MereaderTuiHistory history = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 1U);
     TEST_ASSERT_DOUBLE(history.items[0].reading_progress, 1.75, 1e-12);
-    baca_history_free(&history);
+    mereader_tui_history_free(&history);
 
     entry.reading_progress = NAN;
-    TEST_ASSERT(!baca_database_save_progress(&database, &entry, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_database_save_progress(&database, &entry, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_error_clear(&error);
     entry.reading_progress = INFINITY;
-    TEST_ASSERT(!baca_database_save_progress(&database, &entry, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_database_close(&database);
-    return BACA_TEST_PASS;
+    TEST_ASSERT(!mereader_tui_database_save_progress(&database, &entry, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_database_close(&database);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_bookmark_crud(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
+static MereaderTuiTestResult test_bookmark_crud(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/bookmarks.db", true, &database, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.75, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_add_bookmark(&database, "/books/two.epub", 0.5, &error), "%s", error.message);
-    char *database_path = baca_strdup(database.path, &error);
+    TEST_ASSERT_MSG(mereader_tui_database_add_bookmark(&database, "/books/one.epub", 0.75, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_add_bookmark(&database, "/books/one.epub", 0.25, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_add_bookmark(&database, "/books/two.epub", 0.5, &error), "%s", error.message);
+    char *database_path = mereader_tui_strdup(database.path, &error);
     TEST_ASSERT_MSG(database_path != NULL, "%s", error.message);
-    baca_database_close(&database);
-    TEST_ASSERT_MSG(baca_database_open(&database, database_path, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_migrate(&database, &error), "%s", error.message);
+    mereader_tui_database_close(&database);
+    TEST_ASSERT_MSG(mereader_tui_database_open(&database, database_path, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_migrate(&database, &error), "%s", error.message);
     free(database_path);
 
-    BacaBookmarks bookmarks = {0};
-    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+    MereaderTuiBookmarks bookmarks = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(bookmarks.length, 2U);
     TEST_ASSERT(bookmarks.items[0].id > 0);
@@ -252,77 +252,77 @@ static BacaTestResult test_bookmark_crud(void) {
     TEST_ASSERT_DOUBLE(bookmarks.items[1].reading_progress, 0.75, 1e-12);
     TEST_ASSERT(bookmarks.items[0].created_at != NULL && bookmarks.items[0].created_at[0] != '\0');
     int64_t first_id = bookmarks.items[0].id;
-    baca_bookmarks_free(&bookmarks);
+    mereader_tui_bookmarks_free(&bookmarks);
 
-    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/two.epub", first_id, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_database_remove_bookmark(&database, "/books/two.epub", first_id, &error), "%s",
                     error.message);
-    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(bookmarks.length, 2U);
-    baca_bookmarks_free(&bookmarks);
-    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
+    mereader_tui_bookmarks_free(&bookmarks);
+    TEST_ASSERT_MSG(mereader_tui_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
                     error.message);
-    TEST_ASSERT_MSG(baca_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_database_remove_bookmark(&database, "/books/one.epub", first_id, &error), "%s",
                     error.message);
-    TEST_ASSERT_MSG(baca_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_database_bookmarks(&database, "/books/one.epub", &bookmarks, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(bookmarks.length, 1U);
     TEST_ASSERT_DOUBLE(bookmarks.items[0].reading_progress, 0.75, 1e-12);
-    baca_bookmarks_free(&bookmarks);
+    mereader_tui_bookmarks_free(&bookmarks);
 
-    TEST_ASSERT(!baca_database_add_bookmark(&database, "/books/one.epub", NAN, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_error_clear(&error);
-    TEST_ASSERT(!baca_database_add_bookmark(&database, "/books/one.epub", -0.1, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_error_clear(&error);
-    TEST_ASSERT(!baca_database_remove_bookmark(&database, "/books/one.epub", 0, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-    baca_database_close(&database);
-    return BACA_TEST_PASS;
+    TEST_ASSERT(!mereader_tui_database_add_bookmark(&database, "/books/one.epub", NAN, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_database_add_bookmark(&database, "/books/one.epub", -0.1, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_database_remove_bookmark(&database, "/books/one.epub", 0, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_database_close(&database);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_library_format_preferences(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
+static MereaderTuiTestResult test_library_format_preferences(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/formats.db", true, &database, &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_format_preference(&database, "/library/one", "author/book",
+    TEST_ASSERT_MSG(mereader_tui_database_save_format_preference(&database, "/library/one", "author/book",
                                                          "author/book.pdf", &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_format_preference(&database, "/library/two", "author/book",
+    TEST_ASSERT_MSG(mereader_tui_database_save_format_preference(&database, "/library/two", "author/book",
                                                          "author/book.epub", &error), "%s", error.message);
-    TEST_ASSERT_MSG(baca_database_save_format_preference(&database, "/library/one", "author/book",
+    TEST_ASSERT_MSG(mereader_tui_database_save_format_preference(&database, "/library/one", "author/book",
                                                          "author/book.epub", &error), "%s", error.message);
 
-    BacaFormatPreferences preferences = {0};
-    TEST_ASSERT_MSG(baca_database_format_preferences(&database, "/library/one", &preferences, &error), "%s",
+    MereaderTuiFormatPreferences preferences = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_format_preferences(&database, "/library/one", &preferences, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(preferences.length, 1U);
     TEST_ASSERT_STR(preferences.items[0].book_key, "author/book");
     TEST_ASSERT_STR(preferences.items[0].relative_path, "author/book.epub");
-    baca_format_preferences_free(&preferences);
+    mereader_tui_format_preferences_free(&preferences);
 
-    TEST_ASSERT_MSG(baca_database_format_preferences(&database, "/library/missing", &preferences, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_database_format_preferences(&database, "/library/missing", &preferences, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(preferences.length, 0U);
-    baca_format_preferences_free(&preferences);
-    baca_database_close(&database);
-    return BACA_TEST_PASS;
+    mereader_tui_format_preferences_free(&preferences);
+    mereader_tui_database_close(&database);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_control_and_embedded_nul_values(void) {
-    BacaDatabase database = {0};
-    BacaError error = {0};
+static MereaderTuiTestResult test_control_and_embedded_nul_values(void) {
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
     TEST_ASSERT_MSG(open_test_database("database/hostile.db", true, &database, &error), "%s", error.message);
     static const char control_title[] = "line\n\ttitle\x1b[31m";
-    BacaHistoryEntry entry = history_entry("/hostile/control.epub", control_title, "author\x7fvalue", 0.5,
+    MereaderTuiHistoryEntry entry = history_entry("/hostile/control.epub", control_title, "author\x7fvalue", 0.5,
                                            "2024-01-01\t00:00:00");
-    TEST_ASSERT_MSG(baca_database_save_progress(&database, &entry, &error), "%s", error.message);
-    BacaHistory history = {0};
-    TEST_ASSERT_MSG(baca_database_history(&database, false, &history, &error), "%s", error.message);
+    TEST_ASSERT_MSG(mereader_tui_database_save_progress(&database, &entry, &error), "%s", error.message);
+    MereaderTuiHistory history = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_history(&database, false, &history, &error), "%s", error.message);
     TEST_ASSERT_SIZE(history.length, 1U);
     TEST_ASSERT_STR(history.items[0].title, control_title);
     TEST_ASSERT_STR(history.items[0].author, "author\x7fvalue");
-    baca_history_free(&history);
+    mereader_tui_history_free(&history);
 
     sqlite3_stmt *statement = NULL;
     static const char sql[] =
@@ -332,12 +332,12 @@ static BacaTestResult test_control_and_embedded_nul_values(void) {
     TEST_ASSERT(sqlite3_bind_text(statement, 1, nul_path, (int)sizeof(nul_path), SQLITE_STATIC) == SQLITE_OK);
     TEST_ASSERT(sqlite3_step(statement) == SQLITE_DONE);
     TEST_ASSERT(sqlite3_finalize(statement) == SQLITE_OK);
-    TEST_ASSERT(!baca_database_history(&database, false, &history, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_DATABASE);
+    TEST_ASSERT(!mereader_tui_database_history(&database, false, &history, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_DATABASE);
     TEST_ASSERT(strstr(error.message, "embedded null byte") != NULL);
     TEST_ASSERT(history.items == NULL && history.length == 0U);
-    baca_database_close(&database);
-    return BACA_TEST_PASS;
+    mereader_tui_database_close(&database);
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static int migration_child(const char *path, int start_descriptor) {
@@ -349,18 +349,18 @@ static int migration_child(const char *path, int start_descriptor) {
     if (read_count != 1) {
         return 2;
     }
-    BacaDatabase database = {0};
-    BacaError error = {0};
-    bool migrated = baca_database_open(&database, path, &error) && baca_database_migrate(&database, &error);
-    baca_database_close(&database);
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
+    bool migrated = mereader_tui_database_open(&database, path, &error) && mereader_tui_database_migrate(&database, &error);
+    mereader_tui_database_close(&database);
     if (!migrated) {
         fprintf(stderr, "concurrent migration child: %s\n", error.message);
     }
     return migrated ? 0 : 1;
 }
 
-static BacaTestResult test_concurrent_first_migration(void) {
-    char *path = baca_test_path("database/concurrent.db");
+static MereaderTuiTestResult test_concurrent_first_migration(void) {
+    char *path = mereader_tui_test_path("database/concurrent.db");
     TEST_ASSERT(path != NULL);
     int start_pipe[2];
     TEST_ASSERT(pipe(start_pipe) == 0);
@@ -398,20 +398,20 @@ static BacaTestResult test_concurrent_first_migration(void) {
         TEST_ASSERT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
 
-    BacaDatabase database = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_database_open(&database, path, &error), "%s", error.message);
+    MereaderTuiDatabase database = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_database_open(&database, path, &error), "%s", error.message);
     int metadata_count = -1;
     TEST_ASSERT(sqlite_scalar_int(database.handle, "SELECT count(*) FROM metadata WHERE version=0",
                                   &metadata_count));
     TEST_ASSERT_INT(metadata_count, 1);
-    baca_database_close(&database);
+    mereader_tui_database_close(&database);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_database_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_database_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "open_and_migrate_idempotently", .function = test_open_and_migrate_idempotently},
         {.name = "default_path_is_xdg_isolated", .function = test_default_path_is_xdg_isolated},
         {.name = "legacy_peewee_schema", .function = test_legacy_peewee_schema},
@@ -422,6 +422,6 @@ const BacaTestCase *baca_database_test_cases(size_t *count) {
         {.name = "control_and_embedded_nul_values", .function = test_control_and_embedded_nul_values},
         {.name = "concurrent_first_migration", .function = test_concurrent_first_migration},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

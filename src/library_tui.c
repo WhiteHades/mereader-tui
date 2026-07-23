@@ -1,6 +1,6 @@
-#include "baca/library_tui.h"
-#include "baca/graphics.h"
-#include "baca/library_shelf.h"
+#include "mereader-tui/library_tui.h"
+#include "mereader-tui/graphics.h"
+#include "mereader-tui/library_shelf.h"
 #include "terminal_runtime.h"
 #include "text_input.h"
 
@@ -16,39 +16,39 @@
 #include <wchar.h>
 
 enum {
-  BACA_PAIR_BASE = 1,
-  BACA_PAIR_ACCENT,
-  BACA_PAIR_SEARCH,
-  BACA_PAIR_ALERT,
-  BACA_PAIR_IMAGE_FIRST,
+  MEREADER_TUI_PAIR_BASE = 1,
+  MEREADER_TUI_PAIR_ACCENT,
+  MEREADER_TUI_PAIR_SEARCH,
+  MEREADER_TUI_PAIR_ALERT,
+  MEREADER_TUI_PAIR_IMAGE_FIRST,
 };
 
-typedef enum BacaLibraryInputKind {
-  BACA_LIBRARY_INPUT_NONE = 0,
-  BACA_LIBRARY_INPUT_FILTER,
-  BACA_LIBRARY_INPUT_PATH,
-  BACA_LIBRARY_INPUT_ROOT,
-} BacaLibraryInputKind;
+typedef enum MereaderTuiLibraryInputKind {
+  MEREADER_TUI_LIBRARY_INPUT_NONE = 0,
+  MEREADER_TUI_LIBRARY_INPUT_FILTER,
+  MEREADER_TUI_LIBRARY_INPUT_PATH,
+  MEREADER_TUI_LIBRARY_INPUT_ROOT,
+} MereaderTuiLibraryInputKind;
 
-typedef struct BacaLibraryTuiState {
-  const BacaConfig *config;
-  const BacaHistory *history;
-  BacaCatalog *catalog;
-  BacaGraphicsContext *graphics;
-  BacaDocument cover_document;
-  BacaLibraryShelf shelf;
-  BacaLibraryShelfKind mode;
-  BacaLibraryShelfKind format_parent;
+typedef struct MereaderTuiLibraryTuiState {
+  const MereaderTuiConfig *config;
+  const MereaderTuiHistory *history;
+  MereaderTuiCatalog *catalog;
+  MereaderTuiGraphicsContext *graphics;
+  MereaderTuiDocument cover_document;
+  MereaderTuiLibraryShelf shelf;
+  MereaderTuiLibraryShelfKind mode;
+  MereaderTuiLibraryShelfKind format_parent;
   char *author;
   size_t format_book;
-  BacaLibraryView view;
-  BacaLibraryShelf picker_shelf;
-  BacaLibraryView picker_view;
-  BacaLibraryAction action;
-  BacaTextInput input;
-  BacaTextInput picker_input;
-  BacaLibraryInputKind input_kind;
-  BacaLibrarySort sort;
+  MereaderTuiLibraryView view;
+  MereaderTuiLibraryShelf picker_shelf;
+  MereaderTuiLibraryView picker_view;
+  MereaderTuiLibraryAction action;
+  MereaderTuiTextInput input;
+  MereaderTuiTextInput picker_input;
+  MereaderTuiLibraryInputKind input_kind;
+  MereaderTuiLibrarySort sort;
   size_t selected;
   size_t top;
   size_t picker_selected;
@@ -64,11 +64,11 @@ typedef struct BacaLibraryTuiState {
   int cover_rows;
   int cover_columns;
   int previous_cursor;
-  char filter[BACA_TEXT_INPUT_CAPACITY];
-  char filter_before[BACA_TEXT_INPUT_CAPACITY];
+  char filter[MEREADER_TUI_TEXT_INPUT_CAPACITY];
+  char filter_before[MEREADER_TUI_TEXT_INPUT_CAPACITY];
   char *status;
   char *input_selection;
-  BacaImageMode image_mode;
+  MereaderTuiImageMode image_mode;
   short image_pair_capacity;
   bool colors;
   bool raw_truecolor;
@@ -81,11 +81,11 @@ typedef struct BacaLibraryTuiState {
   bool g_pending;
   bool quit;
   bool dirty;
-} BacaLibraryTuiState;
+} MereaderTuiLibraryTuiState;
 
 static bool library_key_is_enter(bool key_code, int code, wchar_t character);
 static void library_draw_box(int y, int x, int height, int width);
-static void library_ensure_picker_selection_visible(BacaLibraryTuiState *state);
+static void library_ensure_picker_selection_visible(MereaderTuiLibraryTuiState *state);
 
 static int size_to_int(size_t value) {
   return value > (size_t)INT_MAX ? INT_MAX : (int)value;
@@ -105,8 +105,8 @@ static void library_add_clipped(WINDOW *window, int y, int x, const char *text,
   if (columns > width - x) {
     columns = width - x;
   }
-  BacaError ignored = {0};
-  char *safe = baca_library_sanitize_text(text, (size_t)columns, &ignored);
+  MereaderTuiError ignored = {0};
+  char *safe = mereader_tui_library_sanitize_text(text, (size_t)columns, &ignored);
   if (safe != NULL) {
     (void)mvwaddnstr(window, y, x, safe, size_to_int(strlen(safe)));
   }
@@ -114,14 +114,14 @@ static void library_add_clipped(WINDOW *window, int y, int x, const char *text,
 }
 
 static short terminal_color(uint32_t rgb) {
-  return (short)baca_graphics_rgb_to_palette(rgb, (unsigned)COLORS);
+  return (short)mereader_tui_graphics_rgb_to_palette(rgb, (unsigned)COLORS);
 }
 
-static size_t library_visible_rows(const BacaLibraryTuiState *state) {
+static size_t library_visible_rows(const MereaderTuiLibraryTuiState *state) {
   return state->rows > 3 ? (size_t)(state->rows - 3) : 1U;
 }
 
-static void library_ensure_selection_visible(BacaLibraryTuiState *state) {
+static void library_ensure_selection_visible(MereaderTuiLibraryTuiState *state) {
   if (state->view.length == 0U) {
     state->selected = 0U;
     state->top = 0U;
@@ -143,21 +143,21 @@ static void library_ensure_selection_visible(BacaLibraryTuiState *state) {
   }
 }
 
-static void library_update_cell_pixels(BacaLibraryTuiState *state) {
+static void library_update_cell_pixels(MereaderTuiLibraryTuiState *state) {
   int width = 0;
   int height = 0;
-  baca_terminal_probe_cell_pixels(state->image_mode == BACA_IMAGE_MODE_KITTY,
+  mereader_tui_terminal_probe_cell_pixels(state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY,
                                   &width, &height);
   state->cell_pixel_width = width;
   state->cell_pixel_height = height;
   if (state->graphics != NULL) {
-    BacaError ignored = {0};
-    (void)baca_graphics_set_cell_pixels(state->graphics, width, height,
+    MereaderTuiError ignored = {0};
+    (void)mereader_tui_graphics_set_cell_pixels(state->graphics, width, height,
                                         &ignored);
   }
 }
 
-static void library_update_dimensions(BacaLibraryTuiState *state) {
+static void library_update_dimensions(MereaderTuiLibraryTuiState *state) {
   const int previous_rows = state->rows;
   const int previous_columns = state->columns;
   getmaxyx(stdscr, state->rows, state->columns);
@@ -169,12 +169,12 @@ static void library_update_dimensions(BacaLibraryTuiState *state) {
   }
   if (state->graphics != NULL &&
       (state->rows != previous_rows || state->columns != previous_columns)) {
-    BacaError ignored = {0};
-    if (state->image_mode == BACA_IMAGE_MODE_KITTY) {
-      (void)baca_graphics_kitty_delete_placements(
-          state->graphics, baca_terminal_graphics_write, state, &ignored);
+    MereaderTuiError ignored = {0};
+    if (state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
+      (void)mereader_tui_graphics_kitty_delete_placements(
+          state->graphics, mereader_tui_terminal_graphics_write, state, &ignored);
     }
-    (void)baca_graphics_resize(state->graphics, state->columns, state->rows,
+    (void)mereader_tui_graphics_resize(state->graphics, state->columns, state->rows,
                                &ignored);
   }
   library_update_cell_pixels(state);
@@ -183,50 +183,50 @@ static void library_update_dimensions(BacaLibraryTuiState *state) {
   state->dirty = true;
 }
 
-static void library_clear_status(BacaLibraryTuiState *state) {
+static void library_clear_status(MereaderTuiLibraryTuiState *state) {
   free(state->status);
   state->status = NULL;
 }
 
-static void library_copy_status(BacaLibraryTuiState *state,
+static void library_copy_status(MereaderTuiLibraryTuiState *state,
                                 const char *message) {
-  BacaError ignored = {0};
-  char *safe = baca_library_sanitize_text(message, SIZE_MAX, &ignored);
+  MereaderTuiError ignored = {0};
+  char *safe = mereader_tui_library_sanitize_text(message, SIZE_MAX, &ignored);
   if (safe != NULL) {
     library_clear_status(state);
     state->status = safe;
   }
 }
 
-static bool library_replace_view(BacaLibraryTuiState *state,
-                                 BacaLibraryShelfKind mode, const char *author,
+static bool library_replace_view(MereaderTuiLibraryTuiState *state,
+                                 MereaderTuiLibraryShelfKind mode, const char *author,
                                  size_t format_book, const char *filter,
-                                 BacaLibrarySort sort,
+                                 MereaderTuiLibrarySort sort,
                                  const char *selected_filepath,
-                                 BacaError *error) {
-  BacaLibraryShelf replacement_shelf = {0};
-  const BacaHistory *history = state->history;
+                                 MereaderTuiError *error) {
+  MereaderTuiLibraryShelf replacement_shelf = {0};
+  const MereaderTuiHistory *history = state->history;
   if (state->catalog != NULL) {
-    if (!baca_library_shelf_build(&replacement_shelf, state->catalog, mode,
+    if (!mereader_tui_library_shelf_build(&replacement_shelf, state->catalog, mode,
                                   author, format_book, filter, error)) {
       return false;
     }
     history = &replacement_shelf.entries;
   }
   const char *view_filter = state->catalog == NULL ? filter : "";
-  const BacaLibrarySort view_sort = state->catalog != NULL && filter[0] != '\0'
-                                        ? BACA_LIBRARY_SORT_RELEVANCE
+  const MereaderTuiLibrarySort view_sort = state->catalog != NULL && filter[0] != '\0'
+                                        ? MEREADER_TUI_LIBRARY_SORT_RELEVANCE
                                         : sort;
-  BacaLibraryView replacement_view = {0};
-  if (!baca_library_view_build(&replacement_view, history, view_filter,
+  MereaderTuiLibraryView replacement_view = {0};
+  if (!mereader_tui_library_view_build(&replacement_view, history, view_filter,
                                view_sort, error)) {
-    baca_library_shelf_free(&replacement_shelf);
+    mereader_tui_library_shelf_free(&replacement_shelf);
     return false;
   }
-  const size_t selected = baca_library_preserve_selection(
+  const size_t selected = mereader_tui_library_preserve_selection(
       &replacement_view, selected_filepath, state->selected);
-  baca_library_view_free(&state->view);
-  baca_library_shelf_free(&state->shelf);
+  mereader_tui_library_view_free(&state->view);
+  mereader_tui_library_shelf_free(&state->shelf);
   state->view = replacement_view;
   state->shelf = replacement_shelf;
   state->selected = selected;
@@ -239,42 +239,42 @@ static bool library_replace_view(BacaLibraryTuiState *state,
   return true;
 }
 
-static bool library_rebuild_view(BacaLibraryTuiState *state, const char *filter,
-                                 BacaLibrarySort sort,
+static bool library_rebuild_view(MereaderTuiLibraryTuiState *state, const char *filter,
+                                 MereaderTuiLibrarySort sort,
                                  const char *selected_filepath,
-                                 BacaError *error) {
+                                 MereaderTuiError *error) {
   return library_replace_view(state, state->mode, state->author,
                               state->format_book, filter, sort,
                               selected_filepath, error);
 }
 
-static bool library_rebuild_picker(BacaLibraryTuiState *state,
+static bool library_rebuild_picker(MereaderTuiLibraryTuiState *state,
                                    const char *selected_filepath,
-                                   BacaError *error) {
-  BacaLibraryShelf replacement_shelf = {0};
-  const BacaHistory *history = state->history;
+                                   MereaderTuiError *error) {
+  MereaderTuiLibraryShelf replacement_shelf = {0};
+  const MereaderTuiHistory *history = state->history;
   if (state->catalog != NULL) {
-    if (!baca_library_shelf_build(&replacement_shelf, state->catalog,
-                                  BACA_LIBRARY_SHELF_ALL, NULL, 0U,
+    if (!mereader_tui_library_shelf_build(&replacement_shelf, state->catalog,
+                                  MEREADER_TUI_LIBRARY_SHELF_ALL, NULL, 0U,
                                   state->picker_input.value, error)) {
       return false;
     }
     history = &replacement_shelf.entries;
   }
   const char *filter = state->catalog == NULL ? state->picker_input.value : "";
-  const BacaLibrarySort sort = state->picker_input.length == 0U
+  const MereaderTuiLibrarySort sort = state->picker_input.length == 0U
                                    ? state->sort
-                                   : BACA_LIBRARY_SORT_RELEVANCE;
-  BacaLibraryView replacement_view = {0};
-  if (!baca_library_view_build(&replacement_view, history, filter, sort,
+                                   : MEREADER_TUI_LIBRARY_SORT_RELEVANCE;
+  MereaderTuiLibraryView replacement_view = {0};
+  if (!mereader_tui_library_view_build(&replacement_view, history, filter, sort,
                                error)) {
-    baca_library_shelf_free(&replacement_shelf);
+    mereader_tui_library_shelf_free(&replacement_shelf);
     return false;
   }
-  const size_t selected = baca_library_preserve_selection(
+  const size_t selected = mereader_tui_library_preserve_selection(
       &replacement_view, selected_filepath, state->picker_selected);
-  baca_library_view_free(&state->picker_view);
-  baca_library_shelf_free(&state->picker_shelf);
+  mereader_tui_library_view_free(&state->picker_view);
+  mereader_tui_library_shelf_free(&state->picker_shelf);
   state->picker_view = replacement_view;
   state->picker_shelf = replacement_shelf;
   state->picker_selected = selected;
@@ -282,44 +282,44 @@ static bool library_rebuild_picker(BacaLibraryTuiState *state,
   return true;
 }
 
-static const char *library_selected_filepath(const BacaLibraryTuiState *state) {
+static const char *library_selected_filepath(const MereaderTuiLibraryTuiState *state) {
   if (state->selected >= state->view.length) {
     return NULL;
   }
   return state->view.rows[state->selected].entry->filepath;
 }
 
-static const BacaLibraryShelfReference *
-library_selected_reference(const BacaLibraryTuiState *state) {
+static const MereaderTuiLibraryShelfReference *
+library_selected_reference(const MereaderTuiLibraryTuiState *state) {
   if (state->catalog == NULL || state->selected >= state->view.length) {
     return NULL;
   }
-  return baca_library_shelf_reference(&state->shelf,
+  return mereader_tui_library_shelf_reference(&state->shelf,
                                       state->view.rows[state->selected].entry);
 }
 
 static const char *
-library_picker_selected_filepath(const BacaLibraryTuiState *state) {
+library_picker_selected_filepath(const MereaderTuiLibraryTuiState *state) {
   if (state->picker_selected >= state->picker_view.length) {
     return NULL;
   }
   return state->picker_view.rows[state->picker_selected].entry->filepath;
 }
 
-static const BacaLibraryShelfReference *
-library_picker_selected_reference(const BacaLibraryTuiState *state) {
+static const MereaderTuiLibraryShelfReference *
+library_picker_selected_reference(const MereaderTuiLibraryTuiState *state) {
   if (state->catalog == NULL ||
       state->picker_selected >= state->picker_view.length) {
     return NULL;
   }
-  return baca_library_shelf_reference(
+  return mereader_tui_library_shelf_reference(
       &state->picker_shelf,
       state->picker_view.rows[state->picker_selected].entry);
 }
 
-static const BacaCatalogBook *
-library_book_for_reference(const BacaLibraryTuiState *state,
-                           const BacaLibraryShelfReference *reference) {
+static const MereaderTuiCatalogBook *
+library_book_for_reference(const MereaderTuiLibraryTuiState *state,
+                           const MereaderTuiLibraryShelfReference *reference) {
   if (state->catalog == NULL || reference == NULL ||
       reference->book_index >= state->catalog->length) {
     return NULL;
@@ -327,8 +327,8 @@ library_book_for_reference(const BacaLibraryTuiState *state,
   return &state->catalog->books[reference->book_index];
 }
 
-static void library_runtime_error(BacaLibraryTuiState *state,
-                                  const BacaError *error,
+static void library_runtime_error(MereaderTuiLibraryTuiState *state,
+                                  const MereaderTuiError *error,
                                   const char *fallback) {
   library_copy_status(state, error != NULL && error->message[0] != '\0'
                                  ? error->message
@@ -336,7 +336,7 @@ static void library_runtime_error(BacaLibraryTuiState *state,
   state->dirty = true;
 }
 
-static void library_move_selection(BacaLibraryTuiState *state, int amount) {
+static void library_move_selection(MereaderTuiLibraryTuiState *state, int amount) {
   if (state->view.length == 0U) {
     return;
   }
@@ -367,7 +367,7 @@ static int library_progress_percent(double progress) {
 
 static void library_format_recency(const char *last_read, char output[16]) {
   struct timespec parsed = {0};
-  if (!baca_library_parse_timestamp(last_read, &parsed)) {
+  if (!mereader_tui_library_parse_timestamp(last_read, &parsed)) {
     (void)snprintf(output, 16U, "-");
     return;
   }
@@ -393,12 +393,12 @@ static void library_format_recency(const char *last_read, char output[16]) {
   }
 }
 
-static void library_draw_row(BacaLibraryTuiState *state, int screen_row,
+static void library_draw_row(MereaderTuiLibraryTuiState *state, int screen_row,
                              size_t view_index) {
   if (view_index >= state->view.length || state->columns <= 0) {
     return;
   }
-  const BacaLibraryRow *row = &state->view.rows[view_index];
+  const MereaderTuiLibraryRow *row = &state->view.rows[view_index];
   const int x = state->columns > 2 ? 1 : 0;
   const int width = state->columns > 2 ? state->columns - 2 : state->columns;
   if (width <= 0) {
@@ -409,7 +409,7 @@ static void library_draw_row(BacaLibraryTuiState *state, int screen_row,
   const attr_t selected_attributes =
       selected ? (state->colors ? A_NORMAL : A_REVERSE) : A_NORMAL;
   const short selected_pair =
-      selected && state->colors ? BACA_PAIR_SEARCH : BACA_PAIR_BASE;
+      selected && state->colors ? MEREADER_TUI_PAIR_SEARCH : MEREADER_TUI_PAIR_BASE;
   (void)wattron(stdscr, selected_attributes |
                             (state->colors ? COLOR_PAIR(selected_pair) : 0));
   (void)mvwhline(stdscr, screen_row, x, ' ', width);
@@ -447,7 +447,7 @@ static void library_draw_row(BacaLibraryTuiState *state, int screen_row,
                              (state->colors ? COLOR_PAIR(selected_pair) : 0));
 }
 
-static void library_draw_progress(BacaLibraryTuiState *state, int y, int x,
+static void library_draw_progress(MereaderTuiLibraryTuiState *state, int y, int x,
                                   int width, double progress) {
   if (width <= 0 || y < 0 || y >= state->rows) {
     return;
@@ -471,11 +471,11 @@ static void library_draw_progress(BacaLibraryTuiState *state, int y, int x,
   library_add_clipped(stdscr, y, x + bar_width + 1, label, label_width);
 }
 
-static void library_clear_cover(BacaLibraryTuiState *state) {
-  baca_document_close(&state->cover_document);
+static void library_clear_cover(MereaderTuiLibraryTuiState *state) {
+  mereader_tui_document_close(&state->cover_document);
 }
 
-static bool library_load_cover(BacaLibraryTuiState *state, size_t book_index) {
+static bool library_load_cover(MereaderTuiLibraryTuiState *state, size_t book_index) {
   if (state->catalog == NULL || book_index >= state->catalog->length) {
     library_clear_cover(state);
     state->cover_book_index = SIZE_MAX;
@@ -493,27 +493,27 @@ static bool library_load_cover(BacaLibraryTuiState *state, size_t book_index) {
       "cover.png",
       "cover.webp",
   };
-  const BacaCatalogBook *book = &state->catalog->books[book_index];
-  const BacaCatalogFormat *preferred = baca_catalog_preferred_format(book);
-  BacaError ignored = {0};
+  const MereaderTuiCatalogBook *book = &state->catalog->books[book_index];
+  const MereaderTuiCatalogFormat *preferred = mereader_tui_catalog_preferred_format(book);
+  MereaderTuiError ignored = {0};
   char *directory =
-      preferred == NULL ? NULL : baca_path_dirname(preferred->path, &ignored);
+      preferred == NULL ? NULL : mereader_tui_path_dirname(preferred->path, &ignored);
   if (directory == NULL) {
     return false;
   }
-  for (size_t index = 0U; index < BACA_ARRAY_LEN(names); ++index) {
-    char *path = baca_path_join(directory, names[index], &ignored);
+  for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(names); ++index) {
+    char *path = mereader_tui_path_join(directory, names[index], &ignored);
     if (path == NULL) {
       continue;
     }
     struct stat status = {0};
     const bool regular = lstat(path, &status) == 0 && S_ISREG(status.st_mode);
-    if (regular && baca_document_open(&state->cover_document, path, &ignored) &&
+    if (regular && mereader_tui_document_open(&state->cover_document, path, &ignored) &&
         state->cover_document.block_count > 0U &&
-        state->cover_document.blocks[0].kind == BACA_BLOCK_IMAGE) {
-      baca_document_probe_images(&state->cover_document, true);
+        state->cover_document.blocks[0].kind == MEREADER_TUI_BLOCK_IMAGE) {
+      mereader_tui_document_probe_images(&state->cover_document, true);
       if (state->cover_document.blocks[0].value.image.broken) {
-        baca_document_close(&state->cover_document);
+        mereader_tui_document_close(&state->cover_document);
         free(path);
         continue;
       }
@@ -521,7 +521,7 @@ static bool library_load_cover(BacaLibraryTuiState *state, size_t book_index) {
       free(directory);
       return true;
     }
-    baca_document_close(&state->cover_document);
+    mereader_tui_document_close(&state->cover_document);
     free(path);
   }
   free(directory);
@@ -530,14 +530,14 @@ static bool library_load_cover(BacaLibraryTuiState *state, size_t book_index) {
 
 static bool library_draw_cover_cell(void *user_data, int row, int column,
                                     uint32_t foreground, uint32_t background) {
-  BacaLibraryTuiState *state = user_data;
+  MereaderTuiLibraryTuiState *state = user_data;
   const unsigned foreground_index =
-      baca_graphics_rgb_to_palette(foreground, (unsigned)COLORS);
+      mereader_tui_graphics_rgb_to_palette(foreground, (unsigned)COLORS);
   const unsigned background_index =
-      baca_graphics_rgb_to_palette(background, (unsigned)COLORS);
+      mereader_tui_graphics_rgb_to_palette(background, (unsigned)COLORS);
   bool created = false;
-  const short pair = baca_graphics_pair(state->graphics, foreground_index,
-                                        background_index, BACA_PAIR_IMAGE_FIRST,
+  const short pair = mereader_tui_graphics_pair(state->graphics, foreground_index,
+                                        background_index, MEREADER_TUI_PAIR_IMAGE_FIRST,
                                         state->image_pair_capacity, &created);
   if (pair <= 0 || (created && init_pair(pair, (short)foreground_index,
                                          (short)background_index) == ERR)) {
@@ -548,15 +548,15 @@ static bool library_draw_cover_cell(void *user_data, int row, int column,
          mvwadd_wch(stdscr, row, column, &character) != ERR;
 }
 
-static bool library_prepare_cover(BacaLibraryTuiState *state, size_t book_index,
+static bool library_prepare_cover(MereaderTuiLibraryTuiState *state, size_t book_index,
                                   int y, int x, int rows, int columns,
-                                  BacaGraphicsSurface *surface) {
+                                  MereaderTuiGraphicsSurface *surface) {
   if (state->graphics == NULL || rows <= 0 || columns <= 0 ||
       !library_load_cover(state, book_index)) {
     return false;
   }
-  BacaError ignored = {0};
-  if (!baca_graphics_prepare(state->graphics, &state->cover_document, 0U,
+  MereaderTuiError ignored = {0};
+  if (!mereader_tui_graphics_prepare(state->graphics, &state->cover_document, 0U,
                              columns, rows, surface, &ignored)) {
     return false;
   }
@@ -567,29 +567,29 @@ static bool library_prepare_cover(BacaLibraryTuiState *state, size_t book_index,
   return true;
 }
 
-static bool library_draw_cover(BacaLibraryTuiState *state, size_t book_index,
+static bool library_draw_cover(MereaderTuiLibraryTuiState *state, size_t book_index,
                                int y, int x, int rows, int columns) {
-  BacaGraphicsSurface surface = {0};
+  MereaderTuiGraphicsSurface surface = {0};
   if (!library_prepare_cover(state, book_index, y, x, rows, columns,
                              &surface)) {
     return false;
   }
-  if ((state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) ||
-      state->image_mode == BACA_IMAGE_MODE_KITTY) {
+  if ((state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor) ||
+      state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
     state->cover_pending = true;
-    baca_graphics_surface_release(&surface);
+    mereader_tui_graphics_surface_release(&surface);
     return true;
   }
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .row = y,
       .column = x,
       .viewport_rows = state->rows,
       .viewport_columns = state->columns,
   };
-  BacaError ignored = {0};
-  const bool drawn = baca_graphics_render_cells(
+  MereaderTuiError ignored = {0};
+  const bool drawn = mereader_tui_graphics_render_cells(
       &surface, &placement, library_draw_cover_cell, state, &ignored);
-  baca_graphics_surface_release(&surface);
+  mereader_tui_graphics_surface_release(&surface);
   return drawn;
 }
 
@@ -609,16 +609,16 @@ static void library_draw_cover_placeholder(int y, int x, int rows,
   }
 }
 
-static void library_draw_details(BacaLibraryTuiState *state,
-                                 const BacaLibraryRow *row,
-                                 const BacaLibraryShelfReference *reference,
+static void library_draw_details(MereaderTuiLibraryTuiState *state,
+                                 const MereaderTuiLibraryRow *row,
+                                 const MereaderTuiLibraryShelfReference *reference,
                                  int y, int x, int height, int width) {
   if (row == NULL || height <= 0 || width <= 0) {
     return;
   }
-  const BacaCatalogBook *book = library_book_for_reference(state, reference);
-  const BacaCatalogFormat *preferred =
-      book == NULL ? NULL : baca_catalog_preferred_format(book);
+  const MereaderTuiCatalogBook *book = library_book_for_reference(state, reference);
+  const MereaderTuiCatalogFormat *preferred =
+      book == NULL ? NULL : mereader_tui_catalog_preferred_format(book);
   const char *title = book == NULL ? row->title : book->title;
   const char *author = book == NULL ? row->author : book->author;
   const double progress = preferred == NULL ? row->entry->reading_progress
@@ -645,10 +645,10 @@ static void library_draw_details(BacaLibraryTuiState *state,
 
   int line = y;
   (void)wattron(stdscr,
-                A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   library_add_clipped(stdscr, line++, detail_x, title, detail_width);
   (void)wattroff(stdscr,
-                 A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                 A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   if (line < y + height) {
     (void)wattron(stdscr, A_DIM);
     library_add_clipped(stdscr, line++, detail_x,
@@ -665,13 +665,13 @@ static void library_draw_details(BacaLibraryTuiState *state,
   }
 
   if (book != NULL && line < y + height) {
-    BacaString formats = {0};
-    BacaError ignored = {0};
+    MereaderTuiString formats = {0};
+    MereaderTuiError ignored = {0};
     for (size_t index = 0U; index < book->format_count; ++index) {
-      if (index > 0U && !baca_string_append(&formats, "  ", &ignored)) {
+      if (index > 0U && !mereader_tui_string_append(&formats, "  ", &ignored)) {
         break;
       }
-      if (!baca_string_append(&formats, book->formats[index].name, &ignored)) {
+      if (!mereader_tui_string_append(&formats, book->formats[index].name, &ignored)) {
         break;
       }
     }
@@ -680,7 +680,7 @@ static void library_draw_details(BacaLibraryTuiState *state,
       (void)snprintf(value, sizeof(value), "formats  %s", formats.data);
       library_add_clipped(stdscr, line++, detail_x, value, detail_width);
     }
-    baca_string_free(&formats);
+    mereader_tui_string_free(&formats);
   }
   if (preferred != NULL && line < y + height) {
     char value[512] = {0};
@@ -699,19 +699,19 @@ static void library_draw_details(BacaLibraryTuiState *state,
 }
 
 static size_t library_sanitized_width(const char *text, size_t length) {
-  if (length >= BACA_TEXT_INPUT_CAPACITY) {
+  if (length >= MEREADER_TUI_TEXT_INPUT_CAPACITY) {
     return 0U;
   }
-  char segment[BACA_TEXT_INPUT_CAPACITY] = {0};
+  char segment[MEREADER_TUI_TEXT_INPUT_CAPACITY] = {0};
   memcpy(segment, text, length);
-  BacaError ignored = {0};
-  char *safe = baca_library_sanitize_text(segment, SIZE_MAX, &ignored);
-  const size_t width = safe == NULL ? 0U : baca_utf8_width(safe, strlen(safe));
+  MereaderTuiError ignored = {0};
+  char *safe = mereader_tui_library_sanitize_text(segment, SIZE_MAX, &ignored);
+  const size_t width = safe == NULL ? 0U : mereader_tui_utf8_width(safe, strlen(safe));
   free(safe);
   return width;
 }
 
-static size_t library_input_visible_start(const BacaTextInput *input,
+static size_t library_input_visible_start(const MereaderTuiTextInput *input,
                                           int columns) {
   if (columns <= 0) {
     return input->cursor;
@@ -722,22 +722,22 @@ static size_t library_input_visible_start(const BacaTextInput *input,
              (size_t)columns) {
     int width = 0;
     const size_t next =
-        baca_utf8_next(input->value, input->cursor, start, &width);
+        mereader_tui_utf8_next(input->value, input->cursor, start, &width);
     start = next > start ? next : start + 1U;
   }
   return start;
 }
 
-static void library_draw_context(BacaLibraryTuiState *state, int row) {
+static void library_draw_context(MereaderTuiLibraryTuiState *state, int row) {
   if (row < 0 || row >= state->rows || state->columns <= 0) {
     return;
   }
   const int x = state->columns > 2 ? 1 : 0;
   const int width = state->columns > 2 ? state->columns - 2 : state->columns;
   (void)wattron(stdscr, A_DIM);
-  if (state->input_kind != BACA_LIBRARY_INPUT_NONE) {
-    const char *prefix = state->input_kind == BACA_LIBRARY_INPUT_FILTER ? "/ "
-                         : state->input_kind == BACA_LIBRARY_INPUT_ROOT
+  if (state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE) {
+    const char *prefix = state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER ? "/ "
+                         : state->input_kind == MEREADER_TUI_LIBRARY_INPUT_ROOT
                              ? "library "
                              : "open ";
     const int full_prefix_width = size_to_int(strlen(prefix));
@@ -769,16 +769,16 @@ static void library_draw_context(BacaLibraryTuiState *state, int row) {
       if (state->view.length == 0U) {
         (void)snprintf(context, sizeof(context), "%s - %s%s",
                        state->filter[0] == '\0' ? "0 books" : "no matches",
-                       baca_library_sort_name(state->sort),
+                       mereader_tui_library_sort_name(state->sort),
                        state->filter[0] == '\0' ? "" : " - /");
       } else if (state->filter[0] == '\0') {
         (void)snprintf(context, sizeof(context), "%zu/%zu - %s",
                        state->selected + 1U, state->view.length,
-                       baca_library_sort_name(state->sort));
+                       mereader_tui_library_sort_name(state->sort));
       } else {
         (void)snprintf(context, sizeof(context), "%zu/%zu - %s - /",
                        state->selected + 1U, state->view.length,
-                       baca_library_sort_name(state->sort));
+                       mereader_tui_library_sort_name(state->sort));
       }
       library_add_clipped(stdscr, row, x, context, width);
       if (state->filter[0] != '\0') {
@@ -799,20 +799,20 @@ static void library_draw_context(BacaLibraryTuiState *state, int row) {
       return;
     }
     const char *scope = state->catalog == NULL                      ? "history"
-                        : state->mode == BACA_LIBRARY_SHELF_AUTHORS ? "authors"
-                        : state->mode == BACA_LIBRARY_SHELF_BOOKS   ? "books"
-                        : state->mode == BACA_LIBRARY_SHELF_FORMATS
+                        : state->mode == MEREADER_TUI_LIBRARY_SHELF_AUTHORS ? "authors"
+                        : state->mode == MEREADER_TUI_LIBRARY_SHELF_BOOKS   ? "books"
+                        : state->mode == MEREADER_TUI_LIBRARY_SHELF_FORMATS
                             ? "formats"
                             : "all books";
     if (state->view.length == 0U) {
       (void)snprintf(context, sizeof(context), "%s | %s | %s%s",
                      state->filter[0] == '\0' ? "0 books" : "no matches", scope,
-                     baca_library_sort_name(state->sort),
+                     mereader_tui_library_sort_name(state->sort),
                      state->filter[0] == '\0' ? "" : " - /");
     } else if (state->filter[0] == '\0') {
       (void)snprintf(context, sizeof(context), "%zu/%zu | %s | %s",
                      state->selected + 1U, state->view.length, scope,
-                     baca_library_sort_name(state->sort));
+                     mereader_tui_library_sort_name(state->sort));
     } else {
       (void)snprintf(context, sizeof(context), "%zu/%zu | %s | relevance | /",
                      state->selected + 1U, state->view.length, scope);
@@ -826,7 +826,7 @@ static void library_draw_context(BacaLibraryTuiState *state, int row) {
       }
     }
   }
-  if (state->input_kind == BACA_LIBRARY_INPUT_NONE && width >= 10) {
+  if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_NONE && width >= 10) {
     const char *help = "? help";
     const int help_width = size_to_int(strlen(help));
     (void)mvwhline(stdscr, row, x + width - help_width, ' ', help_width);
@@ -851,12 +851,12 @@ static void library_draw_box(int y, int x, int height, int width) {
   (void)mvwaddch(stdscr, y + height - 1, x + width - 1, ACS_LRCORNER);
 }
 
-static size_t library_picker_visible_rows(const BacaLibraryTuiState *state) {
+static size_t library_picker_visible_rows(const MereaderTuiLibraryTuiState *state) {
   return state->rows > 8 ? (size_t)(state->rows - 8) : 1U;
 }
 
 static void
-library_ensure_picker_selection_visible(BacaLibraryTuiState *state) {
+library_ensure_picker_selection_visible(MereaderTuiLibraryTuiState *state) {
   if (state->picker_view.length == 0U) {
     state->picker_selected = 0U;
     state->picker_top = 0U;
@@ -879,17 +879,17 @@ library_ensure_picker_selection_visible(BacaLibraryTuiState *state) {
   }
 }
 
-static void library_draw_picker_row(BacaLibraryTuiState *state, int y, int x,
+static void library_draw_picker_row(MereaderTuiLibraryTuiState *state, int y, int x,
                                     int width, size_t view_index) {
   if (view_index >= state->picker_view.length || width <= 0) {
     return;
   }
-  const BacaLibraryRow *row = &state->picker_view.rows[view_index];
+  const MereaderTuiLibraryRow *row = &state->picker_view.rows[view_index];
   const bool selected = view_index == state->picker_selected;
   const attr_t attributes =
       selected ? (state->colors ? A_NORMAL : A_REVERSE) : A_NORMAL;
   const short pair =
-      selected && state->colors ? BACA_PAIR_SEARCH : BACA_PAIR_BASE;
+      selected && state->colors ? MEREADER_TUI_PAIR_SEARCH : MEREADER_TUI_PAIR_BASE;
   (void)wattron(stdscr, attributes | (state->colors ? COLOR_PAIR(pair) : 0));
   (void)mvwhline(stdscr, y, x, ' ', width);
   const int progress = library_progress_percent(row->entry->reading_progress);
@@ -906,7 +906,7 @@ static void library_draw_picker_row(BacaLibraryTuiState *state, int y, int x,
   (void)wattroff(stdscr, attributes | (state->colors ? COLOR_PAIR(pair) : 0));
 }
 
-static void library_draw_picker(BacaLibraryTuiState *state) {
+static void library_draw_picker(MereaderTuiLibraryTuiState *state) {
   const int margin_y = state->rows >= 8 ? 1 : 0;
   const int margin_x = state->columns >= 40 ? 2 : 0;
   const int height = state->rows - margin_y * 2;
@@ -914,7 +914,7 @@ static void library_draw_picker(BacaLibraryTuiState *state) {
   if (height <= 0 || width <= 0) {
     return;
   }
-  (void)wattron(stdscr, state->colors ? COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+  (void)wattron(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   for (int row = margin_y; row < margin_y + height; ++row) {
     (void)mvwhline(stdscr, row, margin_x, ' ', width);
   }
@@ -930,10 +930,10 @@ static void library_draw_picker(BacaLibraryTuiState *state) {
   const int title_y = margin_y + (height >= 2 ? 1 : 0);
   if (title_y < margin_y + height) {
     (void)wattron(stdscr,
-                  A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                  A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
     library_add_clipped(stdscr, title_y, inner_x, "find a book", inner_width);
     (void)wattroff(stdscr,
-                   A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                   A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   }
   const int search_y = title_y + 1;
   if (search_y < margin_y + height) {
@@ -971,7 +971,7 @@ static void library_draw_picker(BacaLibraryTuiState *state) {
                                 index);
       }
       if (split) {
-        const BacaLibraryRow *row =
+        const MereaderTuiLibraryRow *row =
             &state->picker_view.rows[state->picker_selected];
         library_draw_details(
             state, row, library_picker_selected_reference(state), content_y,
@@ -999,16 +999,16 @@ static void library_draw_picker(BacaLibraryTuiState *state) {
     }
     (void)move(search_y, cursor_x);
   }
-  (void)wattroff(stdscr, state->colors ? COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+  (void)wattroff(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
 }
 
-typedef struct BacaLibraryHelpLine {
+typedef struct MereaderTuiLibraryHelpLine {
   const char *key;
   const char *description;
-} BacaLibraryHelpLine;
+} MereaderTuiLibraryHelpLine;
 
-static void library_draw_help(BacaLibraryTuiState *state) {
-  static const BacaLibraryHelpLine lines[] = {
+static void library_draw_help(MereaderTuiLibraryTuiState *state) {
+  static const MereaderTuiLibraryHelpLine lines[] = {
       {.key = NULL, .description = "navigation"},
       {.key = "j / down", .description = "select the next book"},
       {.key = "k / up", .description = "select the previous book"},
@@ -1050,16 +1050,16 @@ static void library_draw_help(BacaLibraryTuiState *state) {
   const int inner_width = width >= 4 ? width - 4 : width;
   const int title_y = margin_y + (height >= 2 ? 1 : 0);
   (void)wattron(stdscr,
-                A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   library_add_clipped(stdscr, title_y, inner_x, "help", inner_width);
   (void)wattroff(stdscr,
-                 A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                 A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   const int content_y = title_y + 2;
   const int footer_y = margin_y + height - 2;
   const int visible = footer_y - content_y;
   const size_t maximum_scroll =
-      visible > 0 && BACA_ARRAY_LEN(lines) > (size_t)visible
-          ? BACA_ARRAY_LEN(lines) - (size_t)visible
+      visible > 0 && MEREADER_TUI_ARRAY_LEN(lines) > (size_t)visible
+          ? MEREADER_TUI_ARRAY_LEN(lines) - (size_t)visible
           : 0U;
   if (state->help_scroll > maximum_scroll) {
     state->help_scroll = maximum_scroll;
@@ -1067,17 +1067,17 @@ static void library_draw_help(BacaLibraryTuiState *state) {
   const int key_width = inner_width >= 38 ? 18 : inner_width / 2;
   for (int row = 0; row < visible; ++row) {
     const size_t index = state->help_scroll + (size_t)row;
-    if (index >= BACA_ARRAY_LEN(lines)) {
+    if (index >= MEREADER_TUI_ARRAY_LEN(lines)) {
       break;
     }
-    const BacaLibraryHelpLine *line = &lines[index];
+    const MereaderTuiLibraryHelpLine *line = &lines[index];
     if (line->key == NULL) {
       (void)wattron(
-          stdscr, A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+          stdscr, A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
       library_add_clipped(stdscr, content_y + row, inner_x, line->description,
                           inner_width);
       (void)wattroff(
-          stdscr, A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+          stdscr, A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
       continue;
     }
     (void)wattron(stdscr, A_BOLD);
@@ -1094,60 +1094,60 @@ static void library_draw_help(BacaLibraryTuiState *state) {
   }
 }
 
-static void library_begin_cover_frame(BacaLibraryTuiState *state) {
+static void library_begin_cover_frame(MereaderTuiLibraryTuiState *state) {
   state->cover_pending = false;
   if (state->graphics == NULL) {
     return;
   }
-  if (state->image_mode == BACA_IMAGE_MODE_KITTY) {
-    BacaError ignored = {0};
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
+    MereaderTuiError ignored = {0};
     (void)fflush(stdout);
-    (void)baca_graphics_kitty_delete_placements(
-        state->graphics, baca_terminal_graphics_write, state, &ignored);
-  } else if (state->image_mode == BACA_IMAGE_MODE_ANSI &&
+    (void)mereader_tui_graphics_kitty_delete_placements(
+        state->graphics, mereader_tui_terminal_graphics_write, state, &ignored);
+  } else if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI &&
              state->raw_truecolor) {
     (void)clearok(stdscr, true);
   }
 }
 
-static void library_draw_terminal_cover(BacaLibraryTuiState *state) {
+static void library_draw_terminal_cover(MereaderTuiLibraryTuiState *state) {
   if (!state->cover_pending || state->graphics == NULL ||
       state->cover_book_index == SIZE_MAX) {
     return;
   }
-  BacaGraphicsSurface surface = {0};
+  MereaderTuiGraphicsSurface surface = {0};
   if (!library_prepare_cover(state, state->cover_book_index, state->cover_y,
                              state->cover_x, state->cover_rows,
                              state->cover_columns, &surface)) {
     return;
   }
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .row = state->cover_y,
       .column = state->cover_x,
       .viewport_rows = state->rows,
       .viewport_columns = state->columns,
   };
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   (void)fflush(stdout);
-  if (state->image_mode == BACA_IMAGE_MODE_ANSI && state->raw_truecolor) {
-    (void)baca_graphics_render_ansi(
-        &surface, &placement, baca_terminal_graphics_write, state, &ignored);
-  } else if (state->image_mode == BACA_IMAGE_MODE_KITTY) {
-    (void)baca_graphics_kitty_draw(state->graphics, &surface, &placement,
-                                   baca_terminal_graphics_write, state,
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor) {
+    (void)mereader_tui_graphics_render_ansi(
+        &surface, &placement, mereader_tui_terminal_graphics_write, state, &ignored);
+  } else if (state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
+    (void)mereader_tui_graphics_kitty_draw(state->graphics, &surface, &placement,
+                                   mereader_tui_terminal_graphics_write, state,
                                    &ignored);
   }
-  baca_graphics_surface_release(&surface);
+  mereader_tui_graphics_surface_release(&surface);
 }
 
-static void library_draw_frame(BacaLibraryTuiState *state) {
+static void library_draw_frame(MereaderTuiLibraryTuiState *state) {
   library_begin_cover_frame(state);
   (void)werase(stdscr);
   (void)wbkgd(stdscr,
-              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+              state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   const bool compact_input =
-      state->rows == 2 && state->input_kind != BACA_LIBRARY_INPUT_NONE;
-  const bool input_active = state->input_kind != BACA_LIBRARY_INPUT_NONE;
+      state->rows == 2 && state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE;
+  const bool input_active = state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE;
   const bool show_heading = state->rows >= 2 && !compact_input;
   const bool show_separator = state->rows >= 4;
   const int content_row = show_separator ? 2 : show_heading ? 1 : 0;
@@ -1156,33 +1156,33 @@ static void library_draw_frame(BacaLibraryTuiState *state) {
   const int content_end = footer_row >= 0 ? footer_row : state->rows;
   if (show_heading) {
     char heading[512] = {0};
-    (void)snprintf(heading, sizeof(heading), "%s / history", BACA_NAME);
+    (void)snprintf(heading, sizeof(heading), "%s / history", MEREADER_TUI_NAME);
     if (state->setup_required) {
       (void)snprintf(heading, sizeof(heading), "%s / set up library",
-                     BACA_NAME);
+                     MEREADER_TUI_NAME);
     } else if (state->catalog != NULL) {
-      if (state->mode == BACA_LIBRARY_SHELF_AUTHORS) {
-        (void)snprintf(heading, sizeof(heading), "%s / authors", BACA_NAME);
-      } else if (state->mode == BACA_LIBRARY_SHELF_ALL) {
+      if (state->mode == MEREADER_TUI_LIBRARY_SHELF_AUTHORS) {
+        (void)snprintf(heading, sizeof(heading), "%s / authors", MEREADER_TUI_NAME);
+      } else if (state->mode == MEREADER_TUI_LIBRARY_SHELF_ALL) {
         (void)snprintf(heading, sizeof(heading), "%s / all books%s",
-                       BACA_NAME, state->detail_view ? " / card" : "");
-      } else if (state->mode == BACA_LIBRARY_SHELF_BOOKS) {
+                       MEREADER_TUI_NAME, state->detail_view ? " / card" : "");
+      } else if (state->mode == MEREADER_TUI_LIBRARY_SHELF_BOOKS) {
         (void)snprintf(heading, sizeof(heading), "%s / authors / %s",
-                       BACA_NAME,
+                       MEREADER_TUI_NAME,
                        state->author == NULL ? "unknown" : state->author);
       } else if (state->format_book < state->catalog->length) {
         (void)snprintf(heading, sizeof(heading), "%s / formats / %s",
-                       BACA_NAME,
+                       MEREADER_TUI_NAME,
                        state->catalog->books[state->format_book].title);
       }
     }
     (void)wattron(stdscr,
-                  A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                  A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
     library_add_clipped(stdscr, 0, state->columns > 2 ? 1 : 0, heading,
                         state->columns > 2 ? state->columns - 2
                                            : state->columns);
     (void)wattroff(stdscr,
-                   A_BOLD | (state->colors ? COLOR_PAIR(BACA_PAIR_ACCENT) : 0));
+                   A_BOLD | (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
   }
   if (show_separator) {
     (void)wattron(stdscr, A_DIM);
@@ -1235,7 +1235,7 @@ static void library_draw_frame(BacaLibraryTuiState *state) {
   if (state->help_open) {
     library_draw_help(state);
   }
-  if (state->input_kind != BACA_LIBRARY_INPUT_NONE || state->picker_open) {
+  if (state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE || state->picker_open) {
     if (state->previous_cursor != ERR) {
       (void)curs_set(1);
     }
@@ -1248,10 +1248,10 @@ static void library_draw_frame(BacaLibraryTuiState *state) {
   library_draw_terminal_cover(state);
 }
 
-static bool library_initialize_curses(BacaLibraryTuiState *state,
-                                      BacaError *error) {
+static bool library_initialize_curses(MereaderTuiLibraryTuiState *state,
+                                      MereaderTuiError *error) {
   if (initscr() == NULL) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot initialize terminal");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "cannot initialize terminal");
     return false;
   }
   (void)cbreak();
@@ -1261,26 +1261,26 @@ static bool library_initialize_curses(BacaLibraryTuiState *state,
   state->previous_cursor = curs_set(0);
   state->colors = false;
   if (has_colors() == true && start_color() == OK && COLORS >= 8 &&
-      COLOR_PAIRS > BACA_PAIR_SEARCH) {
-    const BacaColorScheme *theme = &state->config->dark;
+      COLOR_PAIRS > MEREADER_TUI_PAIR_SEARCH) {
+    const MereaderTuiColorScheme *theme = &state->config->dark;
     (void)use_default_colors();
-    if (init_pair(BACA_PAIR_BASE, terminal_color(theme->foreground),
+    if (init_pair(MEREADER_TUI_PAIR_BASE, terminal_color(theme->foreground),
                   terminal_color(theme->background)) != ERR &&
-        init_pair(BACA_PAIR_ACCENT, terminal_color(theme->accent),
+        init_pair(MEREADER_TUI_PAIR_ACCENT, terminal_color(theme->accent),
                   terminal_color(theme->background)) != ERR &&
-        init_pair(BACA_PAIR_SEARCH, terminal_color(theme->background),
+        init_pair(MEREADER_TUI_PAIR_SEARCH, terminal_color(theme->background),
                   terminal_color(theme->accent)) != ERR) {
       state->colors = true;
     }
   }
   library_update_dimensions(state);
   (void)wbkgd(stdscr,
-              state->colors ? (chtype)COLOR_PAIR(BACA_PAIR_BASE) : A_NORMAL);
+              state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
   return true;
 }
 
-static void library_initialize_graphics(BacaLibraryTuiState *state) {
-  const BacaGraphicsEnvironment environment = {
+static void library_initialize_graphics(MereaderTuiLibraryTuiState *state) {
+  const MereaderTuiGraphicsEnvironment environment = {
       .term_program = getenv("TERM_PROGRAM"),
       .term = getenv("TERM"),
       .kitty_window_id = getenv("KITTY_WINDOW_ID"),
@@ -1290,15 +1290,15 @@ static void library_initialize_graphics(BacaLibraryTuiState *state) {
       .colors = state->colors,
       .output_is_tty = isatty(STDOUT_FILENO) != 0,
   };
-  const BacaGraphicsMultiplexer multiplexer =
-      baca_graphics_multiplexer(&environment);
-  state->image_mode = baca_graphics_select_mode(
+  const MereaderTuiGraphicsMultiplexer multiplexer =
+      mereader_tui_graphics_multiplexer(&environment);
+  state->image_mode = mereader_tui_graphics_select_mode(
       state->config->image_mode, state->config->image_mode_explicit,
       &environment);
-  state->raw_truecolor = baca_graphics_truecolor_available(&environment) &&
-                         multiplexer == BACA_GRAPHICS_MULTIPLEXER_NONE;
+  state->raw_truecolor = mereader_tui_graphics_truecolor_available(&environment) &&
+                         multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE;
 
-  int pair_capacity = state->colors ? COLOR_PAIRS - BACA_PAIR_IMAGE_FIRST : 0;
+  int pair_capacity = state->colors ? COLOR_PAIRS - MEREADER_TUI_PAIR_IMAGE_FIRST : 0;
   if (pair_capacity > 256) {
     pair_capacity = 256;
   }
@@ -1306,36 +1306,36 @@ static void library_initialize_graphics(BacaLibraryTuiState *state) {
     pair_capacity = 0;
   }
   state->image_pair_capacity = (short)pair_capacity;
-  if (state->image_mode == BACA_IMAGE_MODE_ANSI && !state->raw_truecolor &&
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && !state->raw_truecolor &&
       state->image_pair_capacity == 0) {
-    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
   }
-  if (state->image_mode == BACA_IMAGE_MODE_PLACEHOLDER) {
+  if (state->image_mode == MEREADER_TUI_IMAGE_MODE_PLACEHOLDER) {
     library_update_cell_pixels(state);
     return;
   }
 
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   state->graphics =
-      baca_graphics_create(BACA_GRAPHICS_DEFAULT_CACHE_BYTES, multiplexer,
+      mereader_tui_graphics_create(MEREADER_TUI_GRAPHICS_DEFAULT_CACHE_BYTES, multiplexer,
                            state->config->dark.background, &ignored);
   if (state->graphics == NULL ||
-      !baca_graphics_resize(state->graphics, state->columns, state->rows,
+      !mereader_tui_graphics_resize(state->graphics, state->columns, state->rows,
                             &ignored)) {
-    baca_graphics_free(state->graphics);
+    mereader_tui_graphics_free(state->graphics);
     state->graphics = NULL;
-    state->image_mode = BACA_IMAGE_MODE_PLACEHOLDER;
+    state->image_mode = MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
   }
   library_update_cell_pixels(state);
 }
 
-static void library_begin_filter(BacaLibraryTuiState *state) {
-  BacaError error = {0};
+static void library_begin_filter(MereaderTuiLibraryTuiState *state) {
+  MereaderTuiError error = {0};
   free(state->input_selection);
   state->input_selection = NULL;
   const char *selected = library_selected_filepath(state);
   if (selected != NULL) {
-    state->input_selection = baca_strdup(selected, &error);
+    state->input_selection = mereader_tui_strdup(selected, &error);
     if (state->input_selection == NULL) {
       library_runtime_error(state, &error, "cannot start filter");
       return;
@@ -1348,35 +1348,35 @@ static void library_begin_filter(BacaLibraryTuiState *state) {
                  state->filter);
   state->input.length = strlen(state->input.value);
   state->input.cursor = state->input.length;
-  state->input_kind = BACA_LIBRARY_INPUT_FILTER;
+  state->input_kind = MEREADER_TUI_LIBRARY_INPUT_FILTER;
   library_clear_status(state);
   state->dirty = true;
 }
 
-static void library_begin_path(BacaLibraryTuiState *state) {
+static void library_begin_path(MereaderTuiLibraryTuiState *state) {
   memset(&state->input, 0, sizeof(state->input));
-  state->input_kind = BACA_LIBRARY_INPUT_PATH;
+  state->input_kind = MEREADER_TUI_LIBRARY_INPUT_PATH;
   library_clear_status(state);
   state->dirty = true;
 }
 
-static void library_begin_root(BacaLibraryTuiState *state) {
+static void library_begin_root(MereaderTuiLibraryTuiState *state) {
   memset(&state->input, 0, sizeof(state->input));
-  state->input_kind = BACA_LIBRARY_INPUT_ROOT;
+  state->input_kind = MEREADER_TUI_LIBRARY_INPUT_ROOT;
   library_clear_status(state);
   state->dirty = true;
 }
 
-static void library_finish_input(BacaLibraryTuiState *state) {
-  state->input_kind = BACA_LIBRARY_INPUT_NONE;
+static void library_finish_input(MereaderTuiLibraryTuiState *state) {
+  state->input_kind = MEREADER_TUI_LIBRARY_INPUT_NONE;
   memset(&state->input, 0, sizeof(state->input));
   free(state->input_selection);
   state->input_selection = NULL;
   state->dirty = true;
 }
 
-static bool library_update_filter(BacaLibraryTuiState *state) {
-  BacaError error = {0};
+static bool library_update_filter(MereaderTuiLibraryTuiState *state) {
+  MereaderTuiError error = {0};
   if (!library_rebuild_view(state, state->input.value, state->sort,
                             state->input_selection, &error)) {
     library_runtime_error(state, &error, "cannot filter library");
@@ -1386,10 +1386,10 @@ static bool library_update_filter(BacaLibraryTuiState *state) {
   return true;
 }
 
-static void library_cancel_input(BacaLibraryTuiState *state) {
-  if (state->input_kind == BACA_LIBRARY_INPUT_FILTER &&
+static void library_cancel_input(MereaderTuiLibraryTuiState *state) {
+  if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER &&
       strcmp(state->filter, state->filter_before) != 0) {
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     if (!library_rebuild_view(state, state->filter_before, state->sort,
                               state->input_selection, &error)) {
       library_runtime_error(state, &error, "cannot restore filter");
@@ -1400,19 +1400,19 @@ static void library_cancel_input(BacaLibraryTuiState *state) {
   library_finish_input(state);
 }
 
-static void library_emit(BacaLibraryTuiState *state, BacaLibraryCommand command,
+static void library_emit(MereaderTuiLibraryTuiState *state, MereaderTuiLibraryCommand command,
                          const char *path) {
   char *stored_path = NULL;
   if (path != NULL) {
-    BacaError error = {0};
-    stored_path = baca_strdup(path, &error);
+    MereaderTuiError error = {0};
+    stored_path = mereader_tui_strdup(path, &error);
     if (stored_path == NULL) {
       library_runtime_error(state, &error, "cannot select book");
       return;
     }
   }
   free(state->action.path);
-  state->action = (BacaLibraryAction){
+  state->action = (MereaderTuiLibraryAction){
       .command = command,
       .path = stored_path,
       .sort = state->sort,
@@ -1420,21 +1420,21 @@ static void library_emit(BacaLibraryTuiState *state, BacaLibraryCommand command,
   state->quit = true;
 }
 
-static void library_close_picker(BacaLibraryTuiState *state) {
+static void library_close_picker(MereaderTuiLibraryTuiState *state) {
   state->picker_open = false;
   memset(&state->picker_input, 0, sizeof(state->picker_input));
-  baca_library_view_free(&state->picker_view);
-  baca_library_shelf_free(&state->picker_shelf);
+  mereader_tui_library_view_free(&state->picker_view);
+  mereader_tui_library_shelf_free(&state->picker_shelf);
   state->picker_selected = 0U;
   state->picker_top = 0U;
   state->dirty = true;
 }
 
-static void library_open_picker(BacaLibraryTuiState *state) {
+static void library_open_picker(MereaderTuiLibraryTuiState *state) {
   memset(&state->picker_input, 0, sizeof(state->picker_input));
   state->picker_selected = 0U;
   state->picker_top = 0U;
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   if (!library_rebuild_picker(state, library_selected_filepath(state),
                               &error)) {
     library_runtime_error(state, &error, "cannot open book search");
@@ -1447,7 +1447,7 @@ static void library_open_picker(BacaLibraryTuiState *state) {
   state->dirty = true;
 }
 
-static void library_move_picker_selection(BacaLibraryTuiState *state,
+static void library_move_picker_selection(MereaderTuiLibraryTuiState *state,
                                           int amount) {
   if (state->picker_view.length == 0U) {
     return;
@@ -1468,7 +1468,7 @@ static void library_move_picker_selection(BacaLibraryTuiState *state,
   state->dirty = true;
 }
 
-static void library_handle_picker_key(BacaLibraryTuiState *state, bool key_code,
+static void library_handle_picker_key(MereaderTuiLibraryTuiState *state, bool key_code,
                                       int code, wchar_t character) {
   if (!key_code && character == 27) {
     library_close_picker(state);
@@ -1477,7 +1477,7 @@ static void library_handle_picker_key(BacaLibraryTuiState *state, bool key_code,
   if (library_key_is_enter(key_code, code, character)) {
     const char *path = library_picker_selected_filepath(state);
     if (path != NULL && path[0] != '\0') {
-      library_emit(state, BACA_LIBRARY_COMMAND_OPEN, path);
+      library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_OPEN, path);
     }
     return;
   }
@@ -1501,11 +1501,11 @@ static void library_handle_picker_key(BacaLibraryTuiState *state, bool key_code,
   }
 
   const bool changed =
-      baca_text_input_apply(&state->picker_input, key_code, code, character);
+      mereader_tui_text_input_apply(&state->picker_input, key_code, code, character);
 
   if (changed) {
     const char *selected = library_picker_selected_filepath(state);
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     if (!library_rebuild_picker(state, selected, &error)) {
       library_runtime_error(state, &error, "cannot search books");
       return;
@@ -1520,24 +1520,24 @@ static bool library_key_is_enter(bool key_code, int code, wchar_t character) {
          (!key_code && (character == L'\n' || character == L'\r'));
 }
 
-static void library_handle_input_key(BacaLibraryTuiState *state, bool key_code,
+static void library_handle_input_key(MereaderTuiLibraryTuiState *state, bool key_code,
                                      int code, wchar_t character) {
   if (!key_code && character == 27) {
     library_cancel_input(state);
     return;
   }
   if (library_key_is_enter(key_code, code, character)) {
-    if (state->input_kind == BACA_LIBRARY_INPUT_ROOT) {
+    if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_ROOT) {
       if (state->input.length == 0U) {
         library_copy_status(state, "enter a book directory");
         state->dirty = true;
       } else {
-        library_emit(state, BACA_LIBRARY_COMMAND_SET_ROOT, state->input.value);
+        library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_SET_ROOT, state->input.value);
       }
-    } else if (state->input_kind == BACA_LIBRARY_INPUT_PATH &&
+    } else if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_PATH &&
                state->input.length > 0U) {
-      library_emit(state, BACA_LIBRARY_COMMAND_OPEN, state->input.value);
-    } else if (state->input_kind == BACA_LIBRARY_INPUT_FILTER &&
+      library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_OPEN, state->input.value);
+    } else if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER &&
                strcmp(state->filter, state->input.value) != 0 &&
                !library_update_filter(state)) {
       return;
@@ -1548,17 +1548,17 @@ static void library_handle_input_key(BacaLibraryTuiState *state, bool key_code,
   }
 
   const bool changed =
-      baca_text_input_apply(&state->input, key_code, code, character);
-  if (changed && state->input_kind == BACA_LIBRARY_INPUT_FILTER) {
+      mereader_tui_text_input_apply(&state->input, key_code, code, character);
+  if (changed && state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER) {
     (void)library_update_filter(state);
   }
   state->dirty = true;
 }
 
-static void library_cycle_sort(BacaLibraryTuiState *state) {
+static void library_cycle_sort(MereaderTuiLibraryTuiState *state) {
   const char *selected = library_selected_filepath(state);
-  const BacaLibrarySort sort = baca_library_sort_next(state->sort);
-  BacaError error = {0};
+  const MereaderTuiLibrarySort sort = mereader_tui_library_sort_next(state->sort);
+  MereaderTuiError error = {0};
   if (!library_rebuild_view(state, state->filter, sort, selected, &error)) {
     library_runtime_error(state, &error, "cannot sort library");
   } else {
@@ -1566,12 +1566,12 @@ static void library_cycle_sort(BacaLibraryTuiState *state) {
   }
 }
 
-static void library_clear_filter(BacaLibraryTuiState *state) {
+static void library_clear_filter(MereaderTuiLibraryTuiState *state) {
   if (state->filter[0] == '\0') {
     return;
   }
   const char *selected = library_selected_filepath(state);
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   if (!library_rebuild_view(state, "", state->sort, selected, &error)) {
     library_runtime_error(state, &error, "cannot clear filter");
   } else {
@@ -1579,13 +1579,13 @@ static void library_clear_filter(BacaLibraryTuiState *state) {
   }
 }
 
-static void library_change_mode(BacaLibraryTuiState *state,
-                                BacaLibraryShelfKind mode, const char *author,
+static void library_change_mode(MereaderTuiLibraryTuiState *state,
+                                MereaderTuiLibraryShelfKind mode, const char *author,
                                 size_t format_book) {
   char *stored_author = NULL;
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   if (author != NULL) {
-    stored_author = baca_strdup(author, &error);
+    stored_author = mereader_tui_strdup(author, &error);
     if (stored_author == NULL) {
       library_runtime_error(state, &error, "cannot open shelf");
       return;
@@ -1608,12 +1608,12 @@ static void library_change_mode(BacaLibraryTuiState *state,
   }
 }
 
-static void library_open_selected(BacaLibraryTuiState *state) {
-  const BacaLibraryShelfReference *reference =
+static void library_open_selected(MereaderTuiLibraryTuiState *state) {
+  const MereaderTuiLibraryShelfReference *reference =
       library_selected_reference(state);
-  if (reference != NULL && state->mode == BACA_LIBRARY_SHELF_AUTHORS &&
+  if (reference != NULL && state->mode == MEREADER_TUI_LIBRARY_SHELF_AUTHORS &&
       reference->book_index < state->catalog->length) {
-    library_change_mode(state, BACA_LIBRARY_SHELF_BOOKS,
+    library_change_mode(state, MEREADER_TUI_LIBRARY_SHELF_BOOKS,
                         state->catalog->books[reference->book_index].author,
                         0U);
     return;
@@ -1623,47 +1623,47 @@ static void library_open_selected(BacaLibraryTuiState *state) {
     library_copy_status(state, "book path unavailable");
     state->dirty = true;
   } else {
-    library_emit(state, BACA_LIBRARY_COMMAND_OPEN, path);
+    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_OPEN, path);
   }
 }
 
-static void library_open_formats(BacaLibraryTuiState *state) {
-  const BacaLibraryShelfReference *reference =
+static void library_open_formats(MereaderTuiLibraryTuiState *state) {
+  const MereaderTuiLibraryShelfReference *reference =
       library_selected_reference(state);
   if (reference == NULL || reference->book_index >= state->catalog->length ||
-      state->mode == BACA_LIBRARY_SHELF_AUTHORS) {
+      state->mode == MEREADER_TUI_LIBRARY_SHELF_AUTHORS) {
     library_copy_status(state, "select a book to view formats");
     state->dirty = true;
     return;
   }
   state->format_parent = state->mode;
-  library_change_mode(state, BACA_LIBRARY_SHELF_FORMATS, NULL,
+  library_change_mode(state, MEREADER_TUI_LIBRARY_SHELF_FORMATS, NULL,
                       reference->book_index);
 }
 
-static void library_go_back(BacaLibraryTuiState *state) {
+static void library_go_back(MereaderTuiLibraryTuiState *state) {
   if (state->catalog == NULL) {
     library_clear_filter(state);
   } else if (state->filter[0] != '\0') {
     library_clear_filter(state);
-  } else if (state->mode == BACA_LIBRARY_SHELF_FORMATS) {
+  } else if (state->mode == MEREADER_TUI_LIBRARY_SHELF_FORMATS) {
     const char *author = state->format_book < state->catalog->length
                              ? state->catalog->books[state->format_book].author
                              : NULL;
-    const BacaLibraryShelfKind parent =
-        state->format_parent == BACA_LIBRARY_SHELF_BOOKS
-            ? BACA_LIBRARY_SHELF_BOOKS
-            : BACA_LIBRARY_SHELF_ALL;
+    const MereaderTuiLibraryShelfKind parent =
+        state->format_parent == MEREADER_TUI_LIBRARY_SHELF_BOOKS
+            ? MEREADER_TUI_LIBRARY_SHELF_BOOKS
+            : MEREADER_TUI_LIBRARY_SHELF_ALL;
     library_change_mode(state, parent,
-                        parent == BACA_LIBRARY_SHELF_BOOKS ? author : NULL, 0U);
-  } else if (state->mode == BACA_LIBRARY_SHELF_BOOKS) {
-    library_change_mode(state, BACA_LIBRARY_SHELF_AUTHORS, NULL, 0U);
+                        parent == MEREADER_TUI_LIBRARY_SHELF_BOOKS ? author : NULL, 0U);
+  } else if (state->mode == MEREADER_TUI_LIBRARY_SHELF_BOOKS) {
+    library_change_mode(state, MEREADER_TUI_LIBRARY_SHELF_AUTHORS, NULL, 0U);
   } else {
     library_clear_filter(state);
   }
 }
 
-static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
+static void library_handle_key(MereaderTuiLibraryTuiState *state, bool key_code,
                                int code, wchar_t character) {
   if (state->help_open) {
     if ((!key_code &&
@@ -1692,7 +1692,7 @@ static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
     library_handle_picker_key(state, key_code, code, character);
     return;
   }
-  if (state->input_kind != BACA_LIBRARY_INPUT_NONE) {
+  if (state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE) {
     library_handle_input_key(state, key_code, code, character);
     return;
   }
@@ -1756,7 +1756,7 @@ static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
     library_clear_status(state);
     state->dirty = true;
   } else if (!key_code && character == L'r') {
-    library_emit(state, BACA_LIBRARY_COMMAND_REFRESH,
+    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_REFRESH,
                  library_selected_filepath(state));
   } else if (!key_code && character == L'o') {
     library_begin_path(state);
@@ -1764,41 +1764,41 @@ static void library_handle_key(BacaLibraryTuiState *state, bool key_code,
     library_open_formats(state);
   } else if (!key_code && character == L'a' && state->catalog != NULL) {
     library_change_mode(state,
-                        state->mode == BACA_LIBRARY_SHELF_ALL
-                            ? BACA_LIBRARY_SHELF_AUTHORS
-                            : BACA_LIBRARY_SHELF_ALL,
+                        state->mode == MEREADER_TUI_LIBRARY_SHELF_ALL
+                            ? MEREADER_TUI_LIBRARY_SHELF_AUTHORS
+                            : MEREADER_TUI_LIBRARY_SHELF_ALL,
                         NULL, 0U);
   } else if ((key_code && code == KEY_BACKSPACE) ||
              (!key_code && (character == 8 || character == 127 ||
                             character == 27 || character == L'h'))) {
     library_go_back(state);
   } else if (!key_code && character == L'q') {
-    library_emit(state, BACA_LIBRARY_COMMAND_QUIT, NULL);
+    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_QUIT, NULL);
   }
 }
 
-int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
-                         BacaCatalog *catalog, bool setup_required,
-                         BacaLibrarySort sort, const char *selected_filepath,
-                         const char *context, BacaLibraryAction *action,
-                         BacaError *error) {
+int mereader_tui_library_tui_run(const MereaderTuiConfig *config, const MereaderTuiHistory *history,
+                         MereaderTuiCatalog *catalog, bool setup_required,
+                         MereaderTuiLibrarySort sort, const char *selected_filepath,
+                         const char *context, MereaderTuiLibraryAction *action,
+                         MereaderTuiError *error) {
   if (config == NULL || history == NULL || action == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid library application state");
     return EXIT_FAILURE;
   }
-  if (action->command != BACA_LIBRARY_COMMAND_NONE || action->path != NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+  if (action->command != MEREADER_TUI_LIBRARY_COMMAND_NONE || action->path != NULL) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "library action output is not empty");
     return EXIT_FAILURE;
   }
 
-  BacaLibraryTuiState state = {
+  MereaderTuiLibraryTuiState state = {
       .config = config,
       .history = history,
       .catalog = catalog,
-      .mode = BACA_LIBRARY_SHELF_ALL,
-      .format_parent = BACA_LIBRARY_SHELF_ALL,
+      .mode = MEREADER_TUI_LIBRARY_SHELF_ALL,
+      .format_parent = MEREADER_TUI_LIBRARY_SHELF_ALL,
       .sort = sort,
       .cover_book_index = SIZE_MAX,
       .setup_required = setup_required,
@@ -1807,7 +1807,7 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
   };
   if (!library_rebuild_view(&state, "", sort, selected_filepath, error)) {
     library_clear_status(&state);
-    baca_library_shelf_free(&state.shelf);
+    mereader_tui_library_shelf_free(&state.shelf);
     return EXIT_FAILURE;
   }
   if (state.setup_required) {
@@ -1815,27 +1815,27 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
   }
   library_copy_status(&state, context);
 
-  if (!baca_terminal_runtime_begin(error)) {
+  if (!mereader_tui_terminal_runtime_begin(error)) {
     library_clear_status(&state);
-    baca_library_view_free(&state.view);
-    baca_library_shelf_free(&state.shelf);
+    mereader_tui_library_view_free(&state.view);
+    mereader_tui_library_shelf_free(&state.shelf);
     return EXIT_FAILURE;
   }
   if (!library_initialize_curses(&state, error)) {
     library_clear_status(&state);
-    baca_library_view_free(&state.view);
-    baca_library_shelf_free(&state.shelf);
-    return baca_terminal_runtime_finish(EXIT_FAILURE, error);
+    mereader_tui_library_view_free(&state.view);
+    mereader_tui_library_shelf_free(&state.shelf);
+    return mereader_tui_terminal_runtime_finish(EXIT_FAILURE, error);
   }
   library_initialize_graphics(&state);
 
   int result = EXIT_SUCCESS;
-  if (!baca_terminal_runtime_activate(error)) {
+  if (!mereader_tui_terminal_runtime_activate(error)) {
     result = EXIT_FAILURE;
     goto cleanup;
   }
   while (!state.quit) {
-    if (baca_terminal_runtime_interrupted()) {
+    if (mereader_tui_terminal_runtime_interrupted()) {
       break;
     }
     if (state.dirty) {
@@ -1844,7 +1844,7 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
     wtimeout(stdscr, 100);
     wint_t input = 0;
     const int status = wget_wch(stdscr, &input);
-    if (baca_terminal_runtime_interrupted()) {
+    if (mereader_tui_terminal_runtime_interrupted()) {
       break;
     }
     if (status == ERR) {
@@ -1861,27 +1861,27 @@ int baca_library_tui_run(const BacaConfig *config, const BacaHistory *history,
   }
 
 cleanup:
-  if (state.graphics != NULL && state.image_mode == BACA_IMAGE_MODE_KITTY) {
-    BacaError ignored = {0};
+  if (state.graphics != NULL && state.image_mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
+    MereaderTuiError ignored = {0};
     (void)fflush(stdout);
-    (void)baca_graphics_kitty_delete_all(
-        state.graphics, baca_terminal_graphics_write, &state, &ignored);
+    (void)mereader_tui_graphics_kitty_delete_all(
+        state.graphics, mereader_tui_terminal_graphics_write, &state, &ignored);
   }
   library_clear_cover(&state);
-  baca_graphics_free(state.graphics);
+  mereader_tui_graphics_free(state.graphics);
   state.graphics = NULL;
   if (state.previous_cursor != ERR) {
     (void)curs_set(state.previous_cursor);
   }
   (void)endwin();
   free(state.input_selection);
-  baca_library_view_free(&state.picker_view);
-  baca_library_shelf_free(&state.picker_shelf);
+  mereader_tui_library_view_free(&state.picker_view);
+  mereader_tui_library_shelf_free(&state.picker_shelf);
   library_clear_status(&state);
-  baca_library_view_free(&state.view);
-  baca_library_shelf_free(&state.shelf);
+  mereader_tui_library_view_free(&state.view);
+  mereader_tui_library_shelf_free(&state.shelf);
   free(state.author);
-  result = baca_terminal_runtime_finish(result, error);
+  result = mereader_tui_terminal_runtime_finish(result, error);
   if (result == EXIT_SUCCESS) {
     *action = state.action;
   } else {

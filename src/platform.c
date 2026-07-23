@@ -1,4 +1,4 @@
-#include "baca/platform.h"
+#include "mereader-tui/platform.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -14,11 +14,11 @@
 
 extern char **environ;
 
-static const int BACA_PLATFORM_EXIT_SIGNALS[] = {SIGINT, SIGTERM, SIGHUP};
+static const int MEREADER_TUI_PLATFORM_EXIT_SIGNALS[] = {SIGINT, SIGTERM, SIGHUP};
 
-int baca_platform_block_exit_signals(sigset_t *previous);
+int mereader_tui_platform_block_exit_signals(sigset_t *previous);
 
-int baca_platform_block_exit_signals(sigset_t *previous) {
+int mereader_tui_platform_block_exit_signals(sigset_t *previous) {
     if (previous == nullptr) {
         return EINVAL;
     }
@@ -26,25 +26,25 @@ int baca_platform_block_exit_signals(sigset_t *previous) {
     if (sigemptyset(&signals) != 0) {
         return errno;
     }
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_PLATFORM_EXIT_SIGNALS); ++index) {
-        if (sigaddset(&signals, BACA_PLATFORM_EXIT_SIGNALS[index]) != 0) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(MEREADER_TUI_PLATFORM_EXIT_SIGNALS); ++index) {
+        if (sigaddset(&signals, MEREADER_TUI_PLATFORM_EXIT_SIGNALS[index]) != 0) {
             return errno;
         }
     }
     return pthread_sigmask(SIG_BLOCK, &signals, previous);
 }
 
-static bool baca_platform_is_executable(const char *path) {
+static bool mereader_tui_platform_is_executable(const char *path) {
     struct stat status;
     return access(path, X_OK) == 0 && stat(path, &status) == 0 && !S_ISDIR(status.st_mode);
 }
 
-const char *baca_platform_find_executable(const char *name) {
+const char *mereader_tui_platform_find_executable(const char *name) {
     if (name == nullptr || name[0] == '\0') {
         return nullptr;
     }
     if (strchr(name, '/') != nullptr) {
-        return baca_platform_is_executable(name) ? name : nullptr;
+        return mereader_tui_platform_is_executable(name) ? name : nullptr;
     }
 
     const char *path_value = getenv("PATH");
@@ -74,7 +74,7 @@ const char *baca_platform_find_executable(const char *name) {
             memcpy(candidate, directory, directory_length);
             candidate[directory_length] = '/';
             memcpy(candidate + directory_length + 1U, name, name_length + 1U);
-            bool found = baca_platform_is_executable(candidate);
+            bool found = mereader_tui_platform_is_executable(candidate);
             free(candidate);
             if (found) {
                 return name;
@@ -89,12 +89,12 @@ const char *baca_platform_find_executable(const char *name) {
     return nullptr;
 }
 
-typedef struct BacaPlatformReaper {
+typedef struct MereaderTuiPlatformReaper {
     pid_t process;
-} BacaPlatformReaper;
+} MereaderTuiPlatformReaper;
 
-static void *baca_platform_reap(void *context) {
-    BacaPlatformReaper *reaper = context;
+static void *mereader_tui_platform_reap(void *context) {
+    MereaderTuiPlatformReaper *reaper = context;
     pid_t process = reaper->process;
     free(reaper);
 
@@ -107,18 +107,18 @@ static void *baca_platform_reap(void *context) {
     return nullptr;
 }
 
-static void baca_platform_stop_unreaped(pid_t process) {
+static void mereader_tui_platform_stop_unreaped(pid_t process) {
     (void)kill(process, SIGKILL);
     while (waitpid(process, nullptr, 0) < 0 && errno == EINTR) {
     }
 }
 
-static bool baca_platform_spawn_opener(const char *launcher, const char *target, BacaError *error) {
+static bool mereader_tui_platform_spawn_opener(const char *launcher, const char *target, MereaderTuiError *error) {
     char *regular_arguments[] = {(char *)launcher, (char *)target, nullptr};
     char *gio_arguments[] = {(char *)launcher, "open", (char *)target, nullptr};
     char **arguments = strcmp(launcher, "gio") == 0 ? gio_arguments : regular_arguments;
 
-    BacaPlatformReaper *reaper = baca_reallocarray(nullptr, 1U, sizeof(*reaper), error);
+    MereaderTuiPlatformReaper *reaper = mereader_tui_reallocarray(nullptr, 1U, sizeof(*reaper), error);
     if (reaper == nullptr) {
         return false;
     }
@@ -126,14 +126,14 @@ static bool baca_platform_spawn_opener(const char *launcher, const char *target,
     int status = pthread_attr_init(&attributes);
     if (status != 0) {
         free(reaper);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not initialize opener reaper: %s", strerror(status));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not initialize opener reaper: %s", strerror(status));
         return false;
     }
     status = pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
     if (status != 0) {
         (void)pthread_attr_destroy(&attributes);
         free(reaper);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not detach opener reaper: %s", strerror(status));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not detach opener reaper: %s", strerror(status));
         return false;
     }
 
@@ -142,46 +142,46 @@ static bool baca_platform_spawn_opener(const char *launcher, const char *target,
     if (status != 0) {
         (void)pthread_attr_destroy(&attributes);
         free(reaper);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not start '%s': %s", launcher, strerror(status));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not start '%s': %s", launcher, strerror(status));
         return false;
     }
 
     reaper->process = process;
     /* The detached reaper inherits this mask before its first instruction. */
     sigset_t previous_signal_mask;
-    status = baca_platform_block_exit_signals(&previous_signal_mask);
+    status = mereader_tui_platform_block_exit_signals(&previous_signal_mask);
     if (status != 0) {
         (void)pthread_attr_destroy(&attributes);
         free(reaper);
-        baca_platform_stop_unreaped(process);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not block opener reaper signals: %s", strerror(status));
+        mereader_tui_platform_stop_unreaped(process);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not block opener reaper signals: %s", strerror(status));
         return false;
     }
     pthread_t reaper_thread;
-    status = pthread_create(&reaper_thread, &attributes, baca_platform_reap, reaper);
+    status = pthread_create(&reaper_thread, &attributes, mereader_tui_platform_reap, reaper);
     const int restore_status = pthread_sigmask(SIG_SETMASK, &previous_signal_mask, nullptr);
     (void)pthread_attr_destroy(&attributes);
     if (restore_status != 0) {
         if (status != 0) {
             free(reaper);
-            baca_platform_stop_unreaped(process);
+            mereader_tui_platform_stop_unreaped(process);
         }
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not restore opener signal mask: %s",
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not restore opener signal mask: %s",
                        strerror(restore_status));
         return false;
     }
     if (status != 0) {
         free(reaper);
-        baca_platform_stop_unreaped(process);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not create opener reaper: %s", strerror(status));
+        mereader_tui_platform_stop_unreaped(process);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not create opener reaper: %s", strerror(status));
         return false;
     }
     return true;
 }
 
-bool baca_platform_open(const char *target, const char *preferred, BacaError *error) {
+bool mereader_tui_platform_open(const char *target, const char *preferred, MereaderTuiError *error) {
     if (target == nullptr || target[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "open target is empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "open target is empty");
         return false;
     }
 
@@ -190,11 +190,11 @@ bool baca_platform_open(const char *target, const char *preferred, BacaError *er
 #else
     const char *launchers[] = {nullptr, "gio", "xdg-open"};
 #endif
-    if (preferred != nullptr && preferred[0] != '\0' && baca_casecmp(preferred, "auto") != 0) {
+    if (preferred != nullptr && preferred[0] != '\0' && mereader_tui_casecmp(preferred, "auto") != 0) {
         launchers[0] = preferred;
     }
 
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(launchers); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(launchers); ++index) {
         const char *launcher = launchers[index];
         if (launcher == nullptr) {
             continue;
@@ -207,17 +207,17 @@ bool baca_platform_open(const char *target, const char *preferred, BacaError *er
                 break;
             }
         }
-        if (duplicate || baca_platform_find_executable(launcher) == nullptr) {
+        if (duplicate || mereader_tui_platform_find_executable(launcher) == nullptr) {
             continue;
         }
-        return baca_platform_spawn_opener(launcher, target, error);
+        return mereader_tui_platform_spawn_opener(launcher, target, error);
     }
 
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "no external opener was found");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "no external opener was found");
     return false;
 }
 
-static bool baca_svg_append_escaped(BacaString *svg, const char *text, BacaError *error) {
+static bool mereader_tui_svg_append_escaped(MereaderTuiString *svg, const char *text, MereaderTuiError *error) {
     for (const unsigned char *cursor = (const unsigned char *)text; *cursor != '\0'; ++cursor) {
         const char *escape = nullptr;
         switch (*cursor) {
@@ -253,36 +253,36 @@ static bool baca_svg_append_escaped(BacaString *svg, const char *text, BacaError
         }
 
         if (escape != nullptr) {
-            if (!baca_string_append(svg, escape, error)) {
+            if (!mereader_tui_string_append(svg, escape, error)) {
                 return false;
             }
-        } else if (!baca_string_append_char(svg, (char)*cursor, error)) {
+        } else if (!mereader_tui_string_append_char(svg, (char)*cursor, error)) {
             return false;
         }
     }
     return true;
 }
 
-bool baca_platform_save_svg(const char *path, const char *const *lines, size_t line_count, uint32_t background,
-                            uint32_t foreground, BacaError *error) {
+bool mereader_tui_platform_save_svg(const char *path, const char *const *lines, size_t line_count, uint32_t background,
+                            uint32_t foreground, MereaderTuiError *error) {
     if (path == nullptr || path[0] == '\0' || (line_count != 0U && lines == nullptr)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid SVG screenshot arguments");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid SVG screenshot arguments");
         return false;
     }
 
     size_t max_columns = 0U;
     for (size_t index = 0U; index < line_count; ++index) {
         if (lines[index] == nullptr) {
-            baca_error_set(error, BACA_ERROR_ARGUMENT, "SVG line %zu is null", index);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "SVG line %zu is null", index);
             return false;
         }
-        size_t columns = baca_utf8_width(lines[index], strlen(lines[index]));
+        size_t columns = mereader_tui_utf8_width(lines[index], strlen(lines[index]));
         if (columns > max_columns) {
             max_columns = columns;
         }
     }
     if (max_columns > (SIZE_MAX - 32U) / 8U || line_count > (SIZE_MAX - 32U) / 18U) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "SVG dimensions overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "SVG dimensions overflow");
         return false;
     }
 
@@ -305,12 +305,12 @@ bool baca_platform_save_svg(const char *path, const char *const *lines, size_t l
         width, height, width, height, (unsigned int)(background & 0xffffffU),
         (unsigned int)(foreground & 0xffffffU));
     if (header_length < 0 || (size_t)header_length >= sizeof(header)) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "could not format SVG header");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format SVG header");
         return false;
     }
 
-    BacaString svg = {0};
-    if (!baca_string_append_n(&svg, header, (size_t)header_length, error)) {
+    MereaderTuiString svg = {0};
+    if (!mereader_tui_string_append_n(&svg, header, (size_t)header_length, error)) {
         return false;
     }
 
@@ -320,22 +320,22 @@ bool baca_platform_save_svg(const char *path, const char *const *lines, size_t l
         int line_header_length = snprintf(line_header, sizeof(line_header),
                                           "    <text x=\"16\" y=\"%zu\" xml:space=\"preserve\">", y);
         if (line_header_length < 0 || (size_t)line_header_length >= sizeof(line_header) ||
-            !baca_string_append_n(&svg, line_header, (size_t)line_header_length, error) ||
-            !baca_svg_append_escaped(&svg, lines[index], error) ||
-            !baca_string_append(&svg, "</text>\n", error)) {
-            if (!baca_error_is_set(error)) {
-                baca_error_set(error, BACA_ERROR_INTERNAL, "could not format SVG line");
+            !mereader_tui_string_append_n(&svg, line_header, (size_t)line_header_length, error) ||
+            !mereader_tui_svg_append_escaped(&svg, lines[index], error) ||
+            !mereader_tui_string_append(&svg, "</text>\n", error)) {
+            if (!mereader_tui_error_is_set(error)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format SVG line");
             }
-            baca_string_free(&svg);
+            mereader_tui_string_free(&svg);
             return false;
         }
     }
 
-    if (!baca_string_append(&svg, "  </g>\n</svg>\n", error)) {
-        baca_string_free(&svg);
+    if (!mereader_tui_string_append(&svg, "  </g>\n</svg>\n", error)) {
+        mereader_tui_string_free(&svg);
         return false;
     }
-    bool written = baca_write_file(path, svg.data, svg.length, error);
-    baca_string_free(&svg);
+    bool written = mereader_tui_write_file(path, svg.data, svg.length, error);
+    mereader_tui_string_free(&svg);
     return written;
 }

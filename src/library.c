@@ -1,4 +1,4 @@
-#include "baca/library.h"
+#include "mereader-tui/library.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -18,11 +18,11 @@ static bool unsafe_codepoint(uint32_t codepoint) {
            type == G_UNICODE_PARAGRAPH_SEPARATOR;
 }
 
-char *baca_library_sanitize_text(const char *text, size_t max_columns, BacaError *error) {
-    BacaString result = {0};
+char *mereader_tui_library_sanitize_text(const char *text, size_t max_columns, MereaderTuiError *error) {
+    MereaderTuiString result = {0};
     gchar *valid = g_utf8_make_valid(text == NULL ? "" : text, -1);
     if (valid == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not sanitize library text");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not sanitize library text");
         return NULL;
     }
     size_t columns = 0U;
@@ -34,13 +34,13 @@ char *baca_library_sanitize_text(const char *text, size_t max_columns, BacaError
             continue;
         }
         const size_t length = (size_t)(next - cursor);
-        const size_t width = baca_utf8_width(cursor, length);
+        const size_t width = mereader_tui_utf8_width(cursor, length);
         if (width > max_columns || columns > max_columns - width) {
             break;
         }
-        if (!baca_string_append_n(&result, cursor, length, error)) {
+        if (!mereader_tui_string_append_n(&result, cursor, length, error)) {
             g_free(valid);
-            baca_string_free(&result);
+            mereader_tui_string_free(&result);
             return NULL;
         }
         columns += width;
@@ -48,9 +48,9 @@ char *baca_library_sanitize_text(const char *text, size_t max_columns, BacaError
     }
     g_free(valid);
     if (result.data == NULL) {
-        return baca_strdup("", error);
+        return mereader_tui_strdup("", error);
     }
-    return baca_string_take(&result);
+    return mereader_tui_string_take(&result);
 }
 
 static bool timestamp_digits(const char **cursor, size_t count, int *value) {
@@ -71,7 +71,7 @@ static bool timestamp_leap_year(int year) {
     return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
 }
 
-bool baca_library_parse_timestamp(const char *value, struct timespec *timestamp) {
+bool mereader_tui_library_parse_timestamp(const char *value, struct timespec *timestamp) {
     if (value == NULL || timestamp == NULL) {
         return false;
     }
@@ -155,29 +155,29 @@ static bool text_has_content(const char *text) {
     return false;
 }
 
-static char *normalized_key(const char *text, BacaError *error) {
+static char *normalized_key(const char *text, MereaderTuiError *error) {
     gchar *folded = g_utf8_casefold(text == NULL ? "" : text, -1);
     gchar *normalized = folded == NULL ? NULL : g_utf8_normalize(folded, -1, G_NORMALIZE_ALL_COMPOSE);
-    char *key = normalized == NULL ? NULL : baca_strdup(normalized, error);
+    char *key = normalized == NULL ? NULL : mereader_tui_strdup(normalized, error);
     g_free(normalized);
     g_free(folded);
-    if (key == NULL && !baca_error_is_set(error)) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not normalize library text");
+    if (key == NULL && !mereader_tui_error_is_set(error)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not normalize library text");
     }
     return key;
 }
 
-static void library_row_free(BacaLibraryRow *row) {
+static void library_row_free(MereaderTuiLibraryRow *row) {
     free(row->title);
     free(row->author);
     free(row->path);
     free(row->title_key);
     free(row->author_key);
     free(row->path_key);
-    *row = (BacaLibraryRow){0};
+    *row = (MereaderTuiLibraryRow){0};
 }
 
-void baca_library_view_free(BacaLibraryView *view) {
+void mereader_tui_library_view_free(MereaderTuiLibraryView *view) {
     if (view == NULL) {
         return;
     }
@@ -185,26 +185,26 @@ void baca_library_view_free(BacaLibraryView *view) {
         library_row_free(&view->rows[index]);
     }
     free(view->rows);
-    *view = (BacaLibraryView){0};
+    *view = (MereaderTuiLibraryView){0};
 }
 
-static bool library_row_build(BacaLibraryRow *row, const BacaHistoryEntry *entry, BacaError *error) {
+static bool library_row_build(MereaderTuiLibraryRow *row, const MereaderTuiHistoryEntry *entry, MereaderTuiError *error) {
     row->entry = entry;
-    row->path = baca_library_sanitize_text(entry->filepath, SIZE_MAX, error);
-    row->title = baca_library_sanitize_text(entry->title, SIZE_MAX, error);
-    row->author = baca_library_sanitize_text(entry->author, SIZE_MAX, error);
+    row->path = mereader_tui_library_sanitize_text(entry->filepath, SIZE_MAX, error);
+    row->title = mereader_tui_library_sanitize_text(entry->title, SIZE_MAX, error);
+    row->author = mereader_tui_library_sanitize_text(entry->author, SIZE_MAX, error);
     if (row->path == NULL || row->title == NULL || row->author == NULL) {
         library_row_free(row);
         return false;
     }
 
     if (!text_has_content(row->title)) {
-        char *basename = entry->filepath == NULL ? NULL : baca_path_basename(entry->filepath, error);
+        char *basename = entry->filepath == NULL ? NULL : mereader_tui_path_basename(entry->filepath, error);
         if (entry->filepath != NULL && basename == NULL) {
             library_row_free(row);
             return false;
         }
-        char *fallback = baca_library_sanitize_text(basename == NULL ? "untitled" : basename, SIZE_MAX, error);
+        char *fallback = mereader_tui_library_sanitize_text(basename == NULL ? "untitled" : basename, SIZE_MAX, error);
         free(basename);
         if (fallback == NULL) {
             library_row_free(row);
@@ -214,7 +214,7 @@ static bool library_row_build(BacaLibraryRow *row, const BacaHistoryEntry *entry
         row->title = fallback;
         if (!text_has_content(row->title)) {
             free(row->title);
-            row->title = baca_strdup("untitled", error);
+            row->title = mereader_tui_strdup("untitled", error);
             if (row->title == NULL) {
                 library_row_free(row);
                 return false;
@@ -224,7 +224,7 @@ static bool library_row_build(BacaLibraryRow *row, const BacaHistoryEntry *entry
 
     if (!text_has_content(row->author)) {
         free(row->author);
-        row->author = baca_strdup("", error);
+        row->author = mereader_tui_strdup("", error);
         if (row->author == NULL) {
             library_row_free(row);
             return false;
@@ -241,26 +241,26 @@ static bool library_row_build(BacaLibraryRow *row, const BacaHistoryEntry *entry
     return true;
 }
 
-static bool row_matches(const BacaLibraryRow *row, const char *filter_key) {
+static bool row_matches(const MereaderTuiLibraryRow *row, const char *filter_key) {
     return filter_key[0] == '\0' || strstr(row->title_key, filter_key) != NULL ||
            strstr(row->author_key, filter_key) != NULL || strstr(row->path_key, filter_key) != NULL;
 }
 
-static const char *entry_filepath(const BacaLibraryRow *row) {
+static const char *entry_filepath(const MereaderTuiLibraryRow *row) {
     return row->entry->filepath == NULL ? "" : row->entry->filepath;
 }
 
-static int compare_filepath(const BacaLibraryRow *left, const BacaLibraryRow *right) {
+static int compare_filepath(const MereaderTuiLibraryRow *left, const MereaderTuiLibraryRow *right) {
     return strcmp(entry_filepath(left), entry_filepath(right));
 }
 
 static int compare_recent(const void *left_pointer, const void *right_pointer) {
-    const BacaLibraryRow *left = left_pointer;
-    const BacaLibraryRow *right = right_pointer;
+    const MereaderTuiLibraryRow *left = left_pointer;
+    const MereaderTuiLibraryRow *right = right_pointer;
     struct timespec left_read = {0};
     struct timespec right_read = {0};
-    const bool left_valid = baca_library_parse_timestamp(left->entry->last_read, &left_read);
-    const bool right_valid = baca_library_parse_timestamp(right->entry->last_read, &right_read);
+    const bool left_valid = mereader_tui_library_parse_timestamp(left->entry->last_read, &left_read);
+    const bool right_valid = mereader_tui_library_parse_timestamp(right->entry->last_read, &right_read);
     if (left_valid != right_valid) {
         return left_valid ? -1 : 1;
     }
@@ -274,15 +274,15 @@ static int compare_recent(const void *left_pointer, const void *right_pointer) {
 }
 
 static int compare_title(const void *left_pointer, const void *right_pointer) {
-    const BacaLibraryRow *left = left_pointer;
-    const BacaLibraryRow *right = right_pointer;
+    const MereaderTuiLibraryRow *left = left_pointer;
+    const MereaderTuiLibraryRow *right = right_pointer;
     const int order = strcmp(left->title_key, right->title_key);
     return order == 0 ? compare_filepath(left, right) : order;
 }
 
 static int compare_author(const void *left_pointer, const void *right_pointer) {
-    const BacaLibraryRow *left = left_pointer;
-    const BacaLibraryRow *right = right_pointer;
+    const MereaderTuiLibraryRow *left = left_pointer;
+    const MereaderTuiLibraryRow *right = right_pointer;
     int order = 0;
     if (left->author_key[0] == '\0' && right->author_key[0] != '\0') {
         order = 1;
@@ -294,22 +294,22 @@ static int compare_author(const void *left_pointer, const void *right_pointer) {
     return order == 0 ? compare_filepath(left, right) : order;
 }
 
-bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, const char *filter,
-                             BacaLibrarySort sort, BacaError *error) {
+bool mereader_tui_library_view_build(MereaderTuiLibraryView *view, const MereaderTuiHistory *history, const char *filter,
+                             MereaderTuiLibrarySort sort, MereaderTuiError *error) {
     if (view == NULL || view->rows != NULL || view->length != 0U) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "library view output is not empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "library view output is not empty");
         return false;
     }
-    if (sort > BACA_LIBRARY_SORT_RELEVANCE) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid library sort order");
+    if (sort > MEREADER_TUI_LIBRARY_SORT_RELEVANCE) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid library sort order");
         return false;
     }
     if (history != NULL && history->length > 0U && history->items == NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "library history items are missing");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "library history items are missing");
         return false;
     }
 
-    char *safe_filter = baca_library_sanitize_text(filter, SIZE_MAX, error);
+    char *safe_filter = mereader_tui_library_sanitize_text(filter, SIZE_MAX, error);
     char *filter_key = safe_filter == NULL ? NULL : normalized_key(safe_filter, error);
     free(safe_filter);
     if (filter_key == NULL) {
@@ -317,9 +317,9 @@ bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, 
     }
 
     const size_t history_length = history == NULL ? 0U : history->length;
-    BacaLibraryRow *rows = NULL;
+    MereaderTuiLibraryRow *rows = NULL;
     if (history_length > 0U) {
-        rows = baca_reallocarray(NULL, history_length, sizeof(*rows), error);
+        rows = mereader_tui_reallocarray(NULL, history_length, sizeof(*rows), error);
         if (rows == NULL) {
             free(filter_key);
             return false;
@@ -329,7 +329,7 @@ bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, 
 
     size_t length = 0U;
     for (size_t index = 0U; index < history_length; ++index) {
-        BacaLibraryRow row = {0};
+        MereaderTuiLibraryRow row = {0};
         if (!library_row_build(&row, &history->items[index], error)) {
             for (size_t retained = 0U; retained < length; ++retained) {
                 library_row_free(&rows[retained]);
@@ -347,19 +347,19 @@ bool baca_library_view_build(BacaLibraryView *view, const BacaHistory *history, 
     free(filter_key);
 
     if (length > 1U) {
-        if (sort == BACA_LIBRARY_SORT_RECENT) {
+        if (sort == MEREADER_TUI_LIBRARY_SORT_RECENT) {
             qsort(rows, length, sizeof(*rows), compare_recent);
-        } else if (sort == BACA_LIBRARY_SORT_TITLE) {
+        } else if (sort == MEREADER_TUI_LIBRARY_SORT_TITLE) {
             qsort(rows, length, sizeof(*rows), compare_title);
-        } else if (sort == BACA_LIBRARY_SORT_AUTHOR) {
+        } else if (sort == MEREADER_TUI_LIBRARY_SORT_AUTHOR) {
             qsort(rows, length, sizeof(*rows), compare_author);
         }
     }
-    *view = (BacaLibraryView){.rows = rows, .length = length, .sort = sort};
+    *view = (MereaderTuiLibraryView){.rows = rows, .length = length, .sort = sort};
     return true;
 }
 
-size_t baca_library_preserve_selection(const BacaLibraryView *view, const char *filepath, size_t fallback_index) {
+size_t mereader_tui_library_preserve_selection(const MereaderTuiLibraryView *view, const char *filepath, size_t fallback_index) {
     if (view == NULL || view->length == 0U) {
         return 0U;
     }
@@ -374,24 +374,24 @@ size_t baca_library_preserve_selection(const BacaLibraryView *view, const char *
     return fallback_index < view->length ? fallback_index : view->length - 1U;
 }
 
-BacaLibrarySort baca_library_sort_next(BacaLibrarySort sort) {
-    if (sort == BACA_LIBRARY_SORT_RECENT) {
-        return BACA_LIBRARY_SORT_TITLE;
+MereaderTuiLibrarySort mereader_tui_library_sort_next(MereaderTuiLibrarySort sort) {
+    if (sort == MEREADER_TUI_LIBRARY_SORT_RECENT) {
+        return MEREADER_TUI_LIBRARY_SORT_TITLE;
     }
-    if (sort == BACA_LIBRARY_SORT_TITLE) {
-        return BACA_LIBRARY_SORT_AUTHOR;
+    if (sort == MEREADER_TUI_LIBRARY_SORT_TITLE) {
+        return MEREADER_TUI_LIBRARY_SORT_AUTHOR;
     }
-    return BACA_LIBRARY_SORT_RECENT;
+    return MEREADER_TUI_LIBRARY_SORT_RECENT;
 }
 
-const char *baca_library_sort_name(BacaLibrarySort sort) {
-    if (sort == BACA_LIBRARY_SORT_RELEVANCE) {
+const char *mereader_tui_library_sort_name(MereaderTuiLibrarySort sort) {
+    if (sort == MEREADER_TUI_LIBRARY_SORT_RELEVANCE) {
         return "relevance";
     }
-    if (sort == BACA_LIBRARY_SORT_TITLE) {
+    if (sort == MEREADER_TUI_LIBRARY_SORT_TITLE) {
         return "title";
     }
-    if (sort == BACA_LIBRARY_SORT_AUTHOR) {
+    if (sort == MEREADER_TUI_LIBRARY_SORT_AUTHOR) {
         return "author";
     }
     return "recent";

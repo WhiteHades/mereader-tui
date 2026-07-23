@@ -1,5 +1,5 @@
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -21,25 +21,25 @@
 #include <unistd.h>
 
 enum {
-    BACA_COMIC_MAX_ENTRIES = 20000,
-    BACA_COMIC_MAX_PAGES = 10000,
-    BACA_COMIC_READER_BLOCK = 64 * 1024,
+    MEREADER_TUI_COMIC_MAX_ENTRIES = 20000,
+    MEREADER_TUI_COMIC_MAX_PAGES = 10000,
+    MEREADER_TUI_COMIC_READER_BLOCK = 64 * 1024,
 };
 
-#define BACA_COMIC_MAX_PATH_BYTES (8U * 1024U * 1024U)
-#define BACA_COMIC_MAX_TOTAL_BYTES (1024ULL * 1024ULL * 1024ULL)
-#define BACA_COMIC_URI_PREFIX "comic://page/"
+#define MEREADER_TUI_COMIC_MAX_PATH_BYTES (8U * 1024U * 1024U)
+#define MEREADER_TUI_COMIC_MAX_TOTAL_BYTES (1024ULL * 1024ULL * 1024ULL)
+#define MEREADER_TUI_COMIC_URI_PREFIX "comic://page/"
 
-typedef struct BacaComicPage {
+typedef struct MereaderTuiComicPage {
     char *member_path;
     char *label;
     size_t size;
     size_t ordinal;
     char extension[6];
-} BacaComicPage;
+} MereaderTuiComicPage;
 
-typedef struct BacaComicBackend {
-    BacaComicPage *pages;
+typedef struct MereaderTuiComicBackend {
+    MereaderTuiComicPage *pages;
     size_t page_count;
     size_t page_capacity;
     size_t path_bytes;
@@ -47,12 +47,12 @@ typedef struct BacaComicBackend {
     struct stat identity;
     int descriptor;
     int archive_format;
-} BacaComicBackend;
+} MereaderTuiComicBackend;
 
-typedef struct BacaComicReader {
+typedef struct MereaderTuiComicReader {
     struct archive *archive;
     int descriptor;
-} BacaComicReader;
+} MereaderTuiComicReader;
 
 static bool comic_identity_matches(const struct stat *expected, const struct stat *actual, bool include_change_time) {
     return expected->st_dev == actual->st_dev && expected->st_ino == actual->st_ino &&
@@ -62,14 +62,14 @@ static bool comic_identity_matches(const struct stat *expected, const struct sta
                                      expected->st_ctim.tv_nsec == actual->st_ctim.tv_nsec));
 }
 
-static void comic_set_archive_error(BacaError *error, BacaErrorCode code, const char *operation,
+static void comic_set_archive_error(MereaderTuiError *error, MereaderTuiErrorCode code, const char *operation,
                                     struct archive *archive) {
     const char *detail = archive == NULL ? NULL : archive_error_string(archive);
-    baca_error_set(error, code, "%s: %s", operation,
+    mereader_tui_error_set(error, code, "%s: %s", operation,
                    detail == NULL || detail[0] == '\0' ? "invalid archive data" : detail);
 }
 
-static void comic_reader_close(BacaComicReader *reader) {
+static void comic_reader_close(MereaderTuiComicReader *reader) {
     if (reader->archive != NULL) {
         (void)archive_read_close(reader->archive);
         (void)archive_read_free(reader->archive);
@@ -77,48 +77,48 @@ static void comic_reader_close(BacaComicReader *reader) {
     if (reader->descriptor >= 0) {
         (void)close(reader->descriptor);
     }
-    *reader = (BacaComicReader){.descriptor = -1};
+    *reader = (MereaderTuiComicReader){.descriptor = -1};
 }
 
-static bool comic_reader_open(const BacaComicBackend *backend, BacaComicReader *reader, BacaError *error) {
-    *reader = (BacaComicReader){.descriptor = -1};
+static bool comic_reader_open(const MereaderTuiComicBackend *backend, MereaderTuiComicReader *reader, MereaderTuiError *error) {
+    *reader = (MereaderTuiComicReader){.descriptor = -1};
     const int descriptor = fcntl(backend->descriptor, F_DUPFD_CLOEXEC, 3);
     if (descriptor < 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not duplicate comic archive: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not duplicate comic archive: %s", strerror(errno));
         return false;
     }
     if (lseek(descriptor, 0, SEEK_SET) < 0) {
         const int saved_errno = errno;
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_IO, "could not rewind comic archive: %s", strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not rewind comic archive: %s", strerror(saved_errno));
         return false;
     }
 
     struct archive *archive = archive_read_new();
     if (archive == NULL) {
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate comic archive reader");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate comic archive reader");
         return false;
     }
     reader->archive = archive;
     reader->descriptor = descriptor;
     if (archive_read_support_filter_all(archive) < ARCHIVE_WARN ||
         archive_read_support_format_all(archive) < ARCHIVE_WARN ||
-        archive_read_open_fd(archive, descriptor, BACA_COMIC_READER_BLOCK) != ARCHIVE_OK) {
-        comic_set_archive_error(error, BACA_ERROR_CORRUPT, "could not open comic archive", archive);
+        archive_read_open_fd(archive, descriptor, MEREADER_TUI_COMIC_READER_BLOCK) != ARCHIVE_OK) {
+        comic_set_archive_error(error, MEREADER_TUI_ERROR_CORRUPT, "could not open comic archive", archive);
         comic_reader_close(reader);
         return false;
     }
     return true;
 }
 
-static void comic_page_free(BacaComicPage *page) {
+static void comic_page_free(MereaderTuiComicPage *page) {
     free(page->member_path);
     free(page->label);
-    *page = (BacaComicPage){0};
+    *page = (MereaderTuiComicPage){0};
 }
 
-static void comic_backend_destroy(BacaComicBackend *backend) {
+static void comic_backend_destroy(MereaderTuiComicBackend *backend) {
     if (backend == NULL) {
         return;
     }
@@ -204,8 +204,8 @@ static int comic_natural_path_compare(const char *left_value, const char *right_
 }
 
 static int comic_page_compare(const void *left_pointer, const void *right_pointer) {
-    const BacaComicPage *left = left_pointer;
-    const BacaComicPage *right = right_pointer;
+    const MereaderTuiComicPage *left = left_pointer;
+    const MereaderTuiComicPage *right = right_pointer;
     const int path_result = comic_natural_path_compare(left->member_path, right->member_path);
     if (path_result != 0) {
         return path_result;
@@ -237,15 +237,15 @@ static bool comic_path_is_safe(const char *path, size_t length) {
 }
 
 static const char *comic_supported_extension(const char *path) {
-    const char *extension = baca_path_extension(path);
+    const char *extension = mereader_tui_path_extension(path);
     if (extension == NULL) {
         return NULL;
     }
     static const char *const supported[] = {
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(supported); ++index) {
-        if (baca_casecmp(extension, supported[index]) == 0) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(supported); ++index) {
+        if (mereader_tui_casecmp(extension, supported[index]) == 0) {
             return supported[index];
         }
     }
@@ -271,49 +271,49 @@ static const char *comic_mime_type(const char *extension) {
     return "image/svg+xml";
 }
 
-static char *comic_page_label(const char *path, BacaError *error) {
-    char *basename = baca_path_basename(path, error);
+static char *comic_page_label(const char *path, MereaderTuiError *error) {
+    char *basename = mereader_tui_path_basename(path, error);
     if (basename == NULL) {
         return NULL;
     }
     gchar *valid = g_utf8_make_valid(basename, -1);
     free(basename);
     if (valid == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not normalize comic page name");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not normalize comic page name");
         return NULL;
     }
-    char *label = baca_strdup(valid[0] == '\0' ? "page" : valid, error);
+    char *label = mereader_tui_strdup(valid[0] == '\0' ? "page" : valid, error);
     g_free(valid);
     return label;
 }
 
-static bool comic_add_page(BacaComicBackend *backend, const char *path, size_t path_length, const char *extension,
-                           size_t size, size_t ordinal, BacaError *error) {
-    if (backend->page_count >= BACA_COMIC_MAX_PAGES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic contains more than %d image pages", BACA_COMIC_MAX_PAGES);
+static bool comic_add_page(MereaderTuiComicBackend *backend, const char *path, size_t path_length, const char *extension,
+                           size_t size, size_t ordinal, MereaderTuiError *error) {
+    if (backend->page_count >= MEREADER_TUI_COMIC_MAX_PAGES) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic contains more than %d image pages", MEREADER_TUI_COMIC_MAX_PAGES);
         return false;
     }
-    if (path_length + 1U > BACA_COMIC_MAX_PATH_BYTES - backend->path_bytes) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic member names exceed the supported size limit");
+    if (path_length + 1U > MEREADER_TUI_COMIC_MAX_PATH_BYTES - backend->path_bytes) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic member names exceed the supported size limit");
         return false;
     }
-    if ((uint64_t)size > BACA_COMIC_MAX_TOTAL_BYTES - backend->total_bytes) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic image data exceeds the 1 GiB declared size limit");
+    if ((uint64_t)size > MEREADER_TUI_COMIC_MAX_TOTAL_BYTES - backend->total_bytes) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic image data exceeds the 1 GiB declared size limit");
         return false;
     }
 
-    BacaError reserve_error = {0};
-    BacaComicPage *pages = baca_array_reserve(backend->pages, &backend->page_capacity, sizeof(*backend->pages),
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiComicPage *pages = mereader_tui_array_reserve(backend->pages, &backend->page_capacity, sizeof(*backend->pages),
                                               backend->page_count + 1U, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != NULL) {
             *error = reserve_error;
         }
         return false;
     }
     backend->pages = pages;
-    BacaComicPage page = {
-        .member_path = baca_strndup(path, path_length, error),
+    MereaderTuiComicPage page = {
+        .member_path = mereader_tui_strndup(path, path_length, error),
         .label = comic_page_label(path, error),
         .size = size,
         .ordinal = ordinal,
@@ -335,8 +335,8 @@ static bool comic_supported_archive_format(int format) {
            base == ARCHIVE_FORMAT_7ZIP;
 }
 
-static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
-    BacaComicReader reader = {.descriptor = -1};
+static bool comic_enumerate(MereaderTuiComicBackend *backend, MereaderTuiError *error) {
+    MereaderTuiComicReader reader = {.descriptor = -1};
     if (!comic_reader_open(backend, &reader, error)) {
         return false;
     }
@@ -349,19 +349,19 @@ static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
             break;
         }
         if (status != ARCHIVE_OK || entry == NULL) {
-            comic_set_archive_error(error, BACA_ERROR_CORRUPT, "could not read comic archive header", reader.archive);
+            comic_set_archive_error(error, MEREADER_TUI_ERROR_CORRUPT, "could not read comic archive header", reader.archive);
             success = false;
             break;
         }
         const size_t ordinal = entry_count++;
-        if (entry_count > BACA_COMIC_MAX_ENTRIES) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "comic contains more than %d archive entries",
-                           BACA_COMIC_MAX_ENTRIES);
+        if (entry_count > MEREADER_TUI_COMIC_MAX_ENTRIES) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic contains more than %d archive entries",
+                           MEREADER_TUI_COMIC_MAX_ENTRIES);
             success = false;
             break;
         }
         if (archive_entry_is_encrypted(entry) > 0) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED, "encrypted comic archives are not supported");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "encrypted comic archives are not supported");
             success = false;
             break;
         }
@@ -370,19 +370,19 @@ static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
             archive_entry_hardlink(entry) != NULL) {
             continue;
         }
-        const size_t path_length = strnlen(path, BACA_COMIC_MAX_PATH_BYTES + 1U);
-        const char *extension = path_length > BACA_COMIC_MAX_PATH_BYTES ? NULL : comic_supported_extension(path);
+        const size_t path_length = strnlen(path, MEREADER_TUI_COMIC_MAX_PATH_BYTES + 1U);
+        const char *extension = path_length > MEREADER_TUI_COMIC_MAX_PATH_BYTES ? NULL : comic_supported_extension(path);
         if (extension == NULL || !comic_path_is_safe(path, path_length)) {
             continue;
         }
         if (archive_entry_size_is_set(entry) == 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "comic page has no declared size: %s", path);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic page has no declared size: %s", path);
             success = false;
             break;
         }
         const la_int64_t declared_size = archive_entry_size(entry);
-        if (declared_size < 0 || (uint64_t)declared_size > BACA_GRAPHICS_MAX_INPUT_BYTES) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "comic page exceeds the 16 MiB image limit: %s", path);
+        if (declared_size < 0 || (uint64_t)declared_size > MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic page exceeds the 16 MiB image limit: %s", path);
             success = false;
             break;
         }
@@ -392,13 +392,13 @@ static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
         }
     }
     if (success && archive_read_has_encrypted_entries(reader.archive) > 0) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "encrypted comic archives are not supported");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "encrypted comic archives are not supported");
         success = false;
     }
     if (success) {
         backend->archive_format = archive_format(reader.archive);
         if (!comic_supported_archive_format(backend->archive_format)) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED, "comic file is not a ZIP, RAR, or 7-Zip archive");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "comic file is not a ZIP, RAR, or 7-Zip archive");
             success = false;
         }
     }
@@ -407,11 +407,11 @@ static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
     struct stat after;
     if (success &&
         (fstat(backend->descriptor, &after) != 0 || !comic_identity_matches(&backend->identity, &after, true))) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic archive changed while opening");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic archive changed while opening");
         success = false;
     }
     if (success && backend->page_count == 0U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic archive contains no supported image pages");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic archive contains no supported image pages");
         success = false;
     }
     if (success) {
@@ -420,29 +420,29 @@ static bool comic_enumerate(BacaComicBackend *backend, BacaError *error) {
     return success;
 }
 
-static BacaComicBackend *comic_backend_open(const char *path, const struct stat *expected_identity, BacaError *error) {
+static MereaderTuiComicBackend *comic_backend_open(const char *path, const struct stat *expected_identity, MereaderTuiError *error) {
     const int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (descriptor < 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not open comic archive '%s': %s", path, strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not open comic archive '%s': %s", path, strerror(errno));
         return NULL;
     }
     struct stat identity;
     if (fstat(descriptor, &identity) != 0) {
         const int saved_errno = errno;
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_IO, "could not inspect comic archive '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not inspect comic archive '%s': %s", path, strerror(saved_errno));
         return NULL;
     }
     if (!S_ISREG(identity.st_mode) || identity.st_size < 0 ||
         !comic_identity_matches(expected_identity, &identity, true)) {
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic archive changed between format detection and open: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic archive changed between format detection and open: %s", path);
         return NULL;
     }
-    BacaComicBackend *backend = calloc(1U, sizeof(*backend));
+    MereaderTuiComicBackend *backend = calloc(1U, sizeof(*backend));
     if (backend == NULL) {
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate comic archive backend");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate comic archive backend");
         return NULL;
     }
     backend->descriptor = descriptor;
@@ -455,18 +455,18 @@ static BacaComicBackend *comic_backend_open(const char *path, const struct stat 
 }
 
 static bool comic_format_page_uri(size_t page_index, const char *extension, char output[64]) {
-    const int length = snprintf(output, 64U, BACA_COMIC_URI_PREFIX "%zu%s", page_index, extension);
+    const int length = snprintf(output, 64U, MEREADER_TUI_COMIC_URI_PREFIX "%zu%s", page_index, extension);
     return length > 0 && length < 64;
 }
 
 static bool comic_format_page_target(size_t page_index, char output[64]) {
-    const int length = snprintf(output, 64U, BACA_COMIC_URI_PREFIX "%zu", page_index);
+    const int length = snprintf(output, 64U, MEREADER_TUI_COMIC_URI_PREFIX "%zu", page_index);
     return length > 0 && length < 64;
 }
 
-static const BacaComicPage *comic_page_for_uri(const BacaComicBackend *backend, const char *uri) {
-    const size_t prefix_length = sizeof(BACA_COMIC_URI_PREFIX) - 1U;
-    if (uri == NULL || strncmp(uri, BACA_COMIC_URI_PREFIX, prefix_length) != 0) {
+static const MereaderTuiComicPage *comic_page_for_uri(const MereaderTuiComicBackend *backend, const char *uri) {
+    const size_t prefix_length = sizeof(MEREADER_TUI_COMIC_URI_PREFIX) - 1U;
+    if (uri == NULL || strncmp(uri, MEREADER_TUI_COMIC_URI_PREFIX, prefix_length) != 0) {
         return NULL;
     }
     errno = 0;
@@ -476,16 +476,16 @@ static const BacaComicPage *comic_page_for_uri(const BacaComicBackend *backend, 
         (size_t)parsed >= backend->page_count) {
         return NULL;
     }
-    const BacaComicPage *page = &backend->pages[(size_t)parsed];
+    const MereaderTuiComicPage *page = &backend->pages[(size_t)parsed];
     char expected[64] = {0};
     return comic_format_page_uri((size_t)parsed, page->extension, expected) && strcmp(uri, expected) == 0 ? page : NULL;
 }
 
-static bool comic_resource_size(const BacaDocument *document, const char *uri, size_t *size) {
+static bool comic_resource_size(const MereaderTuiDocument *document, const char *uri, size_t *size) {
     if (document == NULL || size == NULL || document->backend == NULL) {
         return false;
     }
-    const BacaComicPage *page = comic_page_for_uri(document->backend, uri);
+    const MereaderTuiComicPage *page = comic_page_for_uri(document->backend, uri);
     if (page == NULL) {
         return false;
     }
@@ -493,14 +493,14 @@ static bool comic_resource_size(const BacaDocument *document, const char *uri, s
     return true;
 }
 
-static bool comic_read_page(BacaComicBackend *backend, const BacaComicPage *page, unsigned char **data,
-                            BacaError *error) {
+static bool comic_read_page(MereaderTuiComicBackend *backend, const MereaderTuiComicPage *page, unsigned char **data,
+                            MereaderTuiError *error) {
     struct stat before;
     if (fstat(backend->descriptor, &before) != 0 || !comic_identity_matches(&backend->identity, &before, false)) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic archive changed before reading a page");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic archive changed before reading a page");
         return false;
     }
-    BacaComicReader reader = {.descriptor = -1};
+    MereaderTuiComicReader reader = {.descriptor = -1};
     if (!comic_reader_open(backend, &reader, error)) {
         return false;
     }
@@ -510,7 +510,7 @@ static bool comic_read_page(BacaComicBackend *backend, const BacaComicPage *page
         struct archive_entry *entry = NULL;
         const int status = archive_read_next_header(reader.archive, &entry);
         if (status != ARCHIVE_OK || entry == NULL) {
-            comic_set_archive_error(error, BACA_ERROR_CORRUPT, "could not locate comic page", reader.archive);
+            comic_set_archive_error(error, MEREADER_TUI_ERROR_CORRUPT, "could not locate comic page", reader.archive);
             success = false;
             break;
         }
@@ -520,18 +520,18 @@ static bool comic_read_page(BacaComicBackend *backend, const BacaComicPage *page
         const char *path = archive_entry_pathname(entry);
         if (path == NULL || strcmp(path, page->member_path) != 0 || archive_entry_size(entry) < 0 ||
             (uint64_t)archive_entry_size(entry) != page->size) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "comic page index changed while reading");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic page index changed while reading");
             success = false;
             break;
         }
         if (archive_entry_is_encrypted(entry) > 0) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED, "encrypted comic pages are not supported");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "encrypted comic pages are not supported");
             success = false;
             break;
         }
         unsigned char *buffer = malloc(page->size == 0U ? 1U : page->size);
         if (buffer == NULL) {
-            baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate comic page data");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate comic page data");
             success = false;
             break;
         }
@@ -541,18 +541,18 @@ static bool comic_read_page(BacaComicBackend *backend, const BacaComicPage *page
             if (count > 0) {
                 offset += (size_t)count;
             } else if (count == 0) {
-                baca_error_set(error, BACA_ERROR_CORRUPT, "comic page data is truncated: %s", page->member_path);
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic page data is truncated: %s", page->member_path);
                 success = false;
                 break;
             } else {
-                comic_set_archive_error(error, BACA_ERROR_CORRUPT, "could not decompress comic page", reader.archive);
+                comic_set_archive_error(error, MEREADER_TUI_ERROR_CORRUPT, "could not decompress comic page", reader.archive);
                 success = false;
                 break;
             }
         }
         unsigned char extra = 0U;
         if (success && archive_read_data(reader.archive, &extra, 1U) != 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "comic page exceeds its declared size: %s", page->member_path);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic page exceeds its declared size: %s", page->member_path);
             success = false;
         }
         if (success) {
@@ -569,32 +569,32 @@ static bool comic_read_page(BacaComicBackend *backend, const BacaComicPage *page
         (fstat(backend->descriptor, &after) != 0 || !comic_identity_matches(&before, &after, false))) {
         free(*data);
         *data = NULL;
-        baca_error_set(error, BACA_ERROR_CORRUPT, "comic archive changed while reading a page");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "comic archive changed while reading a page");
         success = false;
     }
     if (success && !found) {
-        baca_error_set(error, BACA_ERROR_NOT_FOUND, "comic page was not found");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND, "comic page was not found");
         success = false;
     }
     return success && found;
 }
 
-static bool comic_load_resource(BacaDocument *document, const char *uri, BacaResource *resource, BacaError *error) {
-    BacaComicBackend *backend = document->backend;
+static bool comic_load_resource(MereaderTuiDocument *document, const char *uri, MereaderTuiResource *resource, MereaderTuiError *error) {
+    MereaderTuiComicBackend *backend = document->backend;
     if (backend == NULL) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "comic archive backend is closed");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "comic archive backend is closed");
         return false;
     }
-    const BacaComicPage *page = comic_page_for_uri(backend, uri);
+    const MereaderTuiComicPage *page = comic_page_for_uri(backend, uri);
     if (page == NULL) {
-        baca_error_set(error, BACA_ERROR_NOT_FOUND, "comic page resource not found: %s", uri);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND, "comic page resource not found: %s", uri);
         return false;
     }
     unsigned char *data = NULL;
     if (!comic_read_page(backend, page, &data, error)) {
         return false;
     }
-    char *mime_type = baca_strdup(comic_mime_type(page->extension), error);
+    char *mime_type = mereader_tui_strdup(comic_mime_type(page->extension), error);
     if (mime_type == NULL) {
         free(data);
         return false;
@@ -605,12 +605,12 @@ static bool comic_load_resource(BacaDocument *document, const char *uri, BacaRes
     return true;
 }
 
-static void comic_close(BacaDocument *document) {
+static void comic_close(MereaderTuiDocument *document) {
     comic_backend_destroy(document->backend);
     document->backend = NULL;
 }
 
-static const BacaDocumentOps comic_document_ops = {
+static const MereaderTuiDocumentOps comic_document_ops = {
     .load_resource = comic_load_resource,
     .resource_size = comic_resource_size,
     .close = comic_close,
@@ -627,67 +627,67 @@ static const char *comic_format_name(int format) {
     return "CBR";
 }
 
-bool baca_comic_open(BacaDocument *document, const char *path, const struct stat *expected_identity, BacaError *error) {
+bool mereader_tui_comic_open(MereaderTuiDocument *document, const char *path, const struct stat *expected_identity, MereaderTuiError *error) {
     if (document == NULL || path == NULL || path[0] == '\0' || document->path == NULL ||
         strcmp(path, document->path) != 0 || expected_identity == NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                        "document, canonical comic path, and detected identity are required");
         return false;
     }
-    BacaComicBackend *backend = comic_backend_open(path, expected_identity, error);
+    MereaderTuiComicBackend *backend = comic_backend_open(path, expected_identity, error);
     if (backend == NULL) {
         return false;
     }
-    document->format = BACA_FORMAT_COMIC;
+    document->format = MEREADER_TUI_FORMAT_COMIC;
     document->backend = backend;
     document->ops = &comic_document_ops;
-    document->metadata.title = baca_path_basename(path, error);
-    document->metadata.format = baca_strdup(comic_format_name(backend->archive_format), error);
+    document->metadata.title = mereader_tui_path_basename(path, error);
+    document->metadata.format = mereader_tui_strdup(comic_format_name(backend->archive_format), error);
     if (document->metadata.title == NULL || document->metadata.format == NULL ||
-        !baca_document_account_metadata(document, error)) {
+        !mereader_tui_document_account_metadata(document, error)) {
         return false;
     }
 
     for (size_t page_index = 0U; page_index < backend->page_count; ++page_index) {
-        const BacaComicPage *page = &backend->pages[page_index];
+        const MereaderTuiComicPage *page = &backend->pages[page_index];
         char target_buffer[64] = {0};
         char uri_buffer[64] = {0};
         if (!comic_format_page_target(page_index, target_buffer) ||
             !comic_format_page_uri(page_index, page->extension, uri_buffer)) {
-            baca_error_set(error, BACA_ERROR_INTERNAL, "could not format comic page URI");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format comic page URI");
             return false;
         }
-        BacaBlock block = {
-            .kind = BACA_BLOCK_IMAGE,
-            .section_id = baca_strdup(target_buffer, error),
+        MereaderTuiBlock block = {
+            .kind = MEREADER_TUI_BLOCK_IMAGE,
+            .section_id = mereader_tui_strdup(target_buffer, error),
             .value.image =
                 {
-                    .uri = baca_strdup(uri_buffer, error),
-                    .alt = baca_strdup(page->label, error),
-                    .anchor = baca_strdup(target_buffer, error),
+                    .uri = mereader_tui_strdup(uri_buffer, error),
+                    .alt = mereader_tui_strdup(page->label, error),
+                    .anchor = mereader_tui_strdup(target_buffer, error),
                     .page_index = -1,
                 },
         };
         const size_t first_block = document->block_count;
         if (block.section_id == NULL || block.value.image.uri == NULL || block.value.image.alt == NULL ||
-            block.value.image.anchor == NULL || !baca_document_add_image_block(document, &block, error)) {
-            baca_document_block_free(&block);
+            block.value.image.anchor == NULL || !mereader_tui_document_add_image_block(document, &block, error)) {
+            mereader_tui_document_block_free(&block);
             return false;
         }
-        BacaSection section = {
-            .id = baca_strdup(target_buffer, error),
+        MereaderTuiSection section = {
+            .id = mereader_tui_strdup(target_buffer, error),
             .first_block = first_block,
             .block_count = 1U,
             .source_size = page->size,
             .linear = true,
         };
-        if (section.id == NULL || !baca_document_add_section(document, &section, error)) {
+        if (section.id == NULL || !mereader_tui_document_add_section(document, &section, error)) {
             free(section.id);
             return false;
         }
-        if (!baca_document_add_toc(document, page->label, target_buffer, 0U, error)) {
+        if (!mereader_tui_document_add_toc(document, page->label, target_buffer, 0U, error)) {
             return false;
         }
     }
-    return baca_document_index_toc_sections(document, error);
+    return mereader_tui_document_index_toc_sections(document, error);
 }

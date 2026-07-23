@@ -1,7 +1,7 @@
 #include "test_support.h"
 
-#include "baca/app.h"
-#include "baca/graphics.h"
+#include "mereader-tui/app.h"
+#include "mereader-tui/graphics.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -47,7 +47,7 @@ static const char graphics_wide_svg[] =
     "<rect width='100%' height='100%' fill='red'/></svg>";
 
 typedef struct Capture {
-  BacaString output;
+  MereaderTuiString output;
   size_t maximum_write;
   bool fail_writes;
   bool failed;
@@ -78,8 +78,8 @@ static bool capture_write(void *user_data, const void *data, size_t length) {
   if (length > capture->maximum_write) {
     capture->maximum_write = length;
   }
-  BacaError error = {0};
-  if (!baca_string_append_n(&capture->output, data, length, &error)) {
+  MereaderTuiError error = {0};
+  if (!mereader_tui_string_append_n(&capture->output, data, length, &error)) {
     capture->failed = true;
     return false;
   }
@@ -115,25 +115,25 @@ static bool fd_write_all(void *user_data, const void *data, size_t length) {
 }
 
 static bool image_test_opener(void *user_data, const char *target,
-                              const char *preferred, BacaError *error) {
+                              const char *preferred, MereaderTuiError *error) {
   FdWriter writer = {.fd = *(const int *)user_data};
   const char *viewer = preferred == NULL ? "" : preferred;
   if (!fd_write_all(&writer, target, strlen(target)) ||
       !fd_write_all(&writer, "\n", 1U) ||
       !fd_write_all(&writer, viewer, strlen(viewer)) ||
       !fd_write_all(&writer, "\n", 1U)) {
-    baca_error_set(error, BACA_ERROR_IO,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO,
                    "could not capture standalone image opener target");
     return false;
   }
   return true;
 }
 
-int baca_image_pty_child(void) {
-  const char *path = getenv("BACA_IMAGE_PTY_PATH");
-  const char *held_path = getenv("BACA_IMAGE_PTY_HELD_PATH");
-  const char *screenshot_directory = getenv("BACA_IMAGE_PTY_SCREENSHOT_DIR");
-  const char *descriptor_value = getenv("BACA_IMAGE_PTY_OPEN_FD");
+int mereader_tui_image_pty_child(void) {
+  const char *path = getenv("MEREADER_TUI_IMAGE_PTY_PATH");
+  const char *held_path = getenv("MEREADER_TUI_IMAGE_PTY_HELD_PATH");
+  const char *screenshot_directory = getenv("MEREADER_TUI_IMAGE_PTY_SCREENSHOT_DIR");
+  const char *descriptor_value = getenv("MEREADER_TUI_IMAGE_PTY_OPEN_FD");
   if (path == NULL || held_path == NULL || screenshot_directory == NULL ||
       descriptor_value == NULL ||
       sizeof(graphics_tall_svg) != sizeof(graphics_wide_svg)) {
@@ -146,26 +146,26 @@ int baca_image_pty_child(void) {
     return 132;
   }
   const int descriptor = (int)parsed;
-  BacaApp app = {0};
-  BacaError error = {0};
-  if (!baca_app_init(&app, path, true, &error)) {
+  MereaderTuiApp app = {0};
+  MereaderTuiError error = {0};
+  if (!mereader_tui_app_init(&app, path, true, &error)) {
     (void)fprintf(stderr, "image PTY init: %s\n", error.message);
     return 133;
   }
   if (rename(path, held_path) != 0 ||
-      !baca_write_file(path, graphics_wide_svg,
+      !mereader_tui_write_file(path, graphics_wide_svg,
                        sizeof(graphics_wide_svg) - 1U, &error) ||
       chdir(screenshot_directory) != 0) {
     (void)fprintf(stderr, "image PTY replacement: %s\n",
                   error.message[0] == '\0' ? strerror(errno) : error.message);
-    (void)baca_app_free(&app, NULL);
+    (void)mereader_tui_app_free(&app, NULL);
     return 134;
   }
   app.external_opener = image_test_opener;
   app.external_opener_data = (void *)&descriptor;
-  const int run_result = baca_app_run(&app, &error);
-  BacaError free_error = {0};
-  if (!baca_app_free(&app, &free_error)) {
+  const int run_result = mereader_tui_app_run(&app, &error);
+  MereaderTuiError free_error = {0};
+  if (!mereader_tui_app_free(&app, &free_error)) {
     (void)fprintf(stderr, "image PTY save: %s\n", free_error.message);
     return 135;
   }
@@ -212,10 +212,10 @@ static char *create_tui_epub(void) {
       "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>"
       "<img src=\"pixel.png\" alt=\"PTY\"/></body></html>";
 
-  if (!baca_test_mkdir("tui-pty")) {
+  if (!mereader_tui_test_mkdir("tui-pty")) {
     return NULL;
   }
-  char *path = baca_test_path("tui-pty/image.epub");
+  char *path = mereader_tui_test_path("tui-pty/image.epub");
   if (path == NULL) {
     return NULL;
   }
@@ -249,9 +249,9 @@ static char *create_tui_epub(void) {
   return path;
 }
 
-static bool read_pty_capture(int fd, BacaString *output) {
+static bool read_pty_capture(int fd, MereaderTuiString *output) {
   char buffer[4096] = {0};
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   for (unsigned attempt = 0U; attempt < 20U; ++attempt) {
     struct pollfd descriptor = {.fd = fd, .events = POLLIN};
     const int ready = poll(&descriptor, 1U, output->length == 0U ? 100 : 10);
@@ -263,7 +263,7 @@ static bool read_pty_capture(int fd, BacaString *output) {
     }
     const ssize_t length = read(fd, buffer, sizeof(buffer));
     if (length > 0 &&
-        !baca_string_append_n(output, buffer, (size_t)length, &error)) {
+        !mereader_tui_string_append_n(output, buffer, (size_t)length, &error)) {
       return false;
     }
     if (length <= 0 && errno != EINTR) {
@@ -273,13 +273,13 @@ static bool read_pty_capture(int fd, BacaString *output) {
   return output->length > 0U;
 }
 
-static bool drain_pty(int fd, BacaString *output) {
+static bool drain_pty(int fd, MereaderTuiString *output) {
   char buffer[4096] = {0};
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   for (;;) {
     const ssize_t length = read(fd, buffer, sizeof(buffer));
     if (length > 0) {
-      if (!baca_string_append_n(output, buffer, (size_t)length, &error)) {
+      if (!mereader_tui_string_append_n(output, buffer, (size_t)length, &error)) {
         return false;
       }
     } else if (length < 0 && errno == EINTR) {
@@ -292,7 +292,7 @@ static bool drain_pty(int fd, BacaString *output) {
   }
 }
 
-static bool graphics_wait_for(int descriptor, BacaString *output, size_t start,
+static bool graphics_wait_for(int descriptor, MereaderTuiString *output, size_t start,
                               const char *needle) {
   for (unsigned attempt = 0U; attempt < 300U; ++attempt) {
     struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
@@ -311,7 +311,7 @@ static bool graphics_wait_for(int descriptor, BacaString *output, size_t start,
   return false;
 }
 
-static bool graphics_drain_until_idle(int descriptor, BacaString *output) {
+static bool graphics_drain_until_idle(int descriptor, MereaderTuiString *output) {
   for (unsigned attempt = 0U; attempt < 30U; ++attempt) {
     struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
     const int ready = poll(&poll_descriptor, 1U, 50);
@@ -356,15 +356,15 @@ static bool graphics_screenshot_contains(const char *directory,
         strcmp(entry->d_name + length - 4U, ".svg") != 0) {
       continue;
     }
-    BacaError error = {0};
-    char *path = baca_path_join(directory, entry->d_name, &error);
-    BacaBuffer contents = {0};
-    if (path != NULL && baca_read_file(path, &contents, &error) &&
+    MereaderTuiError error = {0};
+    char *path = mereader_tui_path_join(directory, entry->d_name, &error);
+    MereaderTuiBuffer contents = {0};
+    if (path != NULL && mereader_tui_read_file(path, &contents, &error) &&
         contents.data != NULL &&
         strstr((const char *)contents.data, needle) != NULL) {
       found = true;
     }
-    baca_buffer_free(&contents);
+    mereader_tui_buffer_free(&contents);
     free(path);
     break;
   }
@@ -373,24 +373,24 @@ static bool graphics_screenshot_contains(const char *directory,
   return found && saved_errno == 0 && closed;
 }
 
-static bool run_tui_pty_capture(BacaImageMode mode, unsigned short columns,
-                                 const char *marker, BacaString *output) {
-  const char *config_relative = mode == BACA_IMAGE_MODE_KITTY
+static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short columns,
+                                 const char *marker, MereaderTuiString *output) {
+  const char *config_relative = mode == MEREADER_TUI_IMAGE_MODE_KITTY
                                      ? "tui-pty/kitty/mereader-tui/config.ini"
                                      : "tui-pty/ansi/mereader-tui/config.ini";
   const char *config_text =
-      mode == BACA_IMAGE_MODE_KITTY
-          ? columns > BACA_GRAPHICS_MAX_COLUMNS
+      mode == MEREADER_TUI_IMAGE_MODE_KITTY
+          ? columns > MEREADER_TUI_GRAPHICS_MAX_COLUMNS
                 ? "[General]\nImageMode = kitty\nMaxTextWidth = 2000\n"
                 : "[General]\nImageMode = kitty\n"
           : "[General]\nImageMode = ansi\n";
   char *image_path = create_tui_epub();
   if (image_path == NULL ||
-      !baca_test_write_text(config_relative, config_text)) {
+      !mereader_tui_test_write_text(config_relative, config_text)) {
     free(image_path);
     return false;
   }
-  char *config_root = baca_test_path(mode == BACA_IMAGE_MODE_KITTY
+  char *config_root = mereader_tui_test_path(mode == MEREADER_TUI_IMAGE_MODE_KITTY
                                          ? "tui-pty/kitty"
                                          : "tui-pty/ansi");
   if (config_root == NULL) {
@@ -412,7 +412,7 @@ static bool run_tui_pty_capture(BacaImageMode mode, unsigned short columns,
     (void)setenv("COLORTERM", "truecolor", 1);
     (void)unsetenv("TMUX");
     (void)unsetenv("STY");
-    if (mode == BACA_IMAGE_MODE_KITTY) {
+    if (mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
       (void)setenv("TERM_PROGRAM", "kitty", 1);
       (void)setenv("KITTY_WINDOW_ID", "1", 1);
     } else {
@@ -484,21 +484,21 @@ static size_t count_bytes(const char *haystack, const char *needle) {
   return count;
 }
 
-static bool append_image_uri(BacaDocument *document, const char *uri,
-                             const char *alt, BacaError *error) {
-  BacaBlock block = {
-      .kind = BACA_BLOCK_IMAGE,
+static bool append_image_uri(MereaderTuiDocument *document, const char *uri,
+                             const char *alt, MereaderTuiError *error) {
+  MereaderTuiBlock block = {
+      .kind = MEREADER_TUI_BLOCK_IMAGE,
       .value.image =
           {
-              .uri = baca_strdup(uri, error),
-              .alt = baca_strdup(alt, error),
+              .uri = mereader_tui_strdup(uri, error),
+              .alt = mereader_tui_strdup(alt, error),
               .page_index = -1,
               .intrinsic_width = 1,
               .intrinsic_height = 1,
           },
   };
   if (block.value.image.uri != NULL && block.value.image.alt != NULL &&
-      baca_document_add_image_block(document, &block, error)) {
+      mereader_tui_document_add_image_block(document, &block, error)) {
     return true;
   }
   free(block.value.image.uri);
@@ -506,8 +506,8 @@ static bool append_image_uri(BacaDocument *document, const char *uri,
   return false;
 }
 
-static bool append_cache_image(BacaDocument *document, const char *alt,
-                                BacaError *error) {
+static bool append_cache_image(MereaderTuiDocument *document, const char *alt,
+                                MereaderTuiError *error) {
   static const char data_uri[] =
       "data:image/"
       "png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+"
@@ -516,8 +516,8 @@ static bool append_cache_image(BacaDocument *document, const char *alt,
   return append_image_uri(document, data_uri, alt, error);
 }
 
-static bool append_cache_svg(BacaDocument *document, const char *color,
-                             BacaError *error) {
+static bool append_cache_svg(MereaderTuiDocument *document, const char *color,
+                             MereaderTuiError *error) {
   char uri[256] = {0};
   const int length = snprintf(
       uri, sizeof(uri),
@@ -528,9 +528,9 @@ static bool append_cache_svg(BacaDocument *document, const char *color,
          append_image_uri(document, uri, color, error);
 }
 
-static bool render_color_page(BacaDocument *document, int page_index, int width,
+static bool render_color_page(MereaderTuiDocument *document, int page_index, int width,
                               int height, uint32_t background,
-                              BacaResource *resource, BacaError *error) {
+                              MereaderTuiResource *resource, MereaderTuiError *error) {
   (void)background;
   ColorPageRenderer *renderer = document->backend;
   char svg[256] = {0};
@@ -540,13 +540,13 @@ static bool render_color_page(BacaDocument *document, int page_index, int width,
       "<rect width='100%%' height='100%%' fill='%s'/></svg>",
       width, height, renderer->color);
   if (page_index != 0 || length <= 0 || (size_t)length >= sizeof(svg)) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid color page render");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid color page render");
     return false;
   }
-  resource->data = (unsigned char *)baca_strndup(svg, (size_t)length, error);
-  resource->mime_type = baca_strdup("image/svg+xml", error);
+  resource->data = (unsigned char *)mereader_tui_strndup(svg, (size_t)length, error);
+  resource->mime_type = mereader_tui_strdup("image/svg+xml", error);
   if (resource->data == NULL || resource->mime_type == NULL) {
-    baca_resource_free(resource);
+    mereader_tui_resource_free(resource);
     return false;
   }
   resource->length = (size_t)length;
@@ -554,13 +554,13 @@ static bool render_color_page(BacaDocument *document, int page_index, int width,
   return true;
 }
 
-static const BacaDocumentOps color_page_ops = {
+static const MereaderTuiDocumentOps color_page_ops = {
     .render_page = render_color_page,
 };
 
-static bool append_color_page(BacaDocument *document,
+static bool append_color_page(MereaderTuiDocument *document,
                               ColorPageRenderer *renderer,
-                              BacaError *error) {
+                              MereaderTuiError *error) {
   if (!append_image_uri(document, "page://0", renderer->color, error)) {
     return false;
   }
@@ -570,8 +570,8 @@ static bool append_color_page(BacaDocument *document,
   return true;
 }
 
-static BacaTestResult test_mode_selection(void) {
-  BacaGraphicsEnvironment environment = {
+static MereaderTuiTestResult test_mode_selection(void) {
+  MereaderTuiGraphicsEnvironment environment = {
       .term_program = "ghostty",
       .term = "xterm-256color",
       .colorterm = "truecolor",
@@ -579,65 +579,65 @@ static BacaTestResult test_mode_selection(void) {
       .output_is_tty = true,
   };
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_AUTO, false, &environment),
-      BACA_IMAGE_MODE_KITTY);
-  TEST_ASSERT(baca_graphics_truecolor_available(&environment));
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_AUTO, false, &environment),
+      MEREADER_TUI_IMAGE_MODE_KITTY);
+  TEST_ASSERT(mereader_tui_graphics_truecolor_available(&environment));
 
   environment.tmux = "/tmp/tmux-1/default,1,0";
-  TEST_ASSERT_INT(baca_graphics_multiplexer(&environment),
-                  BACA_GRAPHICS_MULTIPLEXER_TMUX);
+  TEST_ASSERT_INT(mereader_tui_graphics_multiplexer(&environment),
+                  MEREADER_TUI_GRAPHICS_MULTIPLEXER_TMUX);
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_AUTO, false, &environment),
-      BACA_IMAGE_MODE_ANSI);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_AUTO, false, &environment),
+      MEREADER_TUI_IMAGE_MODE_ANSI);
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_KITTY, true, &environment),
-      BACA_IMAGE_MODE_KITTY);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_KITTY, true, &environment),
+      MEREADER_TUI_IMAGE_MODE_KITTY);
 
   environment.tmux = NULL;
   environment.term_program = NULL;
   environment.term = "screen-256color";
   environment.sty = "123.test";
-  TEST_ASSERT_INT(baca_graphics_multiplexer(&environment),
-                  BACA_GRAPHICS_MULTIPLEXER_SCREEN);
+  TEST_ASSERT_INT(mereader_tui_graphics_multiplexer(&environment),
+                  MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN);
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_AUTO, false, &environment),
-      BACA_IMAGE_MODE_ANSI);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_AUTO, false, &environment),
+      MEREADER_TUI_IMAGE_MODE_ANSI);
 
   environment.sty = NULL;
   environment.term = "xterm-256color";
   environment.kitty_window_id = "4";
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_AUTO, false, &environment),
-      BACA_IMAGE_MODE_KITTY);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_AUTO, false, &environment),
+      MEREADER_TUI_IMAGE_MODE_KITTY);
   environment.kitty_window_id = NULL;
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_ANSI, true, &environment),
-      BACA_IMAGE_MODE_ANSI);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_ANSI, true, &environment),
+      MEREADER_TUI_IMAGE_MODE_ANSI);
   environment.colors = false;
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_ANSI, true, &environment),
-      BACA_IMAGE_MODE_PLACEHOLDER);
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_ANSI, true, &environment),
+      MEREADER_TUI_IMAGE_MODE_PLACEHOLDER);
   environment.output_is_tty = false;
   TEST_ASSERT_INT(
-      baca_graphics_select_mode(BACA_IMAGE_MODE_KITTY, true, &environment),
-      BACA_IMAGE_MODE_PLACEHOLDER);
-  TEST_ASSERT_INT(baca_graphics_select_mode(BACA_IMAGE_MODE_PLACEHOLDER, true,
+      mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_KITTY, true, &environment),
+      MEREADER_TUI_IMAGE_MODE_PLACEHOLDER);
+  TEST_ASSERT_INT(mereader_tui_graphics_select_mode(MEREADER_TUI_IMAGE_MODE_PLACEHOLDER, true,
                                             &environment),
-                  BACA_IMAGE_MODE_PLACEHOLDER);
-  return BACA_TEST_PASS;
+                  MEREADER_TUI_IMAGE_MODE_PLACEHOLDER);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_dimension_probing_and_malformed_resources(void) {
-  BacaResource resource = {
+static MereaderTuiTestResult test_dimension_probing_and_malformed_resources(void) {
+  MereaderTuiResource resource = {
       .data = (unsigned char *)graphics_pixel_png,
       .length = sizeof(graphics_pixel_png),
       .mime_type = "image/png",
   };
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   int width = 0;
   int height = 0;
   TEST_ASSERT_MSG(
-      baca_graphics_probe_resource(&resource, &width, &height, &error), "%s",
+      mereader_tui_graphics_probe_resource(&resource, &width, &height, &error), "%s",
       error.message);
   TEST_ASSERT_INT(width, 1);
   TEST_ASSERT_INT(height, 1);
@@ -645,69 +645,69 @@ static BacaTestResult test_dimension_probing_and_malformed_resources(void) {
   static const unsigned char svg[] =
       "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"7\" "
       "height=\"3\"><rect width=\"7\" height=\"3\"/></svg>";
-  resource = (BacaResource){
+  resource = (MereaderTuiResource){
       .data = (unsigned char *)svg,
       .length = sizeof(svg) - 1U,
       .mime_type = "image/svg+xml",
   };
   TEST_ASSERT_MSG(
-      baca_graphics_probe_resource(&resource, &width, &height, &error), "%s",
+      mereader_tui_graphics_probe_resource(&resource, &width, &height, &error), "%s",
       error.message);
   TEST_ASSERT_INT(width, 7);
   TEST_ASSERT_INT(height, 3);
 
-  resource = (BacaResource){
+  resource = (MereaderTuiResource){
       .data = (unsigned char *)"not an image",
       .length = 12U,
       .mime_type = "image/png",
   };
   TEST_ASSERT(
-      !baca_graphics_probe_resource(&resource, &width, &height, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+      !mereader_tui_graphics_probe_resource(&resource, &width, &height, &error));
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
   TEST_ASSERT_INT(width, 0);
   TEST_ASSERT_INT(height, 0);
 
-  resource = (BacaResource){
+  resource = (MereaderTuiResource){
       .data = (unsigned char *)graphics_two_frame_gif,
       .length = sizeof(graphics_two_frame_gif),
       .mime_type = "image/gif",
   };
-  TEST_ASSERT(!baca_graphics_probe_resource(&resource, &width, &height, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
+  TEST_ASSERT(!mereader_tui_graphics_probe_resource(&resource, &width, &height, &error));
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
   TEST_ASSERT_INT(width, 0);
   TEST_ASSERT_INT(height, 0);
 
   static const unsigned char oversized_svg[] =
       "<svg xmlns='http://www.w3.org/2000/svg' width='32769' height='1'/>";
-  resource = (BacaResource){
+  resource = (MereaderTuiResource){
       .data = (unsigned char *)oversized_svg,
       .length = sizeof(oversized_svg) - 1U,
       .mime_type = "image/svg+xml",
   };
-  TEST_ASSERT(!baca_graphics_probe_resource(&resource, &width, &height, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+  TEST_ASSERT(!mereader_tui_graphics_probe_resource(&resource, &width, &height, &error));
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
 
   unsigned char byte = 0U;
-  resource = (BacaResource){
+  resource = (MereaderTuiResource){
       .data = &byte,
-      .length = BACA_GRAPHICS_MAX_INPUT_BYTES + 1U,
+      .length = MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES + 1U,
       .mime_type = "image/png",
   };
-  TEST_ASSERT(!baca_graphics_probe_resource(&resource, &width, &height, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
-  return BACA_TEST_PASS;
+  TEST_ASSERT(!mereader_tui_graphics_probe_resource(&resource, &width, &height, &error));
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_alpha_compositing(void) {
+static MereaderTuiTestResult test_alpha_compositing(void) {
   const unsigned char half_red[4] = {255U, 0U, 0U, 128U};
   unsigned char output[3] = {0};
-  baca_graphics_composite_pixel(0x0000ffU, half_red, output);
+  mereader_tui_graphics_composite_pixel(0x0000ffU, half_red, output);
   TEST_ASSERT_INT(output[0], 128);
   TEST_ASSERT_INT(output[1], 0);
   TEST_ASSERT_INT(output[2], 127);
 
   const unsigned char transparent[4] = {1U, 2U, 3U, 0U};
-  baca_graphics_composite_pixel(0x123456U, transparent, output);
+  mereader_tui_graphics_composite_pixel(0x123456U, transparent, output);
   TEST_ASSERT_INT(output[0], 0x12);
   TEST_ASSERT_INT(output[1], 0x34);
   TEST_ASSERT_INT(output[2], 0x56);
@@ -717,40 +717,40 @@ static BacaTestResult test_alpha_compositing(void) {
       "width=\"1\" height=\"1\">"
       "<rect width=\"1\" height=\"1\" fill=\"%23ff0000\" "
       "fill-opacity=\"0.5\"/></svg>";
-  BacaDocument document = {0};
-  BacaError error = {0};
+  MereaderTuiDocument document = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_image_uri(&document, alpha_svg, "alpha", &error));
-  BacaGraphicsContext *context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0x0000ffU, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0x0000ffU, &error);
   TEST_ASSERT(context != NULL);
-  BacaGraphicsSurface surface = {0};
+  MereaderTuiGraphicsSurface surface = {0};
   TEST_ASSERT_MSG(
-      baca_graphics_prepare(context, &document, 0U, 1, 1, &surface, &error),
+      mereader_tui_graphics_prepare(context, &document, 0U, 1, 1, &surface, &error),
       "%s", error.message);
   TEST_ASSERT_INT(surface.pixels[0], 128);
   TEST_ASSERT_INT(surface.pixels[1], 0);
   TEST_ASSERT_INT(surface.pixels[2], 127);
-  TEST_ASSERT(baca_graphics_set_background(context, 0xffffffU, &error));
+  TEST_ASSERT(mereader_tui_graphics_set_background(context, 0xffffffU, &error));
   TEST_ASSERT_INT(surface.pixels[0], 128);
-  baca_graphics_surface_release(&surface);
+  mereader_tui_graphics_surface_release(&surface);
   TEST_ASSERT(
-      baca_graphics_prepare(context, &document, 0U, 1, 1, &surface, &error));
+      mereader_tui_graphics_prepare(context, &document, 0U, 1, 1, &surface, &error));
   TEST_ASSERT_INT(surface.pixels[0], 255);
   TEST_ASSERT_INT(surface.pixels[1], 127);
   TEST_ASSERT_INT(surface.pixels[2], 127);
-  baca_graphics_surface_release(&surface);
-  baca_graphics_free(context);
-  baca_document_close(&document);
-  return BACA_TEST_PASS;
+  mereader_tui_graphics_surface_release(&surface);
+  mereader_tui_graphics_free(context);
+  mereader_tui_document_close(&document);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_ansi_output_and_clipping(void) {
+static MereaderTuiTestResult test_ansi_output_and_clipping(void) {
   static const unsigned char pixels[] = {
       255U, 0U,   0U,   255U, 0U,   0U,   255U, 0U,   0U,   0U,   0U,   255U,
       0U,   0U,   255U, 0U,   0U,   255U, 0U,   255U, 0U,   0U,   255U, 0U,
       0U,   255U, 0U,   255U, 255U, 255U, 255U, 255U, 255U, 255U, 255U, 255U,
   };
-  const BacaGraphicsSurface surface = {
+  const MereaderTuiGraphicsSurface surface = {
       .pixels = pixels,
       .pixel_bytes = sizeof(pixels),
       .width = 3,
@@ -758,9 +758,9 @@ static BacaTestResult test_ansi_output_and_clipping(void) {
       .rowstride = 9,
       .image_id = 9U,
   };
-  const BacaGraphicsRect cover = {
+  const MereaderTuiGraphicsRect cover = {
       .row = 0, .column = 2, .rows = 1, .columns = 1};
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .row = -1,
       .column = 1,
       .viewport_rows = 2,
@@ -769,8 +769,8 @@ static BacaTestResult test_ansi_output_and_clipping(void) {
       .occlusion_count = 1U,
   };
   Capture capture = {0};
-  BacaError error = {0};
-  TEST_ASSERT_MSG(baca_graphics_render_ansi(&surface, &placement, capture_write,
+  MereaderTuiError error = {0};
+  TEST_ASSERT_MSG(mereader_tui_graphics_render_ansi(&surface, &placement, capture_write,
                                             &capture, &error),
                   "%s", error.message);
   TEST_ASSERT(!capture.failed);
@@ -781,21 +781,21 @@ static BacaTestResult test_ansi_output_and_clipping(void) {
   TEST_ASSERT(strstr(capture.output.data, "\033[0m\0338") != NULL);
 
   CellCapture cells = {0};
-  TEST_ASSERT(baca_graphics_render_cells(&surface, &placement, capture_cell,
+  TEST_ASSERT(mereader_tui_graphics_render_cells(&surface, &placement, capture_cell,
                                          &cells, &error));
   TEST_ASSERT_INT(cells.count, 1);
   TEST_ASSERT_INT(cells.row, 0);
   TEST_ASSERT_INT(cells.column, 1);
   TEST_ASSERT_INT((int)cells.foreground, 0x00ff00);
   TEST_ASSERT_INT((int)cells.background, 0xffffff);
-  baca_string_free(&capture.output);
-  return BACA_TEST_PASS;
+  mereader_tui_string_free(&capture.output);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_kitty_chunking_place_and_delete(void) {
-  BacaError error = {0};
-  BacaGraphicsContext *context = baca_graphics_create(
-      1024U * 1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+static MereaderTuiTestResult test_kitty_chunking_place_and_delete(void) {
+  MereaderTuiError error = {0};
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      1024U * 1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(context != NULL);
   unsigned char png[7000] = {0};
   memcpy(png, "\x89PNG\r\n\x1a\n", 8U);
@@ -803,7 +803,7 @@ static BacaTestResult test_kitty_chunking_place_and_delete(void) {
     png[index] = (unsigned char)(index * 37U + 11U);
   }
   Capture capture = {0};
-  TEST_ASSERT_MSG(baca_graphics_kitty_transmit(context, 77U, png, sizeof(png),
+  TEST_ASSERT_MSG(mereader_tui_graphics_kitty_transmit(context, 77U, png, sizeof(png),
                                                capture_write, &capture, &error),
                   "%s", error.message);
   TEST_ASSERT(strstr(capture.output.data,
@@ -820,13 +820,13 @@ static BacaTestResult test_kitty_chunking_place_and_delete(void) {
     const char *payload = strchr(command, ';');
     const char *end = payload == NULL ? NULL : strstr(payload + 1, "\033\\");
     TEST_ASSERT(payload != NULL && end != NULL);
-    TEST_ASSERT((size_t)(end - payload - 1) <= BACA_GRAPHICS_KITTY_CHUNK_BYTES);
+    TEST_ASSERT((size_t)(end - payload - 1) <= MEREADER_TUI_GRAPHICS_KITTY_CHUNK_BYTES);
     cursor = end + 2;
   }
-  baca_string_free(&capture.output);
+  mereader_tui_string_free(&capture.output);
 
   static const unsigned char pixels[4U * 8U * 3U] = {0};
-  const BacaGraphicsSurface surface = {
+  const MereaderTuiGraphicsSurface surface = {
       .pixels = pixels,
       .pixel_bytes = sizeof(pixels),
       .width = 4,
@@ -834,120 +834,120 @@ static BacaTestResult test_kitty_chunking_place_and_delete(void) {
       .rowstride = 12,
       .image_id = 77U,
   };
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .row = -1,
       .column = 2,
       .viewport_rows = 3,
       .viewport_columns = 8,
   };
-  TEST_ASSERT(baca_graphics_kitty_place(context, &surface, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_place(context, &surface, &placement,
                                         capture_write, &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "\0337\033[1;3H") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "a=p,i=77,") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "q=2,x=0,y=2,w=4,h=6,c=4,r=3,C=1") !=
               NULL);
-  baca_string_free(&capture.output);
+  mereader_tui_string_free(&capture.output);
 
-  TEST_ASSERT(baca_graphics_kitty_delete_placements(context, capture_write,
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_placements(context, capture_write,
                                                      &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "a=d,d=i,i=77,p=") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=a") == NULL);
-  baca_string_free(&capture.output);
+  mereader_tui_string_free(&capture.output);
   TEST_ASSERT(
-      baca_graphics_kitty_delete_all(context, capture_write, &capture, &error));
+      mereader_tui_graphics_kitty_delete_all(context, capture_write, &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "a=d,d=I,i=77,q=2") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=A") == NULL);
-  baca_string_free(&capture.output);
-  baca_graphics_free(context);
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_free(context);
 
   context =
-      baca_graphics_create(1024U, BACA_GRAPHICS_MULTIPLEXER_TMUX, 0U, &error);
+      mereader_tui_graphics_create(1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_TMUX, 0U, &error);
   TEST_ASSERT(context != NULL);
-  TEST_ASSERT(baca_graphics_kitty_transmit(context, 77U, png, 64U,
+  TEST_ASSERT(mereader_tui_graphics_kitty_transmit(context, 77U, png, 64U,
                                            capture_write, &capture, &error));
-  TEST_ASSERT(baca_graphics_kitty_place(context, &surface, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_place(context, &surface, &placement,
                                         capture_write, &capture, &error));
-  TEST_ASSERT(baca_graphics_kitty_delete_all(context, capture_write, &capture,
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_all(context, capture_write, &capture,
                                              &error));
   TEST_ASSERT(strstr(capture.output.data, "\033Ptmux;") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=i,i=77") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=I,i=77") != NULL);
-  baca_string_free(&capture.output);
-  baca_graphics_free(context);
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_free(context);
 
   context =
-      baca_graphics_create(1024U, BACA_GRAPHICS_MULTIPLEXER_SCREEN, 0U, &error);
+      mereader_tui_graphics_create(1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN, 0U, &error);
   TEST_ASSERT(context != NULL);
   capture.maximum_write = 0U;
   unsigned char screen_png[1000] = {0};
-  TEST_ASSERT(baca_graphics_kitty_transmit(
+  TEST_ASSERT(mereader_tui_graphics_kitty_transmit(
       context, 77U, screen_png, sizeof(screen_png), capture_write, &capture,
       &error));
-  TEST_ASSERT(baca_graphics_kitty_place(context, &surface, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_place(context, &surface, &placement,
                                         capture_write, &capture, &error));
-  TEST_ASSERT(capture.maximum_write < BACA_GRAPHICS_KITTY_SCREEN_SEQUENCE_BYTES);
+  TEST_ASSERT(capture.maximum_write < MEREADER_TUI_GRAPHICS_KITTY_SCREEN_SEQUENCE_BYTES);
   TEST_ASSERT(strstr(capture.output.data, "a=t,f=100,i=77") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "a=p,i=77") != NULL);
-  baca_string_free(&capture.output);
-  TEST_ASSERT(baca_graphics_kitty_delete_all(context, capture_write, &capture,
+  mereader_tui_string_free(&capture.output);
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_all(context, capture_write, &capture,
                                              &error));
-  baca_string_free(&capture.output);
-  baca_graphics_free(context);
-  return BACA_TEST_PASS;
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_free(context);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_repeated_uri_dedupe_and_context_ids(void) {
-  BacaDocument document = {0};
-  BacaError error = {0};
+static MereaderTuiTestResult test_repeated_uri_dedupe_and_context_ids(void) {
+  MereaderTuiDocument document = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_cache_image(&document, "one", &error));
   TEST_ASSERT(append_cache_image(&document, "two", &error));
-  BacaGraphicsContext *first_context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
-  BacaGraphicsContext *second_context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *first_context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *second_context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(first_context != NULL && second_context != NULL);
 
-  BacaGraphicsSurface first = {0};
-  BacaGraphicsSurface repeated = {0};
-  BacaGraphicsSurface other_context = {0};
-  TEST_ASSERT(baca_graphics_prepare(first_context, &document, 0U, 4, 2,
+  MereaderTuiGraphicsSurface first = {0};
+  MereaderTuiGraphicsSurface repeated = {0};
+  MereaderTuiGraphicsSurface other_context = {0};
+  TEST_ASSERT(mereader_tui_graphics_prepare(first_context, &document, 0U, 4, 2,
                                     &first, &error));
-  TEST_ASSERT(baca_graphics_prepare(first_context, &document, 1U, 4, 2,
+  TEST_ASSERT(mereader_tui_graphics_prepare(first_context, &document, 1U, 4, 2,
                                     &repeated, &error));
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(first_context).entries, 1U);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(first_context).entries, 1U);
   TEST_ASSERT_INT((int)repeated.image_id, (int)first.image_id);
 
-  TEST_ASSERT(baca_graphics_prepare(second_context, &document, 0U, 4, 2,
+  TEST_ASSERT(mereader_tui_graphics_prepare(second_context, &document, 0U, 4, 2,
                                     &other_context, &error));
   TEST_ASSERT(other_context.image_id != first.image_id);
 
-  baca_graphics_surface_release(&other_context);
-  baca_graphics_surface_release(&repeated);
-  baca_graphics_surface_release(&first);
-  baca_graphics_free(second_context);
-  baca_graphics_free(first_context);
-  baca_document_close(&document);
-  return BACA_TEST_PASS;
+  mereader_tui_graphics_surface_release(&other_context);
+  mereader_tui_graphics_surface_release(&repeated);
+  mereader_tui_graphics_surface_release(&first);
+  mereader_tui_graphics_free(second_context);
+  mereader_tui_graphics_free(first_context);
+  mereader_tui_document_close(&document);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_cache_is_scoped_to_document_address_and_identity(void) {
-  BacaDocument red_document = {0};
-  BacaDocument blue_document = {0};
+static MereaderTuiTestResult test_cache_is_scoped_to_document_address_and_identity(void) {
+  MereaderTuiDocument red_document = {0};
+  MereaderTuiDocument blue_document = {0};
   ColorPageRenderer red_renderer = {.color = "red"};
   ColorPageRenderer blue_renderer = {.color = "blue"};
-  BacaError error = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_color_page(&red_document, &red_renderer, &error));
   TEST_ASSERT(append_color_page(&blue_document, &blue_renderer, &error));
 
-  BacaGraphicsContext *context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(context != NULL);
-  BacaGraphicsSurface red = {0};
-  BacaGraphicsSurface blue = {0};
-  TEST_ASSERT_MSG(baca_graphics_prepare(context, &red_document, 0U, 1, 1,
+  MereaderTuiGraphicsSurface red = {0};
+  MereaderTuiGraphicsSurface blue = {0};
+  TEST_ASSERT_MSG(mereader_tui_graphics_prepare(context, &red_document, 0U, 1, 1,
                                         &red, &error),
                   "%s", error.message);
-  TEST_ASSERT_MSG(baca_graphics_prepare(context, &blue_document, 0U, 1, 1,
+  TEST_ASSERT_MSG(mereader_tui_graphics_prepare(context, &blue_document, 0U, 1, 1,
                                         &blue, &error),
                   "%s", error.message);
   TEST_ASSERT(red.pixels[0] > 200U && red.pixels[1] < 50U &&
@@ -956,175 +956,175 @@ static BacaTestResult test_cache_is_scoped_to_document_address_and_identity(void
               blue.pixels[2] > 200U);
   TEST_ASSERT_SIZE(red_renderer.renders, 1U);
   TEST_ASSERT_SIZE(blue_renderer.renders, 1U);
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 2U);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(context).entries, 2U);
   TEST_ASSERT(red.image_id != blue.image_id);
 
   red_document.instance_id = 1U;
   red_renderer.color = "#00ff00";
-  BacaGraphicsSurface reopened = {0};
-  TEST_ASSERT_MSG(baca_graphics_prepare(context, &red_document, 0U, 1, 1,
+  MereaderTuiGraphicsSurface reopened = {0};
+  TEST_ASSERT_MSG(mereader_tui_graphics_prepare(context, &red_document, 0U, 1, 1,
                                         &reopened, &error),
                   "%s", error.message);
   TEST_ASSERT(reopened.pixels[0] < 50U && reopened.pixels[1] > 200U &&
               reopened.pixels[2] < 50U);
   TEST_ASSERT_SIZE(red_renderer.renders, 2U);
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 3U);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(context).entries, 3U);
   TEST_ASSERT(reopened.image_id != red.image_id);
 
-  baca_graphics_surface_release(&reopened);
-  baca_graphics_surface_release(&blue);
-  baca_graphics_surface_release(&red);
-  baca_graphics_free(context);
-  baca_document_close(&blue_document);
-  baca_document_close(&red_document);
-  return BACA_TEST_PASS;
+  mereader_tui_graphics_surface_release(&reopened);
+  mereader_tui_graphics_surface_release(&blue);
+  mereader_tui_graphics_surface_release(&red);
+  mereader_tui_graphics_free(context);
+  mereader_tui_document_close(&blue_document);
+  mereader_tui_document_close(&red_document);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_cache_resize_lru_memory_and_pairs(void) {
-  BacaDocument document = {0};
-  BacaError error = {0};
+static MereaderTuiTestResult test_cache_resize_lru_memory_and_pairs(void) {
+  MereaderTuiDocument document = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_cache_svg(&document, "red", &error));
   TEST_ASSERT(append_cache_svg(&document, "green", &error));
   TEST_ASSERT(append_cache_svg(&document, "blue", &error));
-  BacaGraphicsContext *context = baca_graphics_create(
-      100U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0x000000U, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      100U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0x000000U, &error);
   TEST_ASSERT(context != NULL);
-  BacaGraphicsSurface first = {0};
+  MereaderTuiGraphicsSurface first = {0};
   TEST_ASSERT_MSG(
-      baca_graphics_prepare(context, &document, 0U, 4, 2, &first, &error), "%s",
+      mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &first, &error), "%s",
       error.message);
   const uint32_t first_id = first.image_id;
-  BacaGraphicsCacheStats stats = baca_graphics_cache_stats(context);
+  MereaderTuiGraphicsCacheStats stats = mereader_tui_graphics_cache_stats(context);
   TEST_ASSERT_SIZE(stats.entries, 1U);
   TEST_ASSERT(stats.bytes <= stats.maximum_bytes);
 
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .row = 0,
       .column = 0,
       .viewport_rows = 2,
       .viewport_columns = 4,
   };
   Capture capture = {0};
-  TEST_ASSERT(baca_graphics_kitty_draw(context, &first, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_draw(context, &first, &placement,
                                        capture_write, &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "f=100") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "a=p") != NULL);
-  baca_string_free(&capture.output);
-  baca_graphics_surface_release(&first);
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_surface_release(&first);
 
-  BacaGraphicsSurface second = {0};
+  MereaderTuiGraphicsSurface second = {0};
   TEST_ASSERT_MSG(
-      baca_graphics_prepare(context, &document, 1U, 4, 2, &second, &error),
+      mereader_tui_graphics_prepare(context, &document, 1U, 4, 2, &second, &error),
       "%s", error.message);
   const uint32_t second_id = second.image_id;
-  baca_graphics_surface_release(&second);
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 0U, 4, 2, &first,
+  mereader_tui_graphics_surface_release(&second);
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &first,
                                     &error));
   TEST_ASSERT_INT((int)first.image_id, (int)first_id);
-  baca_graphics_surface_release(&first);
+  mereader_tui_graphics_surface_release(&first);
 
-  BacaGraphicsSurface third = {0};
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 2U, 4, 2, &third,
+  MereaderTuiGraphicsSurface third = {0};
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 2U, 4, 2, &third,
                                     &error));
-  baca_graphics_surface_release(&third);
-  stats = baca_graphics_cache_stats(context);
+  mereader_tui_graphics_surface_release(&third);
+  stats = mereader_tui_graphics_cache_stats(context);
   TEST_ASSERT_SIZE(stats.entries, 2U);
   TEST_ASSERT(stats.bytes <= 100U);
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 0U, 4, 2, &first,
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &first,
                                     &error));
   TEST_ASSERT_INT((int)first.image_id, (int)first_id);
-  baca_graphics_surface_release(&first);
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 1U, 4, 2, &second,
+  mereader_tui_graphics_surface_release(&first);
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 1U, 4, 2, &second,
                                     &error));
   TEST_ASSERT(second.image_id != second_id);
-  baca_graphics_surface_release(&second);
+  mereader_tui_graphics_surface_release(&second);
 
-  BacaGraphicsSurface stale = {0};
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 0U, 4, 2, &stale,
+  MereaderTuiGraphicsSurface stale = {0};
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &stale,
                                     &error));
 
   const uint64_t before_resize = stats.generation;
-  TEST_ASSERT(baca_graphics_resize(context, 80, 24, &error));
+  TEST_ASSERT(mereader_tui_graphics_resize(context, 80, 24, &error));
   TEST_ASSERT(strstr(capture.output.data, "d=i,i=") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=I,i=") != NULL);
-  baca_string_free(&capture.output);
-  stats = baca_graphics_cache_stats(context);
+  mereader_tui_string_free(&capture.output);
+  stats = mereader_tui_graphics_cache_stats(context);
   TEST_ASSERT_SIZE(stats.entries, 0U);
   TEST_ASSERT(stats.generation > before_resize);
   CellCapture stale_cells = {0};
-  TEST_ASSERT(baca_graphics_render_cells(&stale, &placement, capture_cell,
+  TEST_ASSERT(mereader_tui_graphics_render_cells(&stale, &placement, capture_cell,
                                          &stale_cells, &error));
-  TEST_ASSERT(!baca_graphics_kitty_draw(context, &stale, &placement,
+  TEST_ASSERT(!mereader_tui_graphics_kitty_draw(context, &stale, &placement,
                                         capture_write, &capture, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-  baca_graphics_surface_release(&stale);
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+  mereader_tui_graphics_surface_release(&stale);
   const uint64_t after_resize = stats.generation;
-  TEST_ASSERT(baca_graphics_resize(context, 80, 24, &error));
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).generation, after_resize);
+  TEST_ASSERT(mereader_tui_graphics_resize(context, 80, 24, &error));
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(context).generation, after_resize);
 
   TEST_ASSERT(
-      baca_graphics_prepare(context, &document, 0U, 4, 2, &first, &error));
+      mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &first, &error));
   TEST_ASSERT(first.image_id != first_id);
-  TEST_ASSERT(baca_graphics_kitty_draw(context, &first, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_draw(context, &first, &placement,
                                        capture_write, &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "f=100") != NULL);
-  baca_string_free(&capture.output);
-  baca_graphics_surface_release(&first);
-  TEST_ASSERT(baca_graphics_set_background(context, 0xffffffU, &error));
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_surface_release(&first);
+  TEST_ASSERT(mereader_tui_graphics_set_background(context, 0xffffffU, &error));
   TEST_ASSERT(strstr(capture.output.data, "d=i,i=") != NULL);
   TEST_ASSERT(strstr(capture.output.data, "d=I,i=") != NULL);
-  baca_string_free(&capture.output);
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 0U);
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 0U, 4, 2, &first,
+  mereader_tui_string_free(&capture.output);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(context).entries, 0U);
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 0U, 4, 2, &first,
                                     &error));
-  TEST_ASSERT(baca_graphics_kitty_draw(context, &first, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_draw(context, &first, &placement,
                                        capture_write, &capture, &error));
   TEST_ASSERT(strstr(capture.output.data, "f=100") != NULL);
-  baca_graphics_surface_release(&first);
-  TEST_ASSERT(baca_graphics_kitty_delete_all(context, capture_write, &capture,
+  mereader_tui_graphics_surface_release(&first);
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_all(context, capture_write, &capture,
                                              &error));
-  baca_string_free(&capture.output);
+  mereader_tui_string_free(&capture.output);
 
   bool created = false;
-  TEST_ASSERT_INT(baca_graphics_pair(context, 1U, 2U, 10, 2, &created), 10);
+  TEST_ASSERT_INT(mereader_tui_graphics_pair(context, 1U, 2U, 10, 2, &created), 10);
   TEST_ASSERT(created);
-  TEST_ASSERT_INT(baca_graphics_pair(context, 3U, 4U, 10, 2, &created), 11);
+  TEST_ASSERT_INT(mereader_tui_graphics_pair(context, 3U, 4U, 10, 2, &created), 11);
   TEST_ASSERT(created);
-  const short nearest = baca_graphics_pair(context, 5U, 6U, 10, 2, &created);
+  const short nearest = mereader_tui_graphics_pair(context, 5U, 6U, 10, 2, &created);
   TEST_ASSERT(!created && (nearest == 10 || nearest == 11));
-  TEST_ASSERT_SIZE(baca_graphics_pair_count(context), 2U);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_pair_count(context), 2U);
 
-  baca_graphics_free(context);
-  baca_document_close(&document);
-  return BACA_TEST_PASS;
+  mereader_tui_graphics_free(context);
+  mereader_tui_document_close(&document);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_bounded_decode_and_hostile_geometry(void) {
+static MereaderTuiTestResult test_bounded_decode_and_hostile_geometry(void) {
   static const char large_svg[] =
       "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' "
       "width='10000' height='1000'><rect width='10000' height='1000' "
       "fill='red'/></svg>";
-  BacaDocument document = {0};
-  BacaError error = {0};
+  MereaderTuiDocument document = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_image_uri(&document, large_svg, "large", &error));
   document.blocks[0].value.image.intrinsic_width = 10000;
   document.blocks[0].value.image.intrinsic_height = 1000;
-  BacaGraphicsContext *context = baca_graphics_create(
-      8U * 1024U * 1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      8U * 1024U * 1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(context != NULL);
-  BacaGraphicsSurface bounded = {0};
-  TEST_ASSERT_MSG(baca_graphics_prepare(context, &document, 0U, INT_MAX,
+  MereaderTuiGraphicsSurface bounded = {0};
+  TEST_ASSERT_MSG(mereader_tui_graphics_prepare(context, &document, 0U, INT_MAX,
                                         INT_MAX, &bounded, &error),
                   "%s", error.message);
-  TEST_ASSERT_INT(bounded.width, BACA_GRAPHICS_MAX_COLUMNS);
-  TEST_ASSERT_INT(bounded.height, BACA_GRAPHICS_MAX_ROWS * 2);
+  TEST_ASSERT_INT(bounded.width, MEREADER_TUI_GRAPHICS_MAX_COLUMNS);
+  TEST_ASSERT_INT(bounded.height, MEREADER_TUI_GRAPHICS_MAX_ROWS * 2);
   TEST_ASSERT(bounded.pixel_bytes <= 8U * 1024U * 1024U);
-  baca_graphics_surface_release(&bounded);
-  baca_graphics_free(context);
-  baca_document_close(&document);
+  mereader_tui_graphics_surface_release(&bounded);
+  mereader_tui_graphics_free(context);
+  mereader_tui_document_close(&document);
 
   static const unsigned char pixels[] = {1U, 2U, 3U, 4U, 5U, 6U};
-  const BacaGraphicsSurface surface = {
+  const MereaderTuiGraphicsSurface surface = {
       .pixels = pixels,
       .pixel_bytes = sizeof(pixels),
       .width = 1,
@@ -1132,118 +1132,118 @@ static BacaTestResult test_bounded_decode_and_hostile_geometry(void) {
       .rowstride = 3,
       .image_id = 1U,
   };
-  BacaGraphicsPlacement placement = {
+  MereaderTuiGraphicsPlacement placement = {
       .row = INT_MIN,
       .column = INT_MIN,
       .viewport_rows = INT_MAX,
       .viewport_columns = INT_MAX,
   };
   CellCapture cells = {0};
-  TEST_ASSERT(baca_graphics_render_cells(&surface, &placement, capture_cell,
+  TEST_ASSERT(mereader_tui_graphics_render_cells(&surface, &placement, capture_cell,
                                          &cells, &error));
   TEST_ASSERT_INT(cells.count, 0);
   placement.row = INT_MAX;
   placement.column = INT_MAX;
-  TEST_ASSERT(baca_graphics_render_cells(&surface, &placement, capture_cell,
+  TEST_ASSERT(mereader_tui_graphics_render_cells(&surface, &placement, capture_cell,
                                          &cells, &error));
   TEST_ASSERT_INT(cells.count, 0);
 
-  const BacaGraphicsRect overflow_cover = {
+  const MereaderTuiGraphicsRect overflow_cover = {
       .row = INT_MAX,
       .column = INT_MAX,
       .rows = INT_MAX,
       .columns = INT_MAX,
   };
-  placement = (BacaGraphicsPlacement){
+  placement = (MereaderTuiGraphicsPlacement){
       .viewport_rows = 1,
       .viewport_columns = 1,
       .occlusions = &overflow_cover,
       .occlusion_count = 1U,
   };
-  TEST_ASSERT(baca_graphics_render_cells(&surface, &placement, capture_cell,
+  TEST_ASSERT(mereader_tui_graphics_render_cells(&surface, &placement, capture_cell,
                                          &cells, &error));
   TEST_ASSERT_INT(cells.count, 1);
-  placement.occlusion_count = BACA_GRAPHICS_MAX_OCCLUSIONS + 1U;
-  TEST_ASSERT(!baca_graphics_render_cells(&surface, &placement, capture_cell,
+  placement.occlusion_count = MEREADER_TUI_GRAPHICS_MAX_OCCLUSIONS + 1U;
+  TEST_ASSERT(!mereader_tui_graphics_render_cells(&surface, &placement, capture_cell,
                                           &cells, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
 
-  BacaGraphicsSurface short_surface = surface;
+  MereaderTuiGraphicsSurface short_surface = surface;
   short_surface.pixel_bytes = sizeof(pixels) - 1U;
   placement.occlusion_count = 0U;
-  TEST_ASSERT(!baca_graphics_render_cells(&short_surface, &placement,
+  TEST_ASSERT(!mereader_tui_graphics_render_cells(&short_surface, &placement,
                                           capture_cell, &cells, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_ARGUMENT);
-  return BACA_TEST_PASS;
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_palette_bounds_and_local_error_isolation(void) {
+static MereaderTuiTestResult test_palette_bounds_and_local_error_isolation(void) {
   static const unsigned color_counts[] = {8U, 16U, 88U, 256U};
   static const uint32_t colors[] = {0x000000U, 0x7f1234U, 0xffffffU};
-  for (size_t count_index = 0U; count_index < BACA_ARRAY_LEN(color_counts);
+  for (size_t count_index = 0U; count_index < MEREADER_TUI_ARRAY_LEN(color_counts);
        ++count_index) {
-    for (size_t color_index = 0U; color_index < BACA_ARRAY_LEN(colors);
+    for (size_t color_index = 0U; color_index < MEREADER_TUI_ARRAY_LEN(colors);
          ++color_index) {
-      TEST_ASSERT(baca_graphics_rgb_to_palette(colors[color_index],
+      TEST_ASSERT(mereader_tui_graphics_rgb_to_palette(colors[color_index],
                                                color_counts[count_index]) <
                   color_counts[count_index]);
     }
   }
-  TEST_ASSERT_INT((int)baca_graphics_rgb_to_palette(0x8b00cdU, 88U), 34);
-  TEST_ASSERT_INT((int)baca_graphics_rgb_to_palette(0xcd00ffU, 88U), 51);
-  TEST_ASSERT_INT((int)baca_graphics_rgb_to_palette(0x2e2e2eU, 88U), 80);
-  TEST_ASSERT_INT((int)baca_graphics_rgb_to_palette(0xa2a2a2U, 88U), 84);
-  TEST_ASSERT_INT((int)baca_graphics_rgb_to_palette(0x8b0000U, 87U), 1);
+  TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0x8b00cdU, 88U), 34);
+  TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0xcd00ffU, 88U), 51);
+  TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0x2e2e2eU, 88U), 80);
+  TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0xa2a2a2U, 88U), 84);
+  TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0x8b0000U, 87U), 1);
 
-  BacaDocument document = {0};
-  BacaError error = {0};
+  MereaderTuiDocument document = {0};
+  MereaderTuiError error = {0};
   TEST_ASSERT(append_image_uri(
       &document, "data:image/png;base64,bm90LWFuLWltYWdl", "bad", &error));
   TEST_ASSERT(append_cache_svg(&document, "red", &error));
   TEST_ASSERT(append_cache_svg(&document, "blue", &error));
-  BacaGraphicsContext *context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(context != NULL);
-  BacaGraphicsSurface bad = {0};
-  TEST_ASSERT(!baca_graphics_prepare(context, &document, 0U, 2, 1, &bad,
+  MereaderTuiGraphicsSurface bad = {0};
+  TEST_ASSERT(!mereader_tui_graphics_prepare(context, &document, 0U, 2, 1, &bad,
                                      &error));
-  TEST_ASSERT_SIZE(baca_graphics_cache_stats(context).entries, 0U);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_cache_stats(context).entries, 0U);
 
-  BacaGraphicsSurface first = {0};
-  BacaGraphicsSurface second = {0};
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 1U, 2, 1, &first,
+  MereaderTuiGraphicsSurface first = {0};
+  MereaderTuiGraphicsSurface second = {0};
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 1U, 2, 1, &first,
                                     &error));
-  TEST_ASSERT(baca_graphics_prepare(context, &document, 2U, 2, 1, &second,
+  TEST_ASSERT(mereader_tui_graphics_prepare(context, &document, 2U, 2, 1, &second,
                                     &error));
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .viewport_rows = 1,
       .viewport_columns = 2,
   };
   Capture failed = {.fail_writes = true};
-  TEST_ASSERT(!baca_graphics_kitty_draw(context, &first, &placement,
+  TEST_ASSERT(!mereader_tui_graphics_kitty_draw(context, &first, &placement,
                                         capture_write, &failed, &error));
-  TEST_ASSERT_ERROR(error, BACA_ERROR_IO);
+  TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_IO);
 
   Capture capture = {0};
-  TEST_ASSERT(baca_graphics_kitty_draw(context, &second, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_draw(context, &second, &placement,
                                        capture_write, &capture, &error));
   char image_marker[64] = {0};
   const int marker_length = snprintf(image_marker, sizeof(image_marker),
                                      "a=t,f=100,i=%u", second.image_id);
   TEST_ASSERT(marker_length > 0 && (size_t)marker_length < sizeof(image_marker));
   TEST_ASSERT(strstr(capture.output.data, image_marker) != NULL);
-  TEST_ASSERT(baca_graphics_kitty_delete_all(context, capture_write, &capture,
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_all(context, capture_write, &capture,
                                              &error));
   TEST_ASSERT(count_bytes(capture.output.data, "d=I,i=") >= 2U);
-  baca_string_free(&capture.output);
-  baca_graphics_surface_release(&second);
-  baca_graphics_surface_release(&first);
-  baca_graphics_free(context);
-  baca_document_close(&document);
-  return BACA_TEST_PASS;
+  mereader_tui_string_free(&capture.output);
+  mereader_tui_graphics_surface_release(&second);
+  mereader_tui_graphics_surface_release(&first);
+  mereader_tui_graphics_free(context);
+  mereader_tui_document_close(&document);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_pty_ansi_and_kitty_capture(void) {
+static MereaderTuiTestResult test_pty_ansi_and_kitty_capture(void) {
   int master = -1;
   int slave = -1;
   TEST_ASSERT(openpty(&master, &slave, NULL, NULL, NULL) == 0);
@@ -1254,7 +1254,7 @@ static BacaTestResult test_pty_ansi_and_kitty_capture(void) {
   TEST_ASSERT(fcntl(master, F_SETFL, O_NONBLOCK) == 0);
 
   static const unsigned char pixels[] = {255U, 0U, 0U, 0U, 0U, 255U};
-  const BacaGraphicsSurface surface = {
+  const MereaderTuiGraphicsSurface surface = {
       .pixels = pixels,
       .pixel_bytes = sizeof(pixels),
       .width = 1,
@@ -1262,27 +1262,27 @@ static BacaTestResult test_pty_ansi_and_kitty_capture(void) {
       .rowstride = 3,
       .image_id = 42U,
   };
-  const BacaGraphicsPlacement placement = {
+  const MereaderTuiGraphicsPlacement placement = {
       .viewport_rows = 1,
       .viewport_columns = 1,
   };
   FdWriter writer = {.fd = slave};
-  BacaError error = {0};
-  TEST_ASSERT(baca_graphics_render_ansi(&surface, &placement, fd_write_all,
+  MereaderTuiError error = {0};
+  TEST_ASSERT(mereader_tui_graphics_render_ansi(&surface, &placement, fd_write_all,
                                         &writer, &error));
-  BacaGraphicsContext *context = baca_graphics_create(
-      1024U, BACA_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
+  MereaderTuiGraphicsContext *context = mereader_tui_graphics_create(
+      1024U, MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE, 0U, &error);
   TEST_ASSERT(context != NULL);
-  TEST_ASSERT(baca_graphics_kitty_transmit(
+  TEST_ASSERT(mereader_tui_graphics_kitty_transmit(
       context, surface.image_id, graphics_pixel_png, sizeof(graphics_pixel_png),
       fd_write_all, &writer, &error));
-  TEST_ASSERT(baca_graphics_kitty_place(context, &surface, &placement,
+  TEST_ASSERT(mereader_tui_graphics_kitty_place(context, &surface, &placement,
                                         fd_write_all, &writer, &error));
-  TEST_ASSERT(baca_graphics_kitty_delete_all(context, fd_write_all, &writer,
+  TEST_ASSERT(mereader_tui_graphics_kitty_delete_all(context, fd_write_all, &writer,
                                              &error));
   TEST_ASSERT(tcdrain(slave) == 0);
 
-  BacaString output = {0};
+  MereaderTuiString output = {0};
   TEST_ASSERT(read_pty_capture(master, &output));
   TEST_ASSERT(strstr(output.data, "\033[38;2;255;0;0m") != NULL);
   TEST_ASSERT(strstr(output.data, "a=t,f=100,i=42") != NULL);
@@ -1291,58 +1291,58 @@ static BacaTestResult test_pty_ansi_and_kitty_capture(void) {
   TEST_ASSERT(strstr(output.data, "d=I,i=42") != NULL);
   TEST_ASSERT(strstr(output.data, "d=a") == NULL &&
               strstr(output.data, "d=A") == NULL);
-  baca_string_free(&output);
-  baca_graphics_free(context);
+  mereader_tui_string_free(&output);
+  mereader_tui_graphics_free(context);
   TEST_ASSERT(close(slave) == 0);
   TEST_ASSERT(close(master) == 0);
-  return BACA_TEST_PASS;
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_tui_pty_fallback_and_protocol_capture(void) {
-  BacaString kitty = {0};
+static MereaderTuiTestResult test_tui_pty_fallback_and_protocol_capture(void) {
+  MereaderTuiString kitty = {0};
   TEST_ASSERT_MSG(
-      run_tui_pty_capture(BACA_IMAGE_MODE_KITTY, 40U, "a=t,f=100", &kitty),
+      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 40U, "a=t,f=100", &kitty),
       "Kitty PTY capture failed after %zu bytes: %s", kitty.length,
       kitty.data == NULL ? "(empty)" : kitty.data);
   TEST_ASSERT(strstr(kitty.data, "IMAGE") != NULL);
   TEST_ASSERT(strstr(kitty.data, "a=t,f=100") != NULL);
   TEST_ASSERT(strstr(kitty.data, "a=p,") != NULL);
   TEST_ASSERT(strstr(kitty.data, "d=I,i=") != NULL);
-  baca_string_free(&kitty);
+  mereader_tui_string_free(&kitty);
 
-  BacaString ansi = {0};
-  TEST_ASSERT(run_tui_pty_capture(BACA_IMAGE_MODE_ANSI, 40U, "\033[38;2;", &ansi));
+  MereaderTuiString ansi = {0};
+  TEST_ASSERT(run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_ANSI, 40U, "\033[38;2;", &ansi));
   TEST_ASSERT(strstr(ansi.data, "\033[38;2;") != NULL);
   TEST_ASSERT(strstr(ansi.data, "\xe2\x96\x80") != NULL);
   TEST_ASSERT(strstr(ansi.data, "\033_G") == NULL);
-  baca_string_free(&ansi);
+  mereader_tui_string_free(&ansi);
 
-  BacaString wide = {0};
+  MereaderTuiString wide = {0};
   TEST_ASSERT_MSG(
-      run_tui_pty_capture(BACA_IMAGE_MODE_KITTY, 1200U, "a=p,", &wide),
+      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 1200U, "a=p,", &wide),
       "wide Kitty PTY capture failed after %zu bytes: %s", wide.length,
       wide.data == NULL ? "(empty)" : wide.data);
   TEST_ASSERT(strstr(wide.data, "\0337\033[1;89H") != NULL);
   TEST_ASSERT(strstr(wide.data,
                      "q=2,x=0,y=0,w=1024,h=24,c=1024,r=12,C=1") != NULL);
-  baca_string_free(&wide);
-  return BACA_TEST_PASS;
+  mereader_tui_string_free(&wide);
+  return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void) {
+static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_click(void) {
   TEST_ASSERT_SIZE(sizeof(graphics_tall_svg), sizeof(graphics_wide_svg));
-  TEST_ASSERT(baca_test_write("tui-tall/image @.svg", graphics_tall_svg,
+  TEST_ASSERT(mereader_tui_test_write("tui-tall/image @.svg", graphics_tall_svg,
                               sizeof(graphics_tall_svg) - 1U));
-  TEST_ASSERT(baca_test_write_text(
+  TEST_ASSERT(mereader_tui_test_write_text(
       "tui-tall/config/mereader-tui/config.ini",
       "[General]\nImageMode=kitty\nPreferredImageViewer=capture-viewer\n"
       "MaxTextWidth=80\nPageScrollDuration=0\n"
       "[Keymaps]\nScreenshot=s\n"));
-  TEST_ASSERT(baca_test_mkdir("tui-tall/screenshots"));
-  char *path = baca_test_path("tui-tall/image @.svg");
-  char *held_path = baca_test_path("tui-tall/image @.svg.held");
-  char *config_root = baca_test_path("tui-tall/config");
-  char *screenshot_directory = baca_test_path("tui-tall/screenshots");
+  TEST_ASSERT(mereader_tui_test_mkdir("tui-tall/screenshots"));
+  char *path = mereader_tui_test_path("tui-tall/image @.svg");
+  char *held_path = mereader_tui_test_path("tui-tall/image @.svg.held");
+  char *config_root = mereader_tui_test_path("tui-tall/config");
+  char *screenshot_directory = mereader_tui_test_path("tui-tall/screenshots");
   TEST_ASSERT(path != NULL && held_path != NULL && config_root != NULL &&
               screenshot_directory != NULL);
   (void)unlink(held_path);
@@ -1370,18 +1370,18 @@ static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void
     (void)setenv("XDG_CONFIG_HOME", config_root, 1);
     char descriptor[32] = {0};
     (void)snprintf(descriptor, sizeof(descriptor), "%d", opener_pipe[1]);
-    (void)setenv("BACA_IMAGE_PTY_CHILD", "1", 1);
-    (void)setenv("BACA_IMAGE_PTY_PATH", path, 1);
-    (void)setenv("BACA_IMAGE_PTY_HELD_PATH", held_path, 1);
-    (void)setenv("BACA_IMAGE_PTY_SCREENSHOT_DIR", screenshot_directory, 1);
-    (void)setenv("BACA_IMAGE_PTY_OPEN_FD", descriptor, 1);
+    (void)setenv("MEREADER_TUI_IMAGE_PTY_CHILD", "1", 1);
+    (void)setenv("MEREADER_TUI_IMAGE_PTY_PATH", path, 1);
+    (void)setenv("MEREADER_TUI_IMAGE_PTY_HELD_PATH", held_path, 1);
+    (void)setenv("MEREADER_TUI_IMAGE_PTY_SCREENSHOT_DIR", screenshot_directory, 1);
+    (void)setenv("MEREADER_TUI_IMAGE_PTY_OPEN_FD", descriptor, 1);
     (void)execl("./build/tests/test_mereader_tui", "test_mereader_tui", (char *)NULL);
     _exit(127);
   }
 
   (void)close(opener_pipe[1]);
-  BacaString output = {0};
-  BacaString opened = {0};
+  MereaderTuiString output = {0};
+  MereaderTuiString opened = {0};
   unsigned stage = 0U;
   bool completed = false;
   int status = 0;
@@ -1444,9 +1444,9 @@ static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void
   struct stat target_status;
   struct stat held_status;
   struct stat replacement_status;
-  BacaError error = {0};
-  BacaBuffer target_bytes = {0};
-  BacaBuffer replacement_bytes = {0};
+  MereaderTuiError error = {0};
+  MereaderTuiBuffer target_bytes = {0};
+  MereaderTuiBuffer replacement_bytes = {0};
   ok = ok && target != NULL && viewer != NULL &&
        strcmp(viewer, "capture-viewer") == 0 && export_prefix_length > 0 &&
        (size_t)export_prefix_length < sizeof(export_prefix) &&
@@ -1461,8 +1461,8 @@ static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void
         target_status.st_ino != held_status.st_ino) &&
        (target_status.st_dev != replacement_status.st_dev ||
         target_status.st_ino != replacement_status.st_ino) &&
-       baca_read_file(target, &target_bytes, &error) &&
-       baca_read_file(path, &replacement_bytes, &error) &&
+       mereader_tui_read_file(target, &target_bytes, &error) &&
+       mereader_tui_read_file(path, &replacement_bytes, &error) &&
        target_bytes.length == sizeof(graphics_tall_svg) - 1U &&
        replacement_bytes.length == sizeof(graphics_wide_svg) - 1U &&
        memcmp(target_bytes.data, graphics_tall_svg,
@@ -1472,8 +1472,8 @@ static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void
   if (ok) {
     stage = 5U;
   }
-  baca_buffer_free(&target_bytes);
-  baca_buffer_free(&replacement_bytes);
+  mereader_tui_buffer_free(&target_bytes);
+  mereader_tui_buffer_free(&replacement_bytes);
 
   ok = ok && output.data != NULL && strstr(output.data, "a=t,f=100") == NULL &&
        fd_write_all(&master_writer, "qq", 2U);
@@ -1516,28 +1516,28 @@ static BacaTestResult test_tui_tall_standalone_placeholder_and_stable_click(void
   (void)drain_pty(opener_pipe[0], &opened);
   (void)close(master);
   (void)close(opener_pipe[0]);
-  baca_string_free(&opened);
+  mereader_tui_string_free(&opened);
   const size_t output_length = output.length;
   char output_excerpt[512] = {0};
   if (output.data != NULL) {
     (void)snprintf(output_excerpt, sizeof(output_excerpt), "%.480s", output.data);
   }
-  baca_string_free(&output);
+  mereader_tui_string_free(&output);
   free(screenshot_directory);
   free(config_root);
   free(held_path);
   free(path);
   if (!ok || !completed || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    return baca_test_fail_at(
+    return mereader_tui_test_fail_at(
         __FILE__, __LINE__,
         "tall standalone PTY failed at stage %u after %zu bytes (status=%d): %s",
         stage, output_length, status, output_excerpt);
   }
-  return BACA_TEST_PASS;
+  return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_graphics_test_cases(size_t *count) {
-  static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_graphics_test_cases(size_t *count) {
+  static const MereaderTuiTestCase cases[] = {
       {.name = "mode_selection", .function = test_mode_selection},
       {.name = "dimension_probing_and_malformed_resources",
        .function = test_dimension_probing_and_malformed_resources},
@@ -1563,6 +1563,6 @@ const BacaTestCase *baca_graphics_test_cases(size_t *count) {
       {.name = "tui_tall_standalone_placeholder_and_stable_click",
        .function = test_tui_tall_standalone_placeholder_and_stable_click},
   };
-  *count = BACA_ARRAY_LEN(cases);
+  *count = MEREADER_TUI_ARRAY_LEN(cases);
   return cases;
 }

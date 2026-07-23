@@ -1,4 +1,4 @@
-#include "baca/document_backend.h"
+#include "mereader-tui/document_backend.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -47,12 +47,12 @@ typedef struct EpubBackend {
     EpubManifestItem **manifest_by_path;
 } EpubBackend;
 
-static bool epub_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
-                               BacaError *error);
-static bool epub_resource_size(const BacaDocument *document, const char *uri, size_t *size);
-static void epub_close(BacaDocument *document);
+static bool epub_load_resource(MereaderTuiDocument *document, const char *uri, MereaderTuiResource *resource,
+                               MereaderTuiError *error);
+static bool epub_resource_size(const MereaderTuiDocument *document, const char *uri, size_t *size);
+static void epub_close(MereaderTuiDocument *document);
 
-static const BacaDocumentOps EPUB_OPS = {
+static const MereaderTuiDocumentOps EPUB_OPS = {
     .load_resource = epub_load_resource,
     .resource_size = epub_resource_size,
     .render_page = NULL,
@@ -85,14 +85,14 @@ static void backend_destroy(EpubBackend *backend) {
     free(backend->opf_path);
     free(backend->opf_member_path);
     if (backend->cleanup_directory != NULL) {
-        BacaError ignored = {0};
-        (void) baca_remove_tree(backend->cleanup_directory, &ignored);
+        MereaderTuiError ignored = {0};
+        (void) mereader_tui_remove_tree(backend->cleanup_directory, &ignored);
     }
     free(backend->cleanup_directory);
     free(backend);
 }
 
-static void epub_close(BacaDocument *document) {
+static void epub_close(MereaderTuiDocument *document) {
     backend_destroy(document->backend);
     document->backend = NULL;
     document->ops = NULL;
@@ -146,15 +146,15 @@ static bool archive_path_safe(const char *path, size_t length, bool allow_traili
     return true;
 }
 
-static bool validate_archive(EpubBackend *backend, BacaError *error) {
+static bool validate_archive(EpubBackend *backend, MereaderTuiError *error) {
     zip_int64_t entry_count = zip_get_num_entries(backend->archive, 0);
     if (entry_count < 0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not inspect EPUB archive: %s",
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not inspect EPUB archive: %s",
                        zip_strerror(backend->archive));
         return false;
     }
     if (entry_count > EPUB_MAX_ENTRIES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB contains too many archive members");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB contains too many archive members");
         return false;
     }
 
@@ -164,33 +164,33 @@ static bool validate_archive(EpubBackend *backend, BacaError *error) {
         zip_stat_init(&stat);
         if (zip_stat_index(backend->archive, (zip_uint64_t) index, ZIP_FL_ENC_GUESS, &stat) != 0 ||
             (stat.valid & ZIP_STAT_NAME) == 0 || stat.name == NULL) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "could not inspect an EPUB archive member");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not inspect an EPUB archive member");
             return false;
         }
         size_t name_length = strlen(stat.name);
         bool directory = name_length > 0 && stat.name[name_length - 1] == '/';
         if (!archive_path_safe(stat.name, name_length, directory)) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "unsafe EPUB archive path: %s", stat.name);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "unsafe EPUB archive path: %s", stat.name);
             return false;
         }
         if ((stat.valid & ZIP_STAT_ENCRYPTION_METHOD) != 0 && stat.encryption_method != ZIP_EM_NONE) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                            "encrypted EPUB members are not supported; the book may be DRM protected");
             return false;
         }
         if ((stat.valid & ZIP_STAT_SIZE) == 0 || stat.size > EPUB_MAX_MEMBER) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB member exceeds the supported size limit: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB member exceeds the supported size limit: %s",
                            stat.name);
             return false;
         }
         if (total_size > EPUB_MAX_TOTAL - stat.size) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB uncompressed size exceeds the supported limit");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB uncompressed size exceeds the supported limit");
             return false;
         }
         total_size += stat.size;
         if ((stat.valid & ZIP_STAT_COMP_SIZE) != 0 && stat.size >= EPUB_RATIO_THRESHOLD) {
             if (stat.comp_size == 0 || stat.size / stat.comp_size > EPUB_MAX_COMPRESSION_RATIO) {
-                baca_error_set(error, BACA_ERROR_CORRUPT, "suspicious EPUB compression ratio: %s", stat.name);
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "suspicious EPUB compression ratio: %s", stat.name);
                 return false;
             }
         }
@@ -198,35 +198,35 @@ static bool validate_archive(EpubBackend *backend, BacaError *error) {
     return true;
 }
 
-static bool read_member(EpubBackend *backend, const char *path, size_t maximum, BacaBuffer *output,
-                        BacaError *error) {
+static bool read_member(EpubBackend *backend, const char *path, size_t maximum, MereaderTuiBuffer *output,
+                        MereaderTuiError *error) {
     zip_int64_t member_index = zip_name_locate(backend->archive, path, ZIP_FL_ENC_GUESS);
     if (member_index < 0) {
-        baca_error_set(error, BACA_ERROR_NOT_FOUND, "EPUB member not found: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND, "EPUB member not found: %s", path);
         return false;
     }
     zip_stat_t stat;
     zip_stat_init(&stat);
     if (zip_stat_index(backend->archive, (zip_uint64_t) member_index, ZIP_FL_ENC_GUESS, &stat) != 0 ||
         (stat.valid & ZIP_STAT_SIZE) == 0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not inspect EPUB member: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not inspect EPUB member: %s", path);
         return false;
     }
     if (stat.size > maximum || stat.size > (zip_uint64_t) SIZE_MAX - 1U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB member exceeds the supported size limit: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB member exceeds the supported size limit: %s", path);
         return false;
     }
 
     size_t size = (size_t) stat.size;
     unsigned char *data = malloc(size + 1U);
     if (data == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate EPUB member: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate EPUB member: %s", path);
         return false;
     }
     zip_file_t *member = zip_fopen_index(backend->archive, (zip_uint64_t) member_index, ZIP_FL_ENC_GUESS);
     if (member == NULL) {
         free(data);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not open EPUB member %s: %s", path,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not open EPUB member %s: %s", path,
                        zip_strerror(backend->archive));
         return false;
     }
@@ -237,14 +237,14 @@ static bool read_member(EpubBackend *backend, const char *path, size_t maximum, 
         if (count <= 0) {
             zip_fclose(member);
             free(data);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "truncated EPUB member: %s", path);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "truncated EPUB member: %s", path);
             return false;
         }
         offset += (size_t) count;
     }
     if (zip_fclose(member) != 0) {
         free(data);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not finish reading EPUB member: %s", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not finish reading EPUB member: %s", path);
         return false;
     }
     data[size] = '\0';
@@ -255,21 +255,21 @@ static bool read_member(EpubBackend *backend, const char *path, size_t maximum, 
 }
 
 static char *resolve_reference(const char *base_path, const char *reference, bool allow_external,
-                                BacaError *error) {
+                                MereaderTuiError *error) {
     if (reference == NULL || reference[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "invalid empty EPUB reference");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid empty EPUB reference");
         return NULL;
     }
-    return baca_document_resolve_uri(base_path, reference, allow_external, error);
+    return mereader_tui_document_resolve_uri(base_path, reference, allow_external, error);
 }
 
-static char *member_path_from_reference(const char *base_path, const char *reference, BacaError *error) {
+static char *member_path_from_reference(const char *base_path, const char *reference, MereaderTuiError *error) {
     char *resolved = resolve_reference(base_path, reference, false, error);
     if (resolved == NULL) {
         return NULL;
     }
     resolved[strcspn(resolved, "?#")] = '\0';
-    char *member_path = baca_document_uri_path(resolved, error);
+    char *member_path = mereader_tui_document_uri_path(resolved, error);
     if (member_path == NULL) {
         free(resolved);
         return NULL;
@@ -279,28 +279,28 @@ static char *member_path_from_reference(const char *base_path, const char *refer
     free(member_path);
     if (!safe) {
         free(resolved);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "unsafe EPUB reference: %s", reference);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "unsafe EPUB reference: %s", reference);
         return NULL;
     }
     return resolved;
 }
 
-static char *archive_member_path(const char *canonical_path, BacaError *error) {
-    char *member_path = baca_document_uri_path(canonical_path, error);
+static char *archive_member_path(const char *canonical_path, MereaderTuiError *error) {
+    char *member_path = mereader_tui_document_uri_path(canonical_path, error);
     if (member_path == NULL) {
         return NULL;
     }
     if (!archive_path_safe(member_path, strlen(member_path), false)) {
         free(member_path);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "unsafe EPUB member path: %s", canonical_path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "unsafe EPUB member path: %s", canonical_path);
         return NULL;
     }
     return member_path;
 }
 
-static xmlDocPtr parse_xml(const BacaBuffer *buffer, const char *name, BacaError *error) {
+static xmlDocPtr parse_xml(const MereaderTuiBuffer *buffer, const char *name, MereaderTuiError *error) {
     if (buffer->length > (size_t) INT_MAX) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "XML member is too large: %s", name);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "XML member is too large: %s", name);
         return NULL;
     }
     int options = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
@@ -313,13 +313,13 @@ static xmlDocPtr parse_xml(const BacaBuffer *buffer, const char *name, BacaError
 #endif
     xmlDocPtr document = xmlReadMemory((const char *) buffer->data, (int) buffer->length, name, NULL, options);
     if (document == NULL) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not parse EPUB XML member: %s", name);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not parse EPUB XML member: %s", name);
         return NULL;
     }
     if (document->extSubset != NULL ||
         (document->intSubset != NULL && document->intSubset->children != NULL)) {
         xmlFreeDoc(document);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB XML member contains a DTD subset: %s", name);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB XML member contains a DTD subset: %s", name);
         return NULL;
     }
     return document;
@@ -375,10 +375,10 @@ static xmlChar *xml_attribute(const xmlNode *node, const char *name) {
     return xml_attribute_ns(node, name, NULL);
 }
 
-static char *trimmed_xml_content(xmlNode *node, BacaError *error) {
+static char *trimmed_xml_content(xmlNode *node, MereaderTuiError *error) {
     xmlChar *content = xmlNodeGetContent(node);
     if (content == NULL) {
-        return baca_strdup("", error);
+        return mereader_tui_strdup("", error);
     }
     const char *start = (const char *) content;
     while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n' || *start == '\f') {
@@ -389,18 +389,18 @@ static char *trimmed_xml_content(xmlNode *node, BacaError *error) {
            (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n' || end[-1] == '\f')) {
         end--;
     }
-    char *result = baca_strndup(start, (size_t) (end - start), error);
+    char *result = mereader_tui_strndup(start, (size_t) (end - start), error);
     xmlFree(content);
     return result;
 }
 
-static bool collapse_label(xmlNode *node, char **label, BacaError *error) {
+static bool collapse_label(xmlNode *node, char **label, MereaderTuiError *error) {
     xmlChar *content = xmlNodeGetContent(node);
     if (content == NULL) {
-        *label = baca_strdup("", error);
+        *label = mereader_tui_strdup("", error);
         return *label != NULL;
     }
-    BacaString normalized = {0};
+    MereaderTuiString normalized = {0};
     bool pending = false;
     const char *cursor = (const char *) content;
     while (*cursor != '\0') {
@@ -410,9 +410,9 @@ static bool collapse_label(xmlNode *node, char **label, BacaError *error) {
             cursor++;
             continue;
         }
-        if (pending && !baca_string_append_char(&normalized, ' ', error)) {
+        if (pending && !mereader_tui_string_append_char(&normalized, ' ', error)) {
             xmlFree(content);
-            baca_string_free(&normalized);
+            mereader_tui_string_free(&normalized);
             return false;
         }
         pending = false;
@@ -424,16 +424,16 @@ static bool collapse_label(xmlNode *node, char **label, BacaError *error) {
             }
             cursor++;
         }
-        if (!baca_string_append_n(&normalized, start, (size_t) (cursor - start), error)) {
+        if (!mereader_tui_string_append_n(&normalized, start, (size_t) (cursor - start), error)) {
             xmlFree(content);
-            baca_string_free(&normalized);
+            mereader_tui_string_free(&normalized);
             return false;
         }
     }
     xmlFree(content);
-    *label = baca_string_take(&normalized);
+    *label = mereader_tui_string_take(&normalized);
     if (*label == NULL) {
-        *label = baca_strdup("", error);
+        *label = mereader_tui_strdup("", error);
     }
     return *label != NULL;
 }
@@ -447,7 +447,7 @@ static xmlNode *find_metadata_value(xmlNode *node, const char *name) {
     return NULL;
 }
 
-static bool set_metadata_value(char **field, xmlNode *metadata, const char *name, BacaError *error) {
+static bool set_metadata_value(char **field, xmlNode *metadata, const char *name, MereaderTuiError *error) {
     xmlNode *node = find_metadata_value(metadata, name);
     if (node == NULL) {
         return true;
@@ -461,7 +461,7 @@ static bool set_metadata_value(char **field, xmlNode *metadata, const char *name
     return true;
 }
 
-static bool parse_metadata(BacaDocument *document, xmlNode *metadata, BacaError *error) {
+static bool parse_metadata(MereaderTuiDocument *document, xmlNode *metadata, MereaderTuiError *error) {
     return set_metadata_value(&document->metadata.title, metadata, "title", error) &&
            set_metadata_value(&document->metadata.creator, metadata, "creator", error) &&
            set_metadata_value(&document->metadata.description, metadata, "description", error) &&
@@ -473,36 +473,36 @@ static bool parse_metadata(BacaDocument *document, xmlNode *metadata, BacaError 
            set_metadata_value(&document->metadata.source, metadata, "source", error);
 }
 
-static bool manifest_add(EpubBackend *backend, EpubManifestItem *item, BacaError *error) {
+static bool manifest_add(EpubBackend *backend, EpubManifestItem *item, MereaderTuiError *error) {
     if (backend->manifest_count >= EPUB_MAX_ENTRIES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest contains too many items");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest contains too many items");
         return false;
     }
     const char *const values[] = {
         item->id, item->path, item->member_path, item->media_type, item->properties, item->fallback,
     };
     size_t retained_size = sizeof(*item);
-    for (size_t index = 0; index < BACA_ARRAY_LEN(values); index++) {
+    for (size_t index = 0; index < MEREADER_TUI_ARRAY_LEN(values); index++) {
         if (values[index] == NULL) {
             continue;
         }
         size_t length = strlen(values[index]);
         if (length == SIZE_MAX || length + 1U > SIZE_MAX - retained_size) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest retained size overflow");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest retained size overflow");
             return false;
         }
         retained_size += length + 1U;
     }
     if (backend->manifest_bytes > EPUB_MAX_MANIFEST_BYTES ||
         retained_size > EPUB_MAX_MANIFEST_BYTES - backend->manifest_bytes) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest exceeds the supported size limit");
         return false;
     }
-    BacaError reserve_error = {0};
+    MereaderTuiError reserve_error = {0};
     EpubManifestItem *manifest =
-        baca_array_reserve(backend->manifest, &backend->manifest_capacity, sizeof(*backend->manifest),
+        mereader_tui_array_reserve(backend->manifest, &backend->manifest_capacity, sizeof(*backend->manifest),
                            backend->manifest_count + 1, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != NULL) {
             *error = reserve_error;
         }
@@ -515,7 +515,7 @@ static bool manifest_add(EpubBackend *backend, EpubManifestItem *item, BacaError
     return true;
 }
 
-static bool parse_manifest(EpubBackend *backend, xmlNode *manifest, BacaError *error) {
+static bool parse_manifest(EpubBackend *backend, xmlNode *manifest, MereaderTuiError *error) {
     for (xmlNode *node = manifest->children; node != NULL; node = node->next) {
         if (!xml_node_is_ns(node, "item", OPF_NAMESPACE)) {
             continue;
@@ -534,17 +534,17 @@ static bool parse_manifest(EpubBackend *backend, xmlNode *manifest, BacaError *e
             xmlFree(media_type);
             xmlFree(properties);
             xmlFree(fallback);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest item has invalid required attributes");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest item has invalid required attributes");
             return false;
         }
         char *canonical_path = member_path_from_reference(backend->opf_path, (const char *) href, error);
         EpubManifestItem item = {
-            .id = baca_strdup((const char *) id, error),
+            .id = mereader_tui_strdup((const char *) id, error),
             .path = canonical_path,
             .member_path = canonical_path == NULL ? NULL : archive_member_path(canonical_path, error),
-            .media_type = baca_strdup((const char *) media_type, error),
-            .properties = properties == NULL ? NULL : baca_strdup((const char *) properties, error),
-            .fallback = fallback == NULL ? NULL : baca_strdup((const char *) fallback, error),
+            .media_type = mereader_tui_strdup((const char *) media_type, error),
+            .properties = properties == NULL ? NULL : mereader_tui_strdup((const char *) properties, error),
+            .fallback = fallback == NULL ? NULL : mereader_tui_strdup((const char *) fallback, error),
         };
         xmlFree(id);
         xmlFree(href);
@@ -559,7 +559,7 @@ static bool parse_manifest(EpubBackend *backend, xmlNode *manifest, BacaError *e
         }
     }
     if (backend->manifest_count == 0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest is empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest is empty");
         return false;
     }
     return true;
@@ -611,10 +611,10 @@ static EpubManifestItem *manifest_by_path(EpubBackend *backend, const char *path
                NULL;
 }
 
-static bool index_manifest(EpubBackend *backend, BacaError *error) {
-    backend->manifest_by_id = baca_reallocarray(NULL, backend->manifest_count,
+static bool index_manifest(EpubBackend *backend, MereaderTuiError *error) {
+    backend->manifest_by_id = mereader_tui_reallocarray(NULL, backend->manifest_count,
                                                 sizeof(*backend->manifest_by_id), error);
-    backend->manifest_by_path = baca_reallocarray(NULL, backend->manifest_count,
+    backend->manifest_by_path = mereader_tui_reallocarray(NULL, backend->manifest_count,
                                                   sizeof(*backend->manifest_by_path), error);
     if (backend->manifest_by_id == NULL || backend->manifest_by_path == NULL) {
         return false;
@@ -623,7 +623,7 @@ static bool index_manifest(EpubBackend *backend, BacaError *error) {
         backend->manifest_by_id[index] = &backend->manifest[index];
         backend->manifest_by_path[index] = &backend->manifest[index];
         if (zip_name_locate(backend->archive, backend->manifest[index].member_path, ZIP_FL_ENC_GUESS) < 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest member not found: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest member not found: %s",
                            backend->manifest[index].path);
             return false;
         }
@@ -634,13 +634,13 @@ static bool index_manifest(EpubBackend *backend, BacaError *error) {
           compare_manifest_path);
     for (size_t index = 1; index < backend->manifest_count; index++) {
         if (strcmp(backend->manifest_by_id[index - 1U]->id, backend->manifest_by_id[index]->id) == 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest contains duplicate id: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest contains duplicate id: %s",
                            backend->manifest_by_id[index]->id);
             return false;
         }
         if (strcmp(backend->manifest_by_path[index - 1U]->path,
                    backend->manifest_by_path[index]->path) == 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest contains duplicate path: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest contains duplicate path: %s",
                            backend->manifest_by_path[index]->path);
             return false;
         }
@@ -648,7 +648,7 @@ static bool index_manifest(EpubBackend *backend, BacaError *error) {
     for (size_t index = 0; index < backend->manifest_count; index++) {
         const char *fallback = backend->manifest[index].fallback;
         if (fallback != NULL && (fallback[0] == '\0' || manifest_by_id(backend, fallback) == NULL)) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest item has an invalid fallback: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest item has an invalid fallback: %s",
                            backend->manifest[index].id);
             return false;
         }
@@ -666,81 +666,81 @@ static bool item_is_svg(const EpubManifestItem *item) {
 }
 
 static EpubManifestItem *supported_spine_item(EpubBackend *backend, EpubManifestItem *item,
-                                              BacaError *error) {
+                                              MereaderTuiError *error) {
     EpubManifestItem *current = item;
     for (size_t depth = 0; depth <= backend->manifest_count; depth++) {
         if (item_is_html(current) || item_is_svg(current)) {
             return current;
         }
         if (current->fallback == NULL) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                            "EPUB spine media type is unsupported and has no fallback: %s",
                            current->media_type);
             return NULL;
         }
         current = manifest_by_id(backend, current->fallback);
         if (current == NULL) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB fallback references a missing manifest item");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB fallback references a missing manifest item");
             return NULL;
         }
     }
-    baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB manifest fallback cycle detected");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB manifest fallback cycle detected");
     return NULL;
 }
 
-static bool append_svg_section(BacaDocument *document, EpubBackend *backend,
+static bool append_svg_section(MereaderTuiDocument *document, EpubBackend *backend,
                                const EpubManifestItem *item, bool linear, size_t search_offset,
-                               BacaError *error) {
-    BacaBuffer markup = {0};
+                               MereaderTuiError *error) {
+    MereaderTuiBuffer markup = {0};
     if (!read_member(backend, item->member_path, EPUB_MAX_MARKUP, &markup, error)) {
         return false;
     }
     xmlDocPtr parsed = parse_xml(&markup, item->member_path, error);
     if (parsed == NULL || !xml_node_is_ns(xmlDocGetRootElement(parsed), "svg", SVG_NAMESPACE)) {
         if (parsed != NULL) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB SVG spine item has an invalid root element: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB SVG spine item has an invalid root element: %s",
                            item->path);
         }
         xmlFreeDoc(parsed);
-        baca_buffer_free(&markup);
+        mereader_tui_buffer_free(&markup);
         return false;
     }
     xmlFreeDoc(parsed);
 
     size_t first_block = document->block_count;
-    BacaBlock block = {
-        .kind = BACA_BLOCK_IMAGE,
-        .section_id = baca_strdup(item->path, error),
+    MereaderTuiBlock block = {
+        .kind = MEREADER_TUI_BLOCK_IMAGE,
+        .section_id = mereader_tui_strdup(item->path, error),
         .value.image = {
-            .uri = baca_strdup(item->path, error),
+            .uri = mereader_tui_strdup(item->path, error),
             .page_index = -1,
         },
     };
     if (block.section_id == NULL || block.value.image.uri == NULL ||
-        !baca_document_add_image_block(document, &block, error)) {
+        !mereader_tui_document_add_image_block(document, &block, error)) {
         free(block.section_id);
         free(block.value.image.uri);
-        baca_buffer_free(&markup);
+        mereader_tui_buffer_free(&markup);
         return false;
     }
-    BacaSection section = {
-        .id = baca_strdup(item->path, error),
+    MereaderTuiSection section = {
+        .id = mereader_tui_strdup(item->path, error),
         .first_block = first_block,
         .block_count = 1,
         .search_offset = search_offset,
         .source_size = markup.length,
         .linear = linear,
     };
-    baca_buffer_free(&markup);
-    if (section.id == NULL || !baca_document_add_section(document, &section, error)) {
+    mereader_tui_buffer_free(&markup);
+    if (section.id == NULL || !mereader_tui_document_add_section(document, &section, error)) {
         free(section.id);
-        baca_document_rollback_blocks(document, first_block);
+        mereader_tui_document_rollback_blocks(document, first_block);
         return false;
     }
     return true;
 }
 
-static bool load_spine(BacaDocument *document, EpubBackend *backend, xmlNode *spine, BacaError *error) {
+static bool load_spine(MereaderTuiDocument *document, EpubBackend *backend, xmlNode *spine, MereaderTuiError *error) {
     size_t loaded = 0;
     size_t search_offset = 0;
     for (xmlNode *node = spine->children; node != NULL; node = node->next) {
@@ -752,14 +752,14 @@ static bool load_spine(BacaDocument *document, EpubBackend *backend, xmlNode *sp
         if (idref == NULL || idref[0] == '\0') {
             xmlFree(idref);
             xmlFree(linear);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB spine item is missing idref");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB spine item is missing idref");
             return false;
         }
         EpubManifestItem *item = manifest_by_id(backend, (const char *) idref);
         xmlFree(idref);
         if (item == NULL) {
             xmlFree(linear);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB spine references a missing manifest item");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB spine references a missing manifest item");
             return false;
         }
         bool is_linear = true;
@@ -768,7 +768,7 @@ static bool load_spine(BacaDocument *document, EpubBackend *backend, xmlNode *sp
                 is_linear = false;
             } else if (xmlStrcmp(linear, BAD_CAST "yes") != 0) {
                 xmlFree(linear);
-                baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB spine item has an invalid linear value");
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB spine item has an invalid linear value");
                 return false;
             }
         }
@@ -786,29 +786,29 @@ static bool load_spine(BacaDocument *document, EpubBackend *backend, xmlNode *sp
             loaded++;
             continue;
         }
-        BacaBuffer markup = {0};
+        MereaderTuiBuffer markup = {0};
         if (!read_member(backend, content_item->member_path, EPUB_MAX_MARKUP, &markup, error)) {
             xmlFree(linear);
             return false;
         }
-        bool appended = baca_html_append_section(document, (const char *) markup.data, markup.length,
+        bool appended = mereader_tui_html_append_section(document, (const char *) markup.data, markup.length,
                                                   content_item->path, error);
-        baca_buffer_free(&markup);
+        mereader_tui_buffer_free(&markup);
         if (!appended) {
             xmlFree(linear);
             return false;
         }
-        BacaSection *section = &document->sections[document->section_count - 1];
+        MereaderTuiSection *section = &document->sections[document->section_count - 1];
         section->linear = is_linear;
         section->search_offset = search_offset;
         for (size_t block_index = section->first_block;
              block_index < section->first_block + section->block_count; block_index++) {
-            if (document->blocks[block_index].kind == BACA_BLOCK_TEXT &&
+            if (document->blocks[block_index].kind == MEREADER_TUI_BLOCK_TEXT &&
                 document->blocks[block_index].value.text.text != NULL) {
                 size_t text_length = strlen(document->blocks[block_index].value.text.text);
                 if (text_length > SIZE_MAX - search_offset) {
                     xmlFree(linear);
-                    baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB searchable text size overflow");
+                    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB searchable text size overflow");
                     return false;
                 }
                 search_offset += text_length;
@@ -818,7 +818,7 @@ static bool load_spine(BacaDocument *document, EpubBackend *backend, xmlNode *sp
         loaded++;
     }
     if (loaded == 0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB spine contains no supported content");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB spine contains no supported content");
         return false;
     }
     return true;
@@ -846,11 +846,11 @@ static xmlNode *find_nav_link(xmlNode *list_item) {
     return find_nav_link_before_list(list_item);
 }
 
-static bool parse_nav_lists(BacaDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
-                            BacaError *error);
+static bool parse_nav_lists(MereaderTuiDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
+                            MereaderTuiError *error);
 
-static bool parse_nested_nav_lists(BacaDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
-                                   BacaError *error) {
+static bool parse_nested_nav_lists(MereaderTuiDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
+                                   MereaderTuiError *error) {
     for (xmlNode *child = node->children; child != NULL; child = child->next) {
         if (xml_node_is_ns(child, "ol", XHTML_NAMESPACE)) {
             if (!parse_nav_lists(document, child, nav_path, depth, error)) {
@@ -864,10 +864,10 @@ static bool parse_nested_nav_lists(BacaDocument *document, xmlNode *node, const 
     return true;
 }
 
-static bool parse_nav_lists(BacaDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
-                             BacaError *error) {
+static bool parse_nav_lists(MereaderTuiDocument *document, xmlNode *node, const char *nav_path, unsigned depth,
+                             MereaderTuiError *error) {
     if (depth > 256U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB navigation is nested too deeply");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB navigation is nested too deeply");
         return false;
     }
     for (xmlNode *item = node->children; item != NULL; item = item->next) {
@@ -878,9 +878,9 @@ static bool parse_nav_lists(BacaDocument *document, xmlNode *node, const char *n
         if (link != NULL) {
             xmlChar *href = xml_attribute(link, "href");
             if (href != NULL && href[0] != '\0') {
-                if (baca_is_external_uri((const char *) href) ||
+                if (mereader_tui_is_external_uri((const char *) href) ||
                     strncmp((const char *) href, "//", 2) == 0) {
-                    baca_error_set(error, BACA_ERROR_CORRUPT, "external EPUB TOC target is not allowed: %s",
+                    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "external EPUB TOC target is not allowed: %s",
                                    (const char *) href);
                     xmlFree(href);
                     return false;
@@ -889,7 +889,7 @@ static bool parse_nav_lists(BacaDocument *document, xmlNode *node, const char *n
                 char *target = resolve_reference(nav_path, (const char *) href, false, error);
                 bool success = target != NULL && collapse_label(link, &label, error);
                 if (success && label[0] != '\0') {
-                    success = baca_document_add_toc(document, label, target, depth, error);
+                    success = mereader_tui_document_add_toc(document, label, target, depth, error);
                 }
                 free(label);
                 free(target);
@@ -931,22 +931,22 @@ static xmlNode *find_toc_nav(xmlNode *node) {
     return NULL;
 }
 
-static bool parse_epub3_nav(BacaDocument *document, EpubBackend *backend, EpubManifestItem *nav_item,
-                             bool *parsed_list, BacaError *error) {
+static bool parse_epub3_nav(MereaderTuiDocument *document, EpubBackend *backend, EpubManifestItem *nav_item,
+                             bool *parsed_list, MereaderTuiError *error) {
     *parsed_list = false;
-    BacaBuffer markup = {0};
+    MereaderTuiBuffer markup = {0};
     if (!read_member(backend, nav_item->member_path, EPUB_MAX_MARKUP, &markup, error)) {
         return false;
     }
     xmlDocPtr parsed = parse_xml(&markup, nav_item->member_path, error);
-    baca_buffer_free(&markup);
+    mereader_tui_buffer_free(&markup);
     if (parsed == NULL) {
         return false;
     }
     xmlNode *root = xmlDocGetRootElement(parsed);
     if (!xml_node_is_ns(root, "html", XHTML_NAMESPACE)) {
         xmlFreeDoc(parsed);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB navigation document has an invalid root element");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB navigation document has an invalid root element");
         return false;
     }
     xmlNode *nav = find_toc_nav(root);
@@ -957,10 +957,10 @@ static bool parse_epub3_nav(BacaDocument *document, EpubBackend *backend, EpubMa
     return success;
 }
 
-static bool parse_ncx_points(BacaDocument *document, xmlNode *parent, const char *ncx_path, unsigned depth,
-                              BacaError *error) {
+static bool parse_ncx_points(MereaderTuiDocument *document, xmlNode *parent, const char *ncx_path, unsigned depth,
+                              MereaderTuiError *error) {
     if (depth > 256U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB NCX navigation is nested too deeply");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB NCX navigation is nested too deeply");
         return false;
     }
     for (xmlNode *point = parent->children; point != NULL; point = point->next) {
@@ -971,9 +971,9 @@ static bool parse_ncx_points(BacaDocument *document, xmlNode *parent, const char
         xmlNode *content_node = find_direct_child_ns(point, "content", NCX_NAMESPACE);
         xmlChar *source = content_node == NULL ? NULL : xml_attribute(content_node, "src");
         if (label_node != NULL && source != NULL && source[0] != '\0') {
-            if (baca_is_external_uri((const char *) source) ||
+            if (mereader_tui_is_external_uri((const char *) source) ||
                 strncmp((const char *) source, "//", 2) == 0) {
-                baca_error_set(error, BACA_ERROR_CORRUPT, "external EPUB TOC target is not allowed: %s",
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "external EPUB TOC target is not allowed: %s",
                                (const char *) source);
                 xmlFree(source);
                 return false;
@@ -982,7 +982,7 @@ static bool parse_ncx_points(BacaDocument *document, xmlNode *parent, const char
             char *target = resolve_reference(ncx_path, (const char *) source, false, error);
             bool success = target != NULL && collapse_label(label_node, &label, error);
             if (success && label[0] != '\0') {
-                success = baca_document_add_toc(document, label, target, depth, error);
+                success = mereader_tui_document_add_toc(document, label, target, depth, error);
             }
             free(label);
             free(target);
@@ -1000,27 +1000,27 @@ static bool parse_ncx_points(BacaDocument *document, xmlNode *parent, const char
     return true;
 }
 
-static bool parse_ncx(BacaDocument *document, EpubBackend *backend, EpubManifestItem *ncx_item,
-                      BacaError *error) {
-    BacaBuffer markup = {0};
+static bool parse_ncx(MereaderTuiDocument *document, EpubBackend *backend, EpubManifestItem *ncx_item,
+                      MereaderTuiError *error) {
+    MereaderTuiBuffer markup = {0};
     if (!read_member(backend, ncx_item->member_path, EPUB_MAX_MARKUP, &markup, error)) {
         return false;
     }
     xmlDocPtr parsed = parse_xml(&markup, ncx_item->member_path, error);
-    baca_buffer_free(&markup);
+    mereader_tui_buffer_free(&markup);
     if (parsed == NULL) {
         return false;
     }
     xmlNode *root = xmlDocGetRootElement(parsed);
     if (!xml_node_is_ns(root, "ncx", NCX_NAMESPACE)) {
         xmlFreeDoc(parsed);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB NCX document has an invalid root element");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB NCX document has an invalid root element");
         return false;
     }
     xmlNode *nav_map = find_direct_child_ns(root, "navMap", NCX_NAMESPACE);
     bool success = nav_map != NULL && parse_ncx_points(document, nav_map, ncx_item->path, 0, error);
     if (nav_map == NULL) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB NCX document has no navigation map");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB NCX document has no navigation map");
     }
     xmlFreeDoc(parsed);
     return success;
@@ -1050,15 +1050,15 @@ static EpubManifestItem *find_ncx_item(EpubBackend *backend, xmlNode *spine) {
     return NULL;
 }
 
-static bool parse_toc(BacaDocument *document, EpubBackend *backend, xmlNode *spine, BacaError *error) {
+static bool parse_toc(MereaderTuiDocument *document, EpubBackend *backend, xmlNode *spine, MereaderTuiError *error) {
     size_t original_count = document->toc_count;
     EpubManifestItem *nav = find_nav_item(backend);
     if (nav != NULL) {
-        BacaError nav_error = {0};
+        MereaderTuiError nav_error = {0};
         bool parsed_list = false;
         if (!parse_epub3_nav(document, backend, nav, &parsed_list, &nav_error)) {
-            baca_document_rollback_toc(document, original_count);
-            if (parsed_list || nav_error.code == BACA_ERROR_MEMORY) {
+            mereader_tui_document_rollback_toc(document, original_count);
+            if (parsed_list || nav_error.code == MEREADER_TUI_ERROR_MEMORY) {
                 if (error != NULL) {
                     *error = nav_error;
                 }
@@ -1068,17 +1068,17 @@ static bool parse_toc(BacaDocument *document, EpubBackend *backend, xmlNode *spi
         if (document->toc_count > original_count) {
             return true;
         }
-        baca_document_rollback_toc(document, original_count);
+        mereader_tui_document_rollback_toc(document, original_count);
     }
 
     EpubManifestItem *ncx = find_ncx_item(backend, spine);
     if (ncx != NULL) {
         if (!parse_ncx(document, backend, ncx, error)) {
-            baca_document_rollback_toc(document, original_count);
+            mereader_tui_document_rollback_toc(document, original_count);
             return false;
         }
         if (document->toc_count == original_count) {
-            baca_document_rollback_toc(document, original_count);
+            mereader_tui_document_rollback_toc(document, original_count);
         }
     }
     return true;
@@ -1089,49 +1089,49 @@ static const char *mime_from_extension(const char *path) {
     if (extension == NULL) {
         return "application/octet-stream";
     }
-    if (baca_casecmp(extension, ".png") == 0) {
+    if (mereader_tui_casecmp(extension, ".png") == 0) {
         return "image/png";
     }
-    if (baca_casecmp(extension, ".jpg") == 0 || baca_casecmp(extension, ".jpeg") == 0) {
+    if (mereader_tui_casecmp(extension, ".jpg") == 0 || mereader_tui_casecmp(extension, ".jpeg") == 0) {
         return "image/jpeg";
     }
-    if (baca_casecmp(extension, ".gif") == 0) {
+    if (mereader_tui_casecmp(extension, ".gif") == 0) {
         return "image/gif";
     }
-    if (baca_casecmp(extension, ".webp") == 0) {
+    if (mereader_tui_casecmp(extension, ".webp") == 0) {
         return "image/webp";
     }
-    if (baca_casecmp(extension, ".svg") == 0) {
+    if (mereader_tui_casecmp(extension, ".svg") == 0) {
         return "image/svg+xml";
     }
-    if (baca_casecmp(extension, ".avif") == 0) {
+    if (mereader_tui_casecmp(extension, ".avif") == 0) {
         return "image/avif";
     }
-    if (baca_casecmp(extension, ".bmp") == 0) {
+    if (mereader_tui_casecmp(extension, ".bmp") == 0) {
         return "image/bmp";
     }
-    if (baca_casecmp(extension, ".css") == 0) {
+    if (mereader_tui_casecmp(extension, ".css") == 0) {
         return "text/css";
     }
-    if (baca_casecmp(extension, ".ttf") == 0) {
+    if (mereader_tui_casecmp(extension, ".ttf") == 0) {
         return "font/ttf";
     }
-    if (baca_casecmp(extension, ".otf") == 0) {
+    if (mereader_tui_casecmp(extension, ".otf") == 0) {
         return "font/otf";
     }
-    if (baca_casecmp(extension, ".woff") == 0) {
+    if (mereader_tui_casecmp(extension, ".woff") == 0) {
         return "font/woff";
     }
-    if (baca_casecmp(extension, ".woff2") == 0) {
+    if (mereader_tui_casecmp(extension, ".woff2") == 0) {
         return "font/woff2";
     }
     return "application/octet-stream";
 }
 
 static bool epub_resource_paths(EpubBackend *backend, const char *uri, char **path,
-                                char **member_path, BacaError *error) {
-    if (uri == NULL || baca_is_external_uri(uri) || strncmp(uri, "//", 2) == 0) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED, "external EPUB resources are not fetched: %s",
+                                char **member_path, MereaderTuiError *error) {
+    if (uri == NULL || mereader_tui_is_external_uri(uri) || strncmp(uri, "//", 2) == 0) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "external EPUB resources are not fetched: %s",
                        uri == NULL ? "(null)" : uri);
         return false;
     }
@@ -1141,7 +1141,7 @@ static bool epub_resource_paths(EpubBackend *backend, const char *uri, char **pa
     }
     EpubManifestItem *item = manifest_by_path(backend, resolved);
     char *member = item == NULL ? archive_member_path(resolved, error) :
-                                 baca_strdup(item->member_path, error);
+                                 mereader_tui_strdup(item->member_path, error);
     if (member == NULL) {
         free(resolved);
         return false;
@@ -1151,7 +1151,7 @@ static bool epub_resource_paths(EpubBackend *backend, const char *uri, char **pa
     return true;
 }
 
-static bool epub_resource_size(const BacaDocument *document, const char *uri, size_t *size) {
+static bool epub_resource_size(const MereaderTuiDocument *document, const char *uri, size_t *size) {
     if (document == NULL || size == NULL) {
         return false;
     }
@@ -1159,7 +1159,7 @@ static bool epub_resource_size(const BacaDocument *document, const char *uri, si
     if (backend == NULL || backend->archive == NULL) {
         return false;
     }
-    BacaError ignored = {0};
+    MereaderTuiError ignored = {0};
     char *path = NULL;
     char *member_path = NULL;
     if (!epub_resource_paths(backend, uri, &path, &member_path, &ignored)) {
@@ -1182,11 +1182,11 @@ static bool epub_resource_size(const BacaDocument *document, const char *uri, si
     return true;
 }
 
-static bool epub_load_resource(BacaDocument *document, const char *uri, BacaResource *resource,
-                                BacaError *error) {
+static bool epub_load_resource(MereaderTuiDocument *document, const char *uri, MereaderTuiResource *resource,
+                                MereaderTuiError *error) {
     EpubBackend *backend = document->backend;
     if (backend == NULL || backend->archive == NULL) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "EPUB backend is closed");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "EPUB backend is closed");
         return false;
     }
     char *path = NULL;
@@ -1195,7 +1195,7 @@ static bool epub_load_resource(BacaDocument *document, const char *uri, BacaReso
         return false;
     }
     EpubManifestItem *item = manifest_by_path(backend, path);
-    BacaBuffer data = {0};
+    MereaderTuiBuffer data = {0};
     if (!read_member(backend, member_path, EPUB_MAX_MEMBER, &data, error)) {
         free(member_path);
         free(path);
@@ -1207,10 +1207,10 @@ static bool epub_load_resource(BacaDocument *document, const char *uri, BacaReso
     if (mime_type == NULL) {
         mime_type = mime_from_extension(path);
     }
-    char *owned_mime = baca_strdup(mime_type, error);
+    char *owned_mime = mereader_tui_strdup(mime_type, error);
     free(path);
     if (owned_mime == NULL) {
-        baca_buffer_free(&data);
+        mereader_tui_buffer_free(&data);
         return false;
     }
     resource->data = data.data;
@@ -1219,7 +1219,7 @@ static bool epub_load_resource(BacaDocument *document, const char *uri, BacaReso
     return true;
 }
 
-static bool inspect_encrypted_data(xmlNode *node, BacaError *error) {
+static bool inspect_encrypted_data(xmlNode *node, MereaderTuiError *error) {
     if (xml_node_is_ns(node, "EncryptedData", XML_ENCRYPTION_NAMESPACE)) {
         xmlNode *method = find_direct_child_ns(node, "EncryptionMethod", XML_ENCRYPTION_NAMESPACE);
         xmlNode *cipher_data = find_direct_child_ns(node, "CipherData", XML_ENCRYPTION_NAMESPACE);
@@ -1229,7 +1229,7 @@ static bool inspect_encrypted_data(xmlNode *node, BacaError *error) {
         if (algorithm == NULL || algorithm[0] == '\0' || uri == NULL || uri[0] == '\0') {
             xmlFree(algorithm);
             xmlFree(uri);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB encryption entry is missing required data");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB encryption entry is missing required data");
             return false;
         }
         char *target = resolve_reference("META-INF/encryption.xml", (const char *) uri, false, error);
@@ -1241,10 +1241,10 @@ static bool inspect_encrypted_data(xmlNode *node, BacaError *error) {
         bool font_obfuscation = xmlStrcmp(algorithm, BAD_CAST "http://www.idpf.org/2008/embedding") == 0 ||
                                 xmlStrcmp(algorithm, BAD_CAST "http://ns.adobe.com/pdf/enc#RC") == 0;
         if (font_obfuscation) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED, "EPUB font obfuscation is not supported: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "EPUB font obfuscation is not supported: %s",
                            target);
         } else {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                            "encrypted EPUB content is not supported (algorithm %s, resource %s)",
                            (const char *) algorithm, target);
         }
@@ -1261,23 +1261,23 @@ static bool inspect_encrypted_data(xmlNode *node, BacaError *error) {
     return true;
 }
 
-static bool validate_encryption(EpubBackend *backend, BacaError *error) {
+static bool validate_encryption(EpubBackend *backend, MereaderTuiError *error) {
     if (zip_name_locate(backend->archive, "META-INF/encryption.xml", ZIP_FL_ENC_GUESS) < 0) {
         return true;
     }
-    BacaBuffer encryption = {0};
+    MereaderTuiBuffer encryption = {0};
     if (!read_member(backend, "META-INF/encryption.xml", EPUB_MAX_MARKUP, &encryption, error)) {
         return false;
     }
     xmlDocPtr parsed = parse_xml(&encryption, "META-INF/encryption.xml", error);
-    baca_buffer_free(&encryption);
+    mereader_tui_buffer_free(&encryption);
     if (parsed == NULL) {
         return false;
     }
     xmlNode *root = xmlDocGetRootElement(parsed);
     if (!xml_node_is_ns(root, "encryption", CONTAINER_NAMESPACE)) {
         xmlFreeDoc(parsed);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB encryption document has an invalid root element");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB encryption document has an invalid root element");
         return false;
     }
     bool valid = true;
@@ -1286,7 +1286,7 @@ static bool validate_encryption(EpubBackend *backend, BacaError *error) {
             continue;
         }
         if (!xml_node_is_ns(child, "EncryptedData", XML_ENCRYPTION_NAMESPACE)) {
-            baca_error_set(error, BACA_ERROR_CORRUPT,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                            "EPUB encryption document contains an unexpected element");
             valid = false;
         } else {
@@ -1297,51 +1297,51 @@ static bool validate_encryption(EpubBackend *backend, BacaError *error) {
     return valid;
 }
 
-static bool validate_mimetype(EpubBackend *backend, BacaError *error) {
+static bool validate_mimetype(EpubBackend *backend, MereaderTuiError *error) {
     zip_int64_t index = zip_name_locate(backend->archive, "mimetype", ZIP_FL_ENC_GUESS);
     if (index != 0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB mimetype must be the first archive member");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB mimetype must be the first archive member");
         return false;
     }
     zip_stat_t stat;
     zip_stat_init(&stat);
     if (zip_stat_index(backend->archive, 0, ZIP_FL_ENC_GUESS, &stat) != 0 ||
         (stat.valid & ZIP_STAT_COMP_METHOD) == 0 || stat.comp_method != ZIP_CM_STORE) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB mimetype member must be stored without compression");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB mimetype member must be stored without compression");
         return false;
     }
-    BacaBuffer mimetype = {0};
+    MereaderTuiBuffer mimetype = {0};
     if (!read_member(backend, "mimetype", 64, &mimetype, error)) {
         return false;
     }
     bool valid = mimetype.length == 20 && memcmp(mimetype.data, "application/epub+zip", 20) == 0;
-    baca_buffer_free(&mimetype);
+    mereader_tui_buffer_free(&mimetype);
     if (!valid) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB mimetype member is invalid");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB mimetype member is invalid");
     }
     return valid;
 }
 
-static bool open_archive(EpubBackend *backend, const char *path, BacaError *error) {
+static bool open_archive(EpubBackend *backend, const char *path, MereaderTuiError *error) {
     int zip_error_code = 0;
     backend->archive = zip_open(path, ZIP_RDONLY, &zip_error_code);
     if (backend->archive == NULL) {
         zip_error_t zip_error;
         zip_error_init_with_code(&zip_error, zip_error_code);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not open EPUB archive: %s", zip_error_strerror(&zip_error));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not open EPUB archive: %s", zip_error_strerror(&zip_error));
         zip_error_fini(&zip_error);
         return false;
     }
     return validate_archive(backend, error) && validate_mimetype(backend, error);
 }
 
-static bool find_opf_path(EpubBackend *backend, BacaError *error) {
-    BacaBuffer container = {0};
+static bool find_opf_path(EpubBackend *backend, MereaderTuiError *error) {
+    MereaderTuiBuffer container = {0};
     if (!read_member(backend, "META-INF/container.xml", EPUB_MAX_MARKUP, &container, error)) {
         return false;
     }
     xmlDocPtr parsed = parse_xml(&container, "META-INF/container.xml", error);
-    baca_buffer_free(&container);
+    mereader_tui_buffer_free(&container);
     if (parsed == NULL) {
         return false;
     }
@@ -1352,7 +1352,7 @@ static bool find_opf_path(EpubBackend *backend, BacaError *error) {
         xmlStrcmp(version, BAD_CAST "1.0") != 0) {
         xmlFree(version);
         xmlFreeDoc(parsed);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB container has an invalid root element or version");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB container has an invalid root element or version");
         return false;
     }
     xmlFree(version);
@@ -1377,7 +1377,7 @@ static bool find_opf_path(EpubBackend *backend, BacaError *error) {
     xmlFreeDoc(parsed);
     if (selected == NULL || selected[0] == '\0') {
         xmlFree(selected);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB container has no package rootfile");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB container has no package rootfile");
         return false;
     }
     backend->opf_path = member_path_from_reference("/", (const char *) selected, error);
@@ -1390,7 +1390,7 @@ static bool find_opf_path(EpubBackend *backend, BacaError *error) {
 }
 
 static bool package_children(xmlNode *package, xmlNode **metadata, xmlNode **manifest, xmlNode **spine,
-                             BacaError *error) {
+                             MereaderTuiError *error) {
     for (xmlNode *child = package->children; child != NULL; child = child->next) {
         xmlNode **slot = NULL;
         if (xml_node_is_ns(child, "metadata", OPF_NAMESPACE)) {
@@ -1404,31 +1404,31 @@ static bool package_children(xmlNode *package, xmlNode **metadata, xmlNode **man
             continue;
         }
         if (*slot != NULL) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB package contains duplicate %s elements",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB package contains duplicate %s elements",
                            (const char *) child->name);
             return false;
         }
         *slot = child;
     }
     if (*metadata == NULL || *manifest == NULL || *spine == NULL) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB package is missing metadata, manifest, or spine");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB package is missing metadata, manifest, or spine");
         return false;
     }
     return true;
 }
 
-bool baca_epub_open(BacaDocument *document, const char *path, const char *cleanup_directory, BacaError *error) {
+bool mereader_tui_epub_open(MereaderTuiDocument *document, const char *path, const char *cleanup_directory, MereaderTuiError *error) {
     if (document == NULL || path == NULL || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "document and EPUB path are required");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "document and EPUB path are required");
         return false;
     }
     EpubBackend *backend = calloc(1, sizeof(*backend));
     if (backend == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate EPUB backend");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate EPUB backend");
         return false;
     }
     if (cleanup_directory != NULL) {
-        backend->cleanup_directory = baca_strdup(cleanup_directory, error);
+        backend->cleanup_directory = mereader_tui_strdup(cleanup_directory, error);
         if (backend->cleanup_directory == NULL) {
             backend_destroy(backend);
             return false;
@@ -1440,13 +1440,13 @@ bool baca_epub_open(BacaDocument *document, const char *path, const char *cleanu
         return false;
     }
 
-    BacaBuffer package_data = {0};
+    MereaderTuiBuffer package_data = {0};
     if (!read_member(backend, backend->opf_member_path, EPUB_MAX_MARKUP, &package_data, error)) {
         backend_destroy(backend);
         return false;
     }
     xmlDocPtr package_document = parse_xml(&package_data, backend->opf_member_path, error);
-    baca_buffer_free(&package_data);
+    mereader_tui_buffer_free(&package_data);
     if (package_document == NULL) {
         backend_destroy(backend);
         return false;
@@ -1462,10 +1462,10 @@ bool baca_epub_open(BacaDocument *document, const char *path, const char *cleanu
     xmlNode *spine = NULL;
     if (!xml_node_is_ns(package, "package", OPF_NAMESPACE) || !valid_version ||
         !package_children(package, &metadata, &manifest, &spine, error) ||
-        !parse_metadata(document, metadata, error) || !baca_document_account_metadata(document, error) ||
+        !parse_metadata(document, metadata, error) || !mereader_tui_document_account_metadata(document, error) ||
         !parse_manifest(backend, manifest, error) || !index_manifest(backend, error)) {
-        if (!baca_error_is_set(error)) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "EPUB OPF has an invalid package root or version");
+        if (!mereader_tui_error_is_set(error)) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB OPF has an invalid package root or version");
         }
         xmlFreeDoc(package_document);
         backend_destroy(backend);
@@ -1474,9 +1474,9 @@ bool baca_epub_open(BacaDocument *document, const char *path, const char *cleanu
 
     document->backend = backend;
     document->ops = &EPUB_OPS;
-    document->format = BACA_FORMAT_EPUB;
+    document->format = MEREADER_TUI_FORMAT_EPUB;
     if (!load_spine(document, backend, spine, error) || !parse_toc(document, backend, spine, error) ||
-        !baca_document_index_toc_sections(document, error)) {
+        !mereader_tui_document_index_toc_sections(document, error)) {
         xmlFreeDoc(package_document);
         document->backend = NULL;
         document->ops = NULL;

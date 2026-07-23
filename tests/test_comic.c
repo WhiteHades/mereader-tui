@@ -1,7 +1,7 @@
 #include "test_support.h"
 
-#include "baca/document.h"
-#include "baca/layout.h"
+#include "mereader-tui/document.h"
+#include "mereader-tui/layout.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -55,13 +55,13 @@ static ComicFixtureResult comic_create_fixture(const char *relative, ComicFixtur
                                                const ComicFixtureEntry *entries, size_t entry_count,
                                                char **output_path) {
     *output_path = NULL;
-    char *path = baca_test_path(relative);
+    char *path = mereader_tui_test_path(relative);
     if (path == NULL) {
         return COMIC_FIXTURE_FAILED;
     }
-    BacaError error = {0};
-    char *directory = baca_path_dirname(path, &error);
-    if (directory == NULL || !baca_mkdirs(directory, &error)) {
+    MereaderTuiError error = {0};
+    char *directory = mereader_tui_path_dirname(path, &error);
+    if (directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return COMIC_FIXTURE_FAILED;
@@ -125,7 +125,7 @@ static ComicFixtureResult comic_create_fixture(const char *relative, ComicFixtur
     return COMIC_FIXTURE_OK;
 }
 
-static BacaTestResult test_cbz_natural_order_resources_probe_and_held_archive(void) {
+static MereaderTuiTestResult test_cbz_natural_order_resources_probe_and_held_archive(void) {
     static const ComicFixtureEntry entries[] = {
         {.path = "10.png", .data = comic_pixel_png, .length = sizeof(comic_pixel_png)},
         {.path = "notes.txt", .data = "ignored", .length = 7U},
@@ -138,14 +138,14 @@ static BacaTestResult test_cbz_natural_order_resources_probe_and_held_archive(vo
     };
     char *path = NULL;
     TEST_ASSERT_INT(
-        comic_create_fixture("comic/natural.cbz", COMIC_FIXTURE_ZIP, entries, BACA_ARRAY_LEN(entries), &path),
+        comic_create_fixture("comic/natural.cbz", COMIC_FIXTURE_ZIP, entries, MEREADER_TUI_ARRAY_LEN(entries), &path),
         COMIC_FIXTURE_OK);
     TEST_ASSERT(path != NULL);
 
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_COMIC);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_COMIC);
     TEST_ASSERT_STR(document.metadata.title, "natural.cbz");
     TEST_ASSERT_STR(document.metadata.format, "CBZ");
     TEST_ASSERT_SIZE(document.block_count, 4U);
@@ -159,48 +159,48 @@ static BacaTestResult test_cbz_natural_order_resources_probe_and_held_archive(vo
     TEST_ASSERT_STR(document.blocks[2].value.image.uri, "comic://page/2.jpg");
     TEST_ASSERT_SIZE(document.toc[3].section_index, 3U);
 
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, "comic://page/0.png", &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, "comic://page/0.png", &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, sizeof(comic_pixel_png));
     TEST_ASSERT(memcmp(resource.data, comic_pixel_png, sizeof(comic_pixel_png)) == 0);
     TEST_ASSERT_STR(resource.mime_type, "image/png");
     resource.data[0] = 0U;
-    baca_resource_free(&resource);
-    TEST_ASSERT(baca_document_load_resource(&document, "comic://page/0.png", &resource, &error));
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "comic://page/0.png", &resource, &error));
     TEST_ASSERT_INT(resource.data[0], 0x89);
-    baca_resource_free(&resource);
-    TEST_ASSERT(!baca_document_load_resource(&document, "comic://page/0.jpg", &resource, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_NOT_FOUND);
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT(!mereader_tui_document_load_resource(&document, "comic://page/0.jpg", &resource, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_NOT_FOUND);
 
-    baca_document_probe_images(&document, true);
+    mereader_tui_document_probe_images(&document, true);
     for (size_t index = 0U; index < document.block_count; ++index) {
         TEST_ASSERT(!document.blocks[index].value.image.broken);
         TEST_ASSERT_INT(document.blocks[index].value.image.intrinsic_width, 1);
         TEST_ASSERT_INT(document.blocks[index].value.image.intrinsic_height, 1);
     }
-    BacaLayout layout = {0};
-    TEST_ASSERT_MSG(baca_layout_build(&layout, &document, 40, BACA_JUSTIFY_LEFT, &error), "%s", error.message);
-    TEST_ASSERT_SIZE(baca_layout_target_line(&layout, "comic://page/3"), 63U);
-    baca_layout_free(&layout);
+    MereaderTuiLayout layout = {0};
+    TEST_ASSERT_MSG(mereader_tui_layout_build(&layout, &document, 40, MEREADER_TUI_JUSTIFY_LEFT, &error), "%s", error.message);
+    TEST_ASSERT_SIZE(mereader_tui_layout_target_line(&layout, "comic://page/3"), 63U);
+    mereader_tui_layout_free(&layout);
 
-    char *held = baca_test_path("comic/natural-held.cbz");
+    char *held = mereader_tui_test_path("comic/natural-held.cbz");
     TEST_ASSERT(held != NULL);
     (void)unlink(held);
     TEST_ASSERT(rename(path, held) == 0);
-    TEST_ASSERT(baca_test_write_text("comic/natural.cbz", "replacement"));
-    TEST_ASSERT(baca_document_load_resource(&document, "comic://page/1.png", &resource, &error));
+    TEST_ASSERT(mereader_tui_test_write_text("comic/natural.cbz", "replacement"));
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "comic://page/1.png", &resource, &error));
     TEST_ASSERT_SIZE(resource.length, sizeof(comic_pixel_png));
     TEST_ASSERT_INT(resource.data[0], 0x89);
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(held);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_duplicate_member_names_keep_physical_identity(void) {
+static MereaderTuiTestResult test_duplicate_member_names_keep_physical_identity(void) {
     static const char first[] = "<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/>";
     static const char second[] = "<svg xmlns='http://www.w3.org/2000/svg' width='2' height='1'/>";
     const ComicFixtureEntry entries[] = {
@@ -209,27 +209,27 @@ static BacaTestResult test_duplicate_member_names_keep_physical_identity(void) {
     };
     char *path = NULL;
     TEST_ASSERT_INT(
-        comic_create_fixture("comic/duplicates.cbz", COMIC_FIXTURE_ZIP, entries, BACA_ARRAY_LEN(entries), &path),
+        comic_create_fixture("comic/duplicates.cbz", COMIC_FIXTURE_ZIP, entries, MEREADER_TUI_ARRAY_LEN(entries), &path),
         COMIC_FIXTURE_OK);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_SIZE(document.block_count, 2U);
-    BacaResource resource = {0};
-    TEST_ASSERT(baca_document_load_resource(&document, "comic://page/0.svg", &resource, &error));
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "comic://page/0.svg", &resource, &error));
     TEST_ASSERT_SIZE(resource.length, sizeof(first) - 1U);
     TEST_ASSERT(memcmp(resource.data, first, sizeof(first) - 1U) == 0);
-    baca_resource_free(&resource);
-    TEST_ASSERT(baca_document_load_resource(&document, "comic://page/1.svg", &resource, &error));
+    mereader_tui_resource_free(&resource);
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, "comic://page/1.svg", &resource, &error));
     TEST_ASSERT_SIZE(resource.length, sizeof(second) - 1U);
     TEST_ASSERT(memcmp(resource.data, second, sizeof(second) - 1U) == 0);
-    baca_resource_free(&resource);
-    baca_document_close(&document);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_cb7_magic_detection(void) {
+static MereaderTuiTestResult test_cb7_magic_detection(void) {
     const ComicFixtureEntry entry = {
         .path = "page.png",
         .data = comic_pixel_png,
@@ -239,21 +239,21 @@ static BacaTestResult test_cb7_magic_detection(void) {
     const ComicFixtureResult created =
         comic_create_fixture("comic/seven-zip.unknown", COMIC_FIXTURE_7ZIP, &entry, 1U, &path);
     if (created == COMIC_FIXTURE_UNSUPPORTED) {
-        return baca_test_skip("installed libarchive cannot write 7-Zip fixtures");
+        return mereader_tui_test_skip("installed libarchive cannot write 7-Zip fixtures");
     }
     TEST_ASSERT_INT(created, COMIC_FIXTURE_OK);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_COMIC);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_COMIC);
     TEST_ASSERT_STR(document.metadata.format, "CB7");
     TEST_ASSERT_SIZE(document.block_count, 1U);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_empty_unsupported_and_malformed_archives(void) {
+static MereaderTuiTestResult test_empty_unsupported_and_malformed_archives(void) {
     static const ComicFixtureEntry text_entry = {
         .path = "readme.txt",
         .data = "no pages",
@@ -262,10 +262,10 @@ static BacaTestResult test_empty_unsupported_and_malformed_archives(void) {
     char *path = NULL;
     TEST_ASSERT_INT(comic_create_fixture("comic/empty.cbz", COMIC_FIXTURE_ZIP, &text_entry, 1U, &path),
                     COMIC_FIXTURE_OK);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     free(path);
 
     const ComicFixtureEntry image_entry = {
@@ -275,29 +275,29 @@ static BacaTestResult test_empty_unsupported_and_malformed_archives(void) {
     };
     TEST_ASSERT_INT(comic_create_fixture("comic/not-comic.cbr", COMIC_FIXTURE_TAR, &image_entry, 1U, &path),
                     COMIC_FIXTURE_OK);
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_UNSUPPORTED);
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
     free(path);
 
     static const unsigned char truncated_rar[] = {'R', 'a', 'r', '!', 0x1aU, 0x07U, 0x00U};
-    TEST_ASSERT(baca_test_write("comic/truncated.bin", truncated_rar, sizeof(truncated_rar)));
-    path = baca_test_path("comic/truncated.bin");
+    TEST_ASSERT(mereader_tui_test_write("comic/truncated.bin", truncated_rar, sizeof(truncated_rar)));
+    path = mereader_tui_test_path("comic/truncated.bin");
     TEST_ASSERT(path != NULL);
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     free(path);
 
     static const unsigned char truncated_rar5[] = {'R', 'a', 'r', '!', 0x1aU, 0x07U, 0x01U, 0x00U};
-    TEST_ASSERT(baca_test_write("comic/truncated-rar5.bin", truncated_rar5, sizeof(truncated_rar5)));
-    path = baca_test_path("comic/truncated-rar5.bin");
+    TEST_ASSERT(mereader_tui_test_write("comic/truncated-rar5.bin", truncated_rar5, sizeof(truncated_rar5)));
+    path = mereader_tui_test_path("comic/truncated-rar5.bin");
     TEST_ASSERT(path != NULL);
-    TEST_ASSERT(!baca_document_open(&document, path, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_in_place_archive_mutation_is_rejected(void) {
+static MereaderTuiTestResult test_in_place_archive_mutation_is_rejected(void) {
     const ComicFixtureEntry entry = {
         .path = "page.png",
         .data = comic_pixel_png,
@@ -305,55 +305,55 @@ static BacaTestResult test_in_place_archive_mutation_is_rejected(void) {
     };
     char *path = NULL;
     TEST_ASSERT_INT(comic_create_fixture("comic/mutate.cbz", COMIC_FIXTURE_ZIP, &entry, 1U, &path), COMIC_FIXTURE_OK);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT(baca_document_open(&document, path, &error));
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(mereader_tui_document_open(&document, path, &error));
     struct stat status;
     TEST_ASSERT(stat(path, &status) == 0 && status.st_size > 0);
     FILE *file = fopen(path, "r+b");
     TEST_ASSERT(file != NULL);
     TEST_ASSERT(fputc('x', file) != EOF);
     TEST_ASSERT(fclose(file) == 0);
-    BacaResource resource = {0};
-    TEST_ASSERT(!baca_document_load_resource(&document, "comic://page/0.png", &resource, &error));
-    TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
-    baca_document_close(&document);
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT(!mereader_tui_document_load_resource(&document, "comic://page/0.png", &resource, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_optional_real_cbr(void) {
+static MereaderTuiTestResult test_optional_real_cbr(void) {
     const char *configured = getenv("MEREADER_TUI_TEST_CBR_SAMPLE");
     if (configured == NULL || configured[0] == '\0') {
-        return baca_test_skip("set MEREADER_TUI_TEST_CBR_SAMPLE for real RAR decoding");
+        return mereader_tui_test_skip("set MEREADER_TUI_TEST_CBR_SAMPLE for real RAR decoding");
     }
-    BacaError error = {0};
-    char *path = baca_realpath(configured, &error);
+    MereaderTuiError error = {0};
+    char *path = mereader_tui_realpath(configured, &error);
     TEST_ASSERT_MSG(path != NULL, "%s", error.message);
 
-    BacaDocument document = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_COMIC);
+    MereaderTuiDocument document = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_COMIC);
     TEST_ASSERT_STR(document.metadata.format, "CBR");
     TEST_ASSERT(document.block_count > 0U);
-    TEST_ASSERT(document.blocks[0].kind == BACA_BLOCK_IMAGE);
+    TEST_ASSERT(document.blocks[0].kind == MEREADER_TUI_BLOCK_IMAGE);
 
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, document.blocks[0].value.image.uri, &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, document.blocks[0].value.image.uri, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT(resource.length > 0U);
     TEST_ASSERT(strncmp(resource.mime_type, "image/", 6U) == 0);
-    baca_resource_free(&resource);
-    baca_document_probe_images(&document, true);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!document.blocks[0].value.image.broken);
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_comic_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_comic_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "cbz_natural_order_resources_probe_and_held_archive",
          .function = test_cbz_natural_order_resources_probe_and_held_archive},
         {.name = "duplicate_member_names_keep_physical_identity",
@@ -363,6 +363,6 @@ const BacaTestCase *baca_comic_test_cases(size_t *count) {
         {.name = "in_place_archive_mutation_is_rejected", .function = test_in_place_archive_mutation_is_rejected},
         {.name = "optional_real_cbr", .function = test_optional_real_cbr},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

@@ -1,4 +1,4 @@
-#include "baca/common.h"
+#include "mereader-tui/common.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -14,23 +14,23 @@
 #include <time.h>
 #include <unistd.h>
 
-static BacaErrorCode baca_errno_code(int value) {
-    return value == ENOENT || value == ENOTDIR ? BACA_ERROR_NOT_FOUND : BACA_ERROR_IO;
+static MereaderTuiErrorCode mereader_tui_errno_code(int value) {
+    return value == ENOENT || value == ENOTDIR ? MEREADER_TUI_ERROR_NOT_FOUND : MEREADER_TUI_ERROR_IO;
 }
 
-bool baca_error_is_set(const BacaError *error) {
-    return error != nullptr && error->code != BACA_ERROR_NONE;
+bool mereader_tui_error_is_set(const MereaderTuiError *error) {
+    return error != nullptr && error->code != MEREADER_TUI_ERROR_NONE;
 }
 
-void baca_error_clear(BacaError *error) {
+void mereader_tui_error_clear(MereaderTuiError *error) {
     if (error == nullptr) {
         return;
     }
-    error->code = BACA_ERROR_NONE;
+    error->code = MEREADER_TUI_ERROR_NONE;
     error->message[0] = '\0';
 }
 
-void baca_error_set(BacaError *error, BacaErrorCode code, const char *format, ...) {
+void mereader_tui_error_set(MereaderTuiError *error, MereaderTuiErrorCode code, const char *format, ...) {
     if (error == nullptr) {
         return;
     }
@@ -47,9 +47,9 @@ void baca_error_set(BacaError *error, BacaErrorCode code, const char *format, ..
     va_end(arguments);
 }
 
-void *baca_reallocarray(void *pointer, size_t count, size_t size, BacaError *error) {
+void *mereader_tui_reallocarray(void *pointer, size_t count, size_t size, MereaderTuiError *error) {
     if (size != 0U && count > SIZE_MAX / size) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "allocation size overflow (%zu * %zu)", count, size);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "allocation size overflow (%zu * %zu)", count, size);
         return nullptr;
     }
     if (count == 0U || size == 0U) {
@@ -59,22 +59,22 @@ void *baca_reallocarray(void *pointer, size_t count, size_t size, BacaError *err
 
     void *result = realloc(pointer, count * size);
     if (result == nullptr) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate %zu bytes", count * size);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate %zu bytes", count * size);
     }
     return result;
 }
 
-char *baca_strndup(const char *value, size_t length, BacaError *error) {
+char *mereader_tui_strndup(const char *value, size_t length, MereaderTuiError *error) {
     if (value == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "cannot duplicate a null string");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "cannot duplicate a null string");
         return nullptr;
     }
     if (length == SIZE_MAX) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "string size overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "string size overflow");
         return nullptr;
     }
 
-    char *copy = baca_reallocarray(nullptr, length + 1U, sizeof(*copy), error);
+    char *copy = mereader_tui_reallocarray(nullptr, length + 1U, sizeof(*copy), error);
     if (copy == nullptr) {
         return nullptr;
     }
@@ -85,22 +85,22 @@ char *baca_strndup(const char *value, size_t length, BacaError *error) {
     return copy;
 }
 
-char *baca_strdup(const char *value, BacaError *error) {
+char *mereader_tui_strdup(const char *value, MereaderTuiError *error) {
     if (value == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "cannot duplicate a null string");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "cannot duplicate a null string");
         return nullptr;
     }
-    return baca_strndup(value, strlen(value), error);
+    return mereader_tui_strndup(value, strlen(value), error);
 }
 
-void *baca_array_reserve(void *items, size_t *capacity, size_t item_size, size_t needed, BacaError *error) {
+void *mereader_tui_array_reserve(void *items, size_t *capacity, size_t item_size, size_t needed, MereaderTuiError *error) {
     if (capacity == nullptr || item_size == 0U) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid array reservation");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid array reservation");
         return nullptr;
     }
     if (needed <= *capacity) {
         if (needed != 0U && items == nullptr) {
-            baca_error_set(error, BACA_ERROR_INTERNAL, "array has capacity but no storage");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "array has capacity but no storage");
             return nullptr;
         }
         return items;
@@ -115,11 +115,11 @@ void *baca_array_reserve(void *items, size_t *capacity, size_t item_size, size_t
         new_capacity *= 2U;
     }
     if (new_capacity > SIZE_MAX / item_size) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "array size overflow (%zu * %zu)", new_capacity, item_size);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "array size overflow (%zu * %zu)", new_capacity, item_size);
         return nullptr;
     }
 
-    void *resized = baca_reallocarray(items, new_capacity, item_size, error);
+    void *resized = mereader_tui_reallocarray(items, new_capacity, item_size, error);
     if (resized == nullptr) {
         return nullptr;
     }
@@ -127,21 +127,21 @@ void *baca_array_reserve(void *items, size_t *capacity, size_t item_size, size_t
     return resized;
 }
 
-void baca_buffer_free(BacaBuffer *buffer) {
+void mereader_tui_buffer_free(MereaderTuiBuffer *buffer) {
     if (buffer == nullptr) {
         return;
     }
     free(buffer->data);
-    *buffer = (BacaBuffer){0};
+    *buffer = (MereaderTuiBuffer){0};
 }
 
-bool baca_buffer_append(BacaBuffer *buffer, const void *data, size_t length, BacaError *error) {
+bool mereader_tui_buffer_append(MereaderTuiBuffer *buffer, const void *data, size_t length, MereaderTuiError *error) {
     if (buffer == nullptr || (length != 0U && data == nullptr)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid buffer append");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid buffer append");
         return false;
     }
     if (buffer->length == SIZE_MAX || length > SIZE_MAX - buffer->length - 1U) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "buffer size overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "buffer size overflow");
         return false;
     }
 
@@ -157,10 +157,10 @@ bool baca_buffer_append(BacaBuffer *buffer, const void *data, size_t length, Bac
     }
 
     size_t needed = buffer->length + length + 1U;
-    BacaError reserve_error = {0};
+    MereaderTuiError reserve_error = {0};
     unsigned char *storage =
-        baca_array_reserve(buffer->data, &buffer->capacity, sizeof(*buffer->data), needed, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+        mereader_tui_array_reserve(buffer->data, &buffer->capacity, sizeof(*buffer->data), needed, &reserve_error);
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != nullptr) {
             *error = reserve_error;
         }
@@ -177,21 +177,21 @@ bool baca_buffer_append(BacaBuffer *buffer, const void *data, size_t length, Bac
     return true;
 }
 
-void baca_string_free(BacaString *string) {
+void mereader_tui_string_free(MereaderTuiString *string) {
     if (string == nullptr) {
         return;
     }
     free(string->data);
-    *string = (BacaString){0};
+    *string = (MereaderTuiString){0};
 }
 
-bool baca_string_append_n(BacaString *string, const char *value, size_t length, BacaError *error) {
+bool mereader_tui_string_append_n(MereaderTuiString *string, const char *value, size_t length, MereaderTuiError *error) {
     if (string == nullptr || (length != 0U && value == nullptr)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid string append");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid string append");
         return false;
     }
     if (string->length == SIZE_MAX || length > SIZE_MAX - string->length - 1U) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "string size overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "string size overflow");
         return false;
     }
 
@@ -207,10 +207,10 @@ bool baca_string_append_n(BacaString *string, const char *value, size_t length, 
     }
 
     size_t needed = string->length + length + 1U;
-    BacaError reserve_error = {0};
+    MereaderTuiError reserve_error = {0};
     char *storage =
-        baca_array_reserve(string->data, &string->capacity, sizeof(*string->data), needed, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+        mereader_tui_array_reserve(string->data, &string->capacity, sizeof(*string->data), needed, &reserve_error);
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != nullptr) {
             *error = reserve_error;
         }
@@ -227,52 +227,52 @@ bool baca_string_append_n(BacaString *string, const char *value, size_t length, 
     return true;
 }
 
-bool baca_string_append(BacaString *string, const char *value, BacaError *error) {
+bool mereader_tui_string_append(MereaderTuiString *string, const char *value, MereaderTuiError *error) {
     if (value == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "cannot append a null string");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "cannot append a null string");
         return false;
     }
-    return baca_string_append_n(string, value, strlen(value), error);
+    return mereader_tui_string_append_n(string, value, strlen(value), error);
 }
 
-bool baca_string_append_char(BacaString *string, char value, BacaError *error) {
-    return baca_string_append_n(string, &value, 1U, error);
+bool mereader_tui_string_append_char(MereaderTuiString *string, char value, MereaderTuiError *error) {
+    return mereader_tui_string_append_n(string, &value, 1U, error);
 }
 
-char *baca_string_take(BacaString *string) {
+char *mereader_tui_string_take(MereaderTuiString *string) {
     if (string == nullptr) {
         return nullptr;
     }
     char *data = string->data;
-    *string = (BacaString){0};
+    *string = (MereaderTuiString){0};
     return data;
 }
 
-bool baca_read_file(const char *path, BacaBuffer *output, BacaError *error) {
+bool mereader_tui_read_file(const char *path, MereaderTuiBuffer *output, MereaderTuiError *error) {
     if (path == nullptr || output == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid file read");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid file read");
         return false;
     }
     if (output->data != nullptr || output->length != 0U || output->capacity != 0U) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "file read output is not empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "file read output is not empty");
         return false;
     }
 
     int descriptor = open(path, O_RDONLY | O_CLOEXEC);
     if (descriptor < 0) {
         int saved_errno = errno;
-        baca_error_set(error, baca_errno_code(saved_errno), "could not open '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not open '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
-    BacaBuffer result = {0};
+    MereaderTuiBuffer result = {0};
     unsigned char chunk[16384];
     for (;;) {
         ssize_t count = read(descriptor, chunk, sizeof(chunk));
         if (count > 0) {
-            if (!baca_buffer_append(&result, chunk, (size_t)count, error)) {
+            if (!mereader_tui_buffer_append(&result, chunk, (size_t)count, error)) {
                 (void)close(descriptor);
-                baca_buffer_free(&result);
+                mereader_tui_buffer_free(&result);
                 return false;
             }
             continue;
@@ -286,20 +286,20 @@ bool baca_read_file(const char *path, BacaBuffer *output, BacaError *error) {
 
         int saved_errno = errno;
         (void)close(descriptor);
-        baca_buffer_free(&result);
-        baca_error_set(error, BACA_ERROR_IO, "could not read '%s': %s", path, strerror(saved_errno));
+        mereader_tui_buffer_free(&result);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not read '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
-    if (!baca_buffer_append(&result, nullptr, 0U, error)) {
+    if (!mereader_tui_buffer_append(&result, nullptr, 0U, error)) {
         (void)close(descriptor);
-        baca_buffer_free(&result);
+        mereader_tui_buffer_free(&result);
         return false;
     }
     if (close(descriptor) != 0) {
         int saved_errno = errno;
-        baca_buffer_free(&result);
-        baca_error_set(error, BACA_ERROR_IO, "could not close '%s': %s", path, strerror(saved_errno));
+        mereader_tui_buffer_free(&result);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not close '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
@@ -307,16 +307,16 @@ bool baca_read_file(const char *path, BacaBuffer *output, BacaError *error) {
     return true;
 }
 
-bool baca_write_file(const char *path, const void *data, size_t length, BacaError *error) {
+bool mereader_tui_write_file(const char *path, const void *data, size_t length, MereaderTuiError *error) {
     if (path == nullptr || (length != 0U && data == nullptr)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid file write");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid file write");
         return false;
     }
 
     int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
     if (descriptor < 0) {
         int saved_errno = errno;
-        baca_error_set(error, baca_errno_code(saved_errno), "could not open '%s' for writing: %s", path,
+        mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not open '%s' for writing: %s", path,
                        strerror(saved_errno));
         return false;
     }
@@ -337,19 +337,19 @@ bool baca_write_file(const char *path, const void *data, size_t length, BacaErro
 
         int saved_errno = count == 0 ? EIO : errno;
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_IO, "could not write '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not write '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
     if (close(descriptor) != 0) {
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not close '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not close '%s': %s", path, strerror(saved_errno));
         return false;
     }
     return true;
 }
 
-static bool baca_ensure_directory(const char *path, BacaError *error) {
+static bool mereader_tui_ensure_directory(const char *path, MereaderTuiError *error) {
     if (mkdir(path, 0700) == 0) {
         return true;
     }
@@ -362,18 +362,18 @@ static bool baca_ensure_directory(const char *path, BacaError *error) {
     }
 
     int saved_errno = errno;
-    baca_error_set(error, baca_errno_code(saved_errno), "could not create directory '%s': %s", path,
+    mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not create directory '%s': %s", path,
                    strerror(saved_errno));
     return false;
 }
 
-bool baca_mkdirs(const char *path, BacaError *error) {
+bool mereader_tui_mkdirs(const char *path, MereaderTuiError *error) {
     if (path == nullptr || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "directory path is empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "directory path is empty");
         return false;
     }
 
-    char *copy = baca_strdup(path, error);
+    char *copy = mereader_tui_strdup(path, error);
     if (copy == nullptr) {
         return false;
     }
@@ -394,7 +394,7 @@ bool baca_mkdirs(const char *path, BacaError *error) {
 
         char saved = *cursor;
         *cursor = '\0';
-        if (copy[0] != '\0' && !baca_ensure_directory(copy, error)) {
+        if (copy[0] != '\0' && !mereader_tui_ensure_directory(copy, error)) {
             free(copy);
             return false;
         }
@@ -411,34 +411,34 @@ bool baca_mkdirs(const char *path, BacaError *error) {
     return true;
 }
 
-char *baca_realpath(const char *path, BacaError *error) {
+char *mereader_tui_realpath(const char *path, MereaderTuiError *error) {
     if (path == nullptr || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "path is empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "path is empty");
         return nullptr;
     }
 
     char *resolved = realpath(path, nullptr);
     if (resolved == nullptr) {
         int saved_errno = errno;
-        baca_error_set(error, baca_errno_code(saved_errno), "could not resolve '%s': %s", path,
+        mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not resolve '%s': %s", path,
                        strerror(saved_errno));
     }
     return resolved;
 }
 
-char *baca_path_join(const char *left, const char *right, BacaError *error) {
+char *mereader_tui_path_join(const char *left, const char *right, MereaderTuiError *error) {
     if (left == nullptr || right == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "cannot join a null path");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "cannot join a null path");
         return nullptr;
     }
     if (right[0] == '/') {
-        return baca_strdup(right, error);
+        return mereader_tui_strdup(right, error);
     }
     if (left[0] == '\0') {
-        return baca_strdup(right, error);
+        return mereader_tui_strdup(right, error);
     }
     if (right[0] == '\0') {
-        return baca_strdup(left, error);
+        return mereader_tui_strdup(left, error);
     }
 
     size_t left_length = strlen(left);
@@ -446,12 +446,12 @@ char *baca_path_join(const char *left, const char *right, BacaError *error) {
     bool separator = left[left_length - 1U] != '/';
     size_t overhead = separator ? 2U : 1U;
     if (left_length > SIZE_MAX - overhead || right_length > SIZE_MAX - left_length - overhead) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "joined path is too large");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "joined path is too large");
         return nullptr;
     }
 
     size_t total = left_length + right_length + (separator ? 2U : 1U);
-    char *joined = baca_reallocarray(nullptr, total, sizeof(*joined), error);
+    char *joined = mereader_tui_reallocarray(nullptr, total, sizeof(*joined), error);
     if (joined == nullptr) {
         return nullptr;
     }
@@ -464,7 +464,7 @@ char *baca_path_join(const char *left, const char *right, BacaError *error) {
     return joined;
 }
 
-static size_t baca_trimmed_path_length(const char *path) {
+static size_t mereader_tui_trimmed_path_length(const char *path) {
     size_t length = strlen(path);
     while (length > 1U && path[length - 1U] == '/') {
         --length;
@@ -472,18 +472,18 @@ static size_t baca_trimmed_path_length(const char *path) {
     return length;
 }
 
-char *baca_path_dirname(const char *path, BacaError *error) {
+char *mereader_tui_path_dirname(const char *path, MereaderTuiError *error) {
     if (path == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "path is null");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "path is null");
         return nullptr;
     }
     if (path[0] == '\0') {
-        return baca_strdup(".", error);
+        return mereader_tui_strdup(".", error);
     }
 
-    size_t length = baca_trimmed_path_length(path);
+    size_t length = mereader_tui_trimmed_path_length(path);
     if (length == 1U && path[0] == '/') {
-        return baca_strdup("/", error);
+        return mereader_tui_strdup("/", error);
     }
 
     size_t slash = length;
@@ -491,36 +491,36 @@ char *baca_path_dirname(const char *path, BacaError *error) {
         --slash;
     }
     if (slash == 0U) {
-        return baca_strdup(".", error);
+        return mereader_tui_strdup(".", error);
     }
     while (slash > 1U && path[slash - 1U] == '/') {
         --slash;
     }
-    return baca_strndup(path, slash, error);
+    return mereader_tui_strndup(path, slash, error);
 }
 
-char *baca_path_basename(const char *path, BacaError *error) {
+char *mereader_tui_path_basename(const char *path, MereaderTuiError *error) {
     if (path == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "path is null");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "path is null");
         return nullptr;
     }
     if (path[0] == '\0') {
-        return baca_strdup(".", error);
+        return mereader_tui_strdup(".", error);
     }
 
-    size_t length = baca_trimmed_path_length(path);
+    size_t length = mereader_tui_trimmed_path_length(path);
     if (length == 1U && path[0] == '/') {
-        return baca_strdup("/", error);
+        return mereader_tui_strdup("/", error);
     }
     size_t start = length;
     while (start != 0U && path[start - 1U] != '/') {
         --start;
     }
-    return baca_strndup(path + start, length - start, error);
+    return mereader_tui_strndup(path + start, length - start, error);
 }
 
-char *baca_path_stem(const char *path, BacaError *error) {
-    char *basename = baca_path_basename(path, error);
+char *mereader_tui_path_stem(const char *path, MereaderTuiError *error) {
+    char *basename = mereader_tui_path_basename(path, error);
     if (basename == nullptr) {
         return nullptr;
     }
@@ -532,7 +532,7 @@ char *baca_path_stem(const char *path, BacaError *error) {
     return basename;
 }
 
-const char *baca_path_extension(const char *path) {
+const char *mereader_tui_path_extension(const char *path) {
     if (path == nullptr) {
         return nullptr;
     }
@@ -543,7 +543,7 @@ const char *baca_path_extension(const char *path) {
     return dot != nullptr && dot != basename && dot[1] != '\0' ? dot : path + strlen(path);
 }
 
-static int baca_hex_value(unsigned char value) {
+static int mereader_tui_hex_value(unsigned char value) {
     if (value >= '0' && value <= '9') {
         return (int)(value - '0');
     }
@@ -556,14 +556,14 @@ static int baca_hex_value(unsigned char value) {
     return -1;
 }
 
-char *baca_uri_decode(const char *value, BacaError *error) {
+char *mereader_tui_uri_decode(const char *value, MereaderTuiError *error) {
     if (value == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "URI is null");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "URI is null");
         return nullptr;
     }
 
     size_t length = strlen(value);
-    char *decoded = baca_reallocarray(nullptr, length + 1U, sizeof(*decoded), error);
+    char *decoded = mereader_tui_reallocarray(nullptr, length + 1U, sizeof(*decoded), error);
     if (decoded == nullptr) {
         return nullptr;
     }
@@ -576,22 +576,22 @@ char *baca_uri_decode(const char *value, BacaError *error) {
         }
         if (input + 2U >= length) {
             free(decoded);
-            baca_error_set(error, BACA_ERROR_ARGUMENT, "incomplete percent escape in URI '%s'", value);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "incomplete percent escape in URI '%s'", value);
             return nullptr;
         }
 
-        int high = baca_hex_value((unsigned char)value[input + 1U]);
-        int low = baca_hex_value((unsigned char)value[input + 2U]);
+        int high = mereader_tui_hex_value((unsigned char)value[input + 1U]);
+        int low = mereader_tui_hex_value((unsigned char)value[input + 2U]);
         if (high < 0 || low < 0) {
             free(decoded);
-            baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid percent escape in URI '%s'", value);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid percent escape in URI '%s'", value);
             return nullptr;
         }
 
         unsigned char byte = (unsigned char)((unsigned)high * 16U + (unsigned)low);
         if (byte == '\0') {
             free(decoded);
-            baca_error_set(error, BACA_ERROR_ARGUMENT, "URI contains an encoded null byte");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "URI contains an encoded null byte");
             return nullptr;
         }
         decoded[output++] = (char)byte;
@@ -601,7 +601,7 @@ char *baca_uri_decode(const char *value, BacaError *error) {
     return decoded;
 }
 
-bool baca_is_external_uri(const char *value) {
+bool mereader_tui_is_external_uri(const char *value) {
     if (value == nullptr || value[0] == '\0') {
         return false;
     }
@@ -624,7 +624,7 @@ bool baca_is_external_uri(const char *value) {
     return false;
 }
 
-static size_t baca_uri_path_length(const char *value) {
+static size_t mereader_tui_uri_path_length(const char *value) {
     size_t length = 0U;
     while (value[length] != '\0' && value[length] != '?' && value[length] != '#') {
         ++length;
@@ -632,7 +632,7 @@ static size_t baca_uri_path_length(const char *value) {
     return length;
 }
 
-static void baca_uri_pop_segment(BacaString *path) {
+static void mereader_tui_uri_pop_segment(MereaderTuiString *path) {
     if (path->length == 0U) {
         return;
     }
@@ -644,7 +644,7 @@ static void baca_uri_pop_segment(BacaString *path) {
     path->data[path->length] = '\0';
 }
 
-static bool baca_uri_normalize_path(const char *path, BacaString *normalized, BacaError *error) {
+static bool mereader_tui_uri_normalize_path(const char *path, MereaderTuiString *normalized, MereaderTuiError *error) {
     size_t length = strlen(path);
     size_t cursor = 0U;
     while (cursor < length) {
@@ -660,24 +660,24 @@ static bool baca_uri_normalize_path(const char *path, BacaString *normalized, Ba
             continue;
         }
         if (segment_length == 2U && path[start] == '.' && path[start + 1U] == '.') {
-            baca_uri_pop_segment(normalized);
+            mereader_tui_uri_pop_segment(normalized);
             continue;
         }
-        if (normalized->length != 0U && !baca_string_append_char(normalized, '/', error)) {
+        if (normalized->length != 0U && !mereader_tui_string_append_char(normalized, '/', error)) {
             return false;
         }
-        if (!baca_string_append_n(normalized, path + start, segment_length, error)) {
+        if (!mereader_tui_string_append_n(normalized, path + start, segment_length, error)) {
             return false;
         }
     }
 
-    if (!baca_string_append_n(normalized, "", 0U, error)) {
+    if (!mereader_tui_string_append_n(normalized, "", 0U, error)) {
         return false;
     }
     return true;
 }
 
-static const char *baca_find_component(const char *value, char component) {
+static const char *mereader_tui_find_component(const char *value, char component) {
     const char *found = strchr(value, component);
     if (component == '?' && found != nullptr) {
         const char *fragment = strchr(value, '#');
@@ -688,44 +688,44 @@ static const char *baca_find_component(const char *value, char component) {
     return found;
 }
 
-static bool baca_append_decoded_component(BacaString *result, char marker, const char *start, size_t length,
-                                          BacaError *error) {
-    char *encoded = baca_strndup(start, length, error);
+static bool mereader_tui_append_decoded_component(MereaderTuiString *result, char marker, const char *start, size_t length,
+                                          MereaderTuiError *error) {
+    char *encoded = mereader_tui_strndup(start, length, error);
     if (encoded == nullptr) {
         return false;
     }
-    char *decoded = baca_uri_decode(encoded, error);
+    char *decoded = mereader_tui_uri_decode(encoded, error);
     free(encoded);
     if (decoded == nullptr) {
         return false;
     }
 
-    bool success = baca_string_append_char(result, marker, error) && baca_string_append(result, decoded, error);
+    bool success = mereader_tui_string_append_char(result, marker, error) && mereader_tui_string_append(result, decoded, error);
     free(decoded);
     return success;
 }
 
-char *baca_uri_resolve(const char *base, const char *reference, BacaError *error) {
+char *mereader_tui_uri_resolve(const char *base, const char *reference, MereaderTuiError *error) {
     if (base == nullptr || reference == nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "cannot resolve a null URI");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "cannot resolve a null URI");
         return nullptr;
     }
-    if (baca_is_external_uri(reference)) {
-        return baca_strdup(reference, error);
+    if (mereader_tui_is_external_uri(reference)) {
+        return mereader_tui_strdup(reference, error);
     }
 
-    size_t base_path_length = baca_uri_path_length(base);
-    size_t reference_path_length = baca_uri_path_length(reference);
-    char *base_path_encoded = baca_strndup(base, base_path_length, error);
-    char *reference_path_encoded = baca_strndup(reference, reference_path_length, error);
+    size_t base_path_length = mereader_tui_uri_path_length(base);
+    size_t reference_path_length = mereader_tui_uri_path_length(reference);
+    char *base_path_encoded = mereader_tui_strndup(base, base_path_length, error);
+    char *reference_path_encoded = mereader_tui_strndup(reference, reference_path_length, error);
     if (base_path_encoded == nullptr || reference_path_encoded == nullptr) {
         free(base_path_encoded);
         free(reference_path_encoded);
         return nullptr;
     }
 
-    char *base_path = baca_uri_decode(base_path_encoded, error);
-    char *reference_path = baca_uri_decode(reference_path_encoded, error);
+    char *base_path = mereader_tui_uri_decode(base_path_encoded, error);
+    char *reference_path = mereader_tui_uri_decode(reference_path_encoded, error);
     free(base_path_encoded);
     free(reference_path_encoded);
     if (base_path == nullptr || reference_path == nullptr) {
@@ -734,68 +734,68 @@ char *baca_uri_resolve(const char *base, const char *reference, BacaError *error
         return nullptr;
     }
 
-    BacaString merged = {0};
+    MereaderTuiString merged = {0};
     if (reference_path_length == 0U) {
-        if (!baca_string_append(&merged, base_path, error)) {
+        if (!mereader_tui_string_append(&merged, base_path, error)) {
             goto fail;
         }
     } else if (reference_path[0] == '/') {
-        if (!baca_string_append(&merged, reference_path, error)) {
+        if (!mereader_tui_string_append(&merged, reference_path, error)) {
             goto fail;
         }
     } else {
         const char *slash = strrchr(base_path, '/');
-        if (slash != nullptr && !baca_string_append_n(&merged, base_path, (size_t)(slash - base_path + 1), error)) {
+        if (slash != nullptr && !mereader_tui_string_append_n(&merged, base_path, (size_t)(slash - base_path + 1), error)) {
             goto fail;
         }
-        if (!baca_string_append(&merged, reference_path, error)) {
+        if (!mereader_tui_string_append(&merged, reference_path, error)) {
             goto fail;
         }
     }
 
-    BacaString result = {0};
-    if (!baca_uri_normalize_path(merged.data == nullptr ? "" : merged.data, &result, error)) {
-        baca_string_free(&result);
+    MereaderTuiString result = {0};
+    if (!mereader_tui_uri_normalize_path(merged.data == nullptr ? "" : merged.data, &result, error)) {
+        mereader_tui_string_free(&result);
         goto fail;
     }
 
-    const char *reference_query = baca_find_component(reference, '?');
+    const char *reference_query = mereader_tui_find_component(reference, '?');
     const char *reference_fragment = strchr(reference, '#');
-    const char *base_query = baca_find_component(base, '?');
+    const char *base_query = mereader_tui_find_component(base, '?');
     const char *base_fragment = strchr(base, '#');
     if (reference_query != nullptr) {
         const char *end = reference_fragment == nullptr ? reference + strlen(reference) : reference_fragment;
-        if (!baca_append_decoded_component(&result, '?', reference_query + 1, (size_t)(end - reference_query - 1),
+        if (!mereader_tui_append_decoded_component(&result, '?', reference_query + 1, (size_t)(end - reference_query - 1),
                                            error)) {
-            baca_string_free(&result);
+            mereader_tui_string_free(&result);
             goto fail;
         }
     } else if (reference_path_length == 0U && base_query != nullptr) {
         const char *end = base_fragment == nullptr ? base + strlen(base) : base_fragment;
-        if (!baca_append_decoded_component(&result, '?', base_query + 1, (size_t)(end - base_query - 1), error)) {
-            baca_string_free(&result);
+        if (!mereader_tui_append_decoded_component(&result, '?', base_query + 1, (size_t)(end - base_query - 1), error)) {
+            mereader_tui_string_free(&result);
             goto fail;
         }
     }
     if (reference_fragment != nullptr &&
-        !baca_append_decoded_component(&result, '#', reference_fragment + 1, strlen(reference_fragment + 1), error)) {
-        baca_string_free(&result);
+        !mereader_tui_append_decoded_component(&result, '#', reference_fragment + 1, strlen(reference_fragment + 1), error)) {
+        mereader_tui_string_free(&result);
         goto fail;
     }
 
     free(base_path);
     free(reference_path);
-    baca_string_free(&merged);
-    return baca_string_take(&result);
+    mereader_tui_string_free(&merged);
+    return mereader_tui_string_take(&result);
 
 fail:
     free(base_path);
     free(reference_path);
-    baca_string_free(&merged);
+    mereader_tui_string_free(&merged);
     return nullptr;
 }
 
-bool baca_file_exists(const char *path) {
+bool mereader_tui_file_exists(const char *path) {
     if (path == nullptr) {
         return false;
     }
@@ -803,7 +803,7 @@ bool baca_file_exists(const char *path) {
     return stat(path, &status) == 0 && S_ISREG(status.st_mode);
 }
 
-bool baca_directory_exists(const char *path) {
+bool mereader_tui_directory_exists(const char *path) {
     if (path == nullptr) {
         return false;
     }
@@ -811,14 +811,14 @@ bool baca_directory_exists(const char *path) {
     return stat(path, &status) == 0 && S_ISDIR(status.st_mode);
 }
 
-static bool baca_remove_tree_at(int parent_descriptor, const char *name, const char *path, BacaError *error) {
+static bool mereader_tui_remove_tree_at(int parent_descriptor, const char *name, const char *path, MereaderTuiError *error) {
     struct stat status;
     if (fstatat(parent_descriptor, name, &status, AT_SYMLINK_NOFOLLOW) != 0) {
         if (errno == ENOENT) {
             return true;
         }
         int saved_errno = errno;
-        baca_error_set(error, baca_errno_code(saved_errno), "could not inspect '%s': %s", path,
+        mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not inspect '%s': %s", path,
                        strerror(saved_errno));
         return false;
     }
@@ -828,7 +828,7 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
             return true;
         }
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not remove '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not remove '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
@@ -838,7 +838,7 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
             return true;
         }
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not open directory '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not open directory '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
@@ -846,7 +846,7 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
     if (directory == nullptr) {
         int saved_errno = errno;
         (void)close(descriptor);
-        baca_error_set(error, BACA_ERROR_IO, "could not open directory '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not open directory '%s': %s", path, strerror(saved_errno));
         return false;
     }
 
@@ -857,7 +857,7 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
             if (errno != 0) {
                 int saved_errno = errno;
                 (void)closedir(directory);
-                baca_error_set(error, BACA_ERROR_IO, "could not read directory '%s': %s", path,
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not read directory '%s': %s", path,
                                strerror(saved_errno));
                 return false;
             }
@@ -867,12 +867,12 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
             continue;
         }
 
-        char *child = baca_path_join(path, entry->d_name, error);
+        char *child = mereader_tui_path_join(path, entry->d_name, error);
         if (child == nullptr) {
             (void)closedir(directory);
             return false;
         }
-        bool removed = baca_remove_tree_at(dirfd(directory), entry->d_name, child, error);
+        bool removed = mereader_tui_remove_tree_at(dirfd(directory), entry->d_name, child, error);
         free(child);
         if (!removed) {
             (void)closedir(directory);
@@ -881,32 +881,32 @@ static bool baca_remove_tree_at(int parent_descriptor, const char *name, const c
     }
     if (closedir(directory) != 0) {
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not close directory '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not close directory '%s': %s", path, strerror(saved_errno));
         return false;
     }
     if (unlinkat(parent_descriptor, name, AT_REMOVEDIR) != 0 && errno != ENOENT) {
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not remove directory '%s': %s", path, strerror(saved_errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not remove directory '%s': %s", path, strerror(saved_errno));
         return false;
     }
     return true;
 }
 
-bool baca_remove_tree(const char *path, BacaError *error) {
+bool mereader_tui_remove_tree(const char *path, MereaderTuiError *error) {
     if (path == nullptr || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "remove path is empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "remove path is empty");
         return false;
     }
 
-    char *parent = baca_path_dirname(path, error);
-    char *name = baca_path_basename(path, error);
+    char *parent = mereader_tui_path_dirname(path, error);
+    char *name = mereader_tui_path_basename(path, error);
     if (parent == nullptr || name == nullptr) {
         free(parent);
         free(name);
         return false;
     }
     if (strcmp(name, "/") == 0 || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "refusing to remove unsafe path '%s'", path);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "refusing to remove unsafe path '%s'", path);
         free(parent);
         free(name);
         return false;
@@ -920,17 +920,17 @@ bool baca_remove_tree(const char *path, BacaError *error) {
             free(name);
             return true;
         }
-        baca_error_set(error, baca_errno_code(saved_errno), "could not open parent directory '%s': %s", parent,
+        mereader_tui_error_set(error, mereader_tui_errno_code(saved_errno), "could not open parent directory '%s': %s", parent,
                        strerror(saved_errno));
         free(parent);
         free(name);
         return false;
     }
 
-    bool removed = baca_remove_tree_at(parent_descriptor, name, path, error);
+    bool removed = mereader_tui_remove_tree_at(parent_descriptor, name, path, error);
     if (close(parent_descriptor) != 0 && removed) {
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not close parent directory '%s': %s", parent,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not close parent directory '%s': %s", parent,
                        strerror(saved_errno));
         removed = false;
     }
@@ -939,10 +939,10 @@ bool baca_remove_tree(const char *path, BacaError *error) {
     return removed;
 }
 
-char *baca_make_temp_directory(const char *prefix, BacaError *error) {
-    const char *name = prefix == nullptr || prefix[0] == '\0' ? BACA_NAME "-" : prefix;
+char *mereader_tui_make_temp_directory(const char *prefix, MereaderTuiError *error) {
+    const char *name = prefix == nullptr || prefix[0] == '\0' ? MEREADER_TUI_NAME "-" : prefix;
     if (strchr(name, '/') != nullptr) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "temporary directory prefix contains '/'");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "temporary directory prefix contains '/'");
         return nullptr;
     }
 
@@ -951,22 +951,22 @@ char *baca_make_temp_directory(const char *prefix, BacaError *error) {
         temporary_root = "/tmp";
     }
 
-    BacaString template = {0};
-    bool success = baca_string_append(&template, temporary_root, error);
+    MereaderTuiString template = {0};
+    bool success = mereader_tui_string_append(&template, temporary_root, error);
     if (success && template.length != 0U && template.data[template.length - 1U] != '/') {
-        success = baca_string_append_char(&template, '/', error);
+        success = mereader_tui_string_append_char(&template, '/', error);
     }
-    success = success && baca_string_append(&template, name, error) &&
-              baca_string_append(&template, "XXXXXX", error);
+    success = success && mereader_tui_string_append(&template, name, error) &&
+              mereader_tui_string_append(&template, "XXXXXX", error);
     if (!success) {
-        baca_string_free(&template);
+        mereader_tui_string_free(&template);
         return nullptr;
     }
 
-    char *path = baca_string_take(&template);
+    char *path = mereader_tui_string_take(&template);
     if (mkdtemp(path) == nullptr) {
         int saved_errno = errno;
-        baca_error_set(error, BACA_ERROR_IO, "could not create temporary directory '%s': %s", path,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create temporary directory '%s': %s", path,
                        strerror(saved_errno));
         free(path);
         return nullptr;
@@ -974,7 +974,7 @@ char *baca_make_temp_directory(const char *prefix, BacaError *error) {
     return path;
 }
 
-static bool baca_safe_xdg_filename(const char *filename) {
+static bool mereader_tui_safe_xdg_filename(const char *filename) {
     if (filename == nullptr || filename[0] == '\0' || filename[0] == '/') {
         return false;
     }
@@ -996,17 +996,17 @@ static bool baca_safe_xdg_filename(const char *filename) {
     }
 }
 
-static char *baca_home_directory(BacaError *error) {
+static char *mereader_tui_home_directory(MereaderTuiError *error) {
     const char *environment_home = getenv("HOME");
     if (environment_home != nullptr && environment_home[0] == '/') {
-        return baca_strdup(environment_home, error);
+        return mereader_tui_strdup(environment_home, error);
     }
 
     long suggested_size = sysconf(_SC_GETPW_R_SIZE_MAX);
     size_t buffer_size = suggested_size > 0 && (unsigned long)suggested_size <= SIZE_MAX
                              ? (size_t)suggested_size
                              : 16384U;
-    char *buffer = baca_reallocarray(nullptr, buffer_size, sizeof(*buffer), error);
+    char *buffer = mereader_tui_reallocarray(nullptr, buffer_size, sizeof(*buffer), error);
     if (buffer == nullptr) {
         return nullptr;
     }
@@ -1021,11 +1021,11 @@ static char *baca_home_directory(BacaError *error) {
         }
         if (buffer_size > SIZE_MAX / 2U) {
             free(buffer);
-            baca_error_set(error, BACA_ERROR_MEMORY, "passwd buffer size overflow");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "passwd buffer size overflow");
             return nullptr;
         }
         size_t new_size = buffer_size * 2U;
-        char *resized = baca_reallocarray(buffer, new_size, sizeof(*buffer), error);
+        char *resized = mereader_tui_reallocarray(buffer, new_size, sizeof(*buffer), error);
         if (resized == nullptr) {
             free(buffer);
             return nullptr;
@@ -1035,94 +1035,112 @@ static char *baca_home_directory(BacaError *error) {
     }
     if (status != 0 || result == nullptr || result->pw_dir == nullptr || result->pw_dir[0] != '/') {
         free(buffer);
-        baca_error_set(error, BACA_ERROR_IO, "could not determine the user's home directory: %s",
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not determine the user's home directory: %s",
                        status == 0 ? "no passwd entry" : strerror(status));
         return nullptr;
     }
 
-    char *home = baca_strdup(result->pw_dir, error);
+    char *home = mereader_tui_strdup(result->pw_dir, error);
     free(buffer);
     return home;
 }
 
-static char *baca_xdg_path(const char *environment_name, const char *fallback_directory, const char *filename,
-                           BacaError *error) {
-    if (!baca_safe_xdg_filename(filename)) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "XDG filename must be a safe relative path");
+static char *mereader_tui_xdg_path(const char *environment_name, const char *fallback_directory, const char *filename,
+                           MereaderTuiError *error) {
+    if (!mereader_tui_safe_xdg_filename(filename)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "XDG filename must be a safe relative path");
         return nullptr;
     }
 
     const char *environment_root = getenv(environment_name);
     char *root = nullptr;
     if (environment_root != nullptr && environment_root[0] == '/') {
-        root = baca_strdup(environment_root, error);
+        root = mereader_tui_strdup(environment_root, error);
     } else {
-        char *home = baca_home_directory(error);
+        char *home = mereader_tui_home_directory(error);
         if (home == nullptr) {
             return nullptr;
         }
-        root = baca_path_join(home, fallback_directory, error);
+        root = mereader_tui_path_join(home, fallback_directory, error);
         free(home);
     }
     if (root == nullptr) {
         return nullptr;
     }
 
-    char *application_root = baca_path_join(root, BACA_NAME, error);
+    char *application_root = mereader_tui_path_join(root, MEREADER_TUI_NAME, error);
     free(root);
     if (application_root == nullptr) {
         return nullptr;
     }
-    char *path = baca_path_join(application_root, filename, error);
+    if (!mereader_tui_mkdirs(application_root, error)) {
+        free(application_root);
+        return nullptr;
+    }
+    int descriptor = open(application_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int saved_errno = descriptor < 0 ? errno : 0;
+    if (descriptor >= 0 && fchmod(descriptor, 0700) != 0) {
+        saved_errno = errno;
+        (void)close(descriptor);
+    } else if (descriptor >= 0 && close(descriptor) != 0) {
+        saved_errno = errno;
+    }
+    if (saved_errno != 0) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not secure state directory '%s': %s",
+                               application_root, strerror(saved_errno));
+        free(application_root);
+        return nullptr;
+    }
+    char *path = mereader_tui_path_join(application_root, filename, error);
     free(application_root);
     return path;
 }
 
-char *baca_xdg_config_path(const char *filename, BacaError *error) {
-    return baca_xdg_path("XDG_CONFIG_HOME", ".config", filename, error);
+char *mereader_tui_xdg_config_path(const char *filename, MereaderTuiError *error) {
+    return mereader_tui_xdg_path("XDG_CONFIG_HOME", ".config", filename, error);
 }
 
-char *baca_xdg_cache_path(const char *filename, BacaError *error) {
-    return baca_xdg_path("XDG_CACHE_HOME", ".cache", filename, error);
+char *mereader_tui_xdg_cache_path(const char *filename, MereaderTuiError *error) {
+    return mereader_tui_xdg_path("XDG_CACHE_HOME", ".cache", filename, error);
 }
 
-char *baca_now_iso8601(BacaError *error) {
+char *mereader_tui_now_iso8601(MereaderTuiError *error) {
     struct timespec now;
     if (clock_gettime(CLOCK_REALTIME, &now) != 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not read the system clock");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not read the system clock");
         return nullptr;
     }
 
     struct tm local;
     if (localtime_r(&now.tv_sec, &local) == nullptr) {
-        baca_error_set(error, BACA_ERROR_IO, "could not convert the system clock");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not convert the system clock");
         return nullptr;
     }
 
     char date[20];
     if (strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &local) == 0U) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "could not format the system clock");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format the system clock");
         return nullptr;
     }
 
-    char *timestamp = baca_reallocarray(nullptr, 27U, sizeof(*timestamp), error);
+    char *timestamp = mereader_tui_reallocarray(nullptr, 27U, sizeof(*timestamp), error);
     if (timestamp == nullptr) {
         return nullptr;
     }
     int length = snprintf(timestamp, 27U, "%s.%06ld", date, now.tv_nsec / 1000L);
     if (length != 26) {
         free(timestamp);
-        baca_error_set(error, BACA_ERROR_INTERNAL, "could not format the system clock");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format the system clock");
         return nullptr;
     }
     return timestamp;
 }
 
-static bool baca_utf8_continuation(unsigned char value) {
+static bool mereader_tui_utf8_continuation(unsigned char value) {
     return (value & 0xc0U) == 0x80U;
 }
 
-static size_t baca_utf8_decode(const char *text, size_t length, size_t offset, uint32_t *codepoint) {
+static size_t mereader_tui_utf8_decode(const char *text, size_t length, size_t offset, uint32_t *codepoint) {
     unsigned char first = (unsigned char)text[offset];
     if (first < 0x80U) {
         *codepoint = first;
@@ -1131,17 +1149,17 @@ static size_t baca_utf8_decode(const char *text, size_t length, size_t offset, u
 
     if (first >= 0xc2U && first <= 0xdfU && offset + 1U < length) {
         unsigned char second = (unsigned char)text[offset + 1U];
-        if (baca_utf8_continuation(second)) {
+        if (mereader_tui_utf8_continuation(second)) {
             *codepoint = ((uint32_t)(first & 0x1fU) << 6U) | (uint32_t)(second & 0x3fU);
             return offset + 2U;
         }
     } else if (first >= 0xe0U && first <= 0xefU && offset + 2U < length) {
         unsigned char second = (unsigned char)text[offset + 1U];
         unsigned char third = (unsigned char)text[offset + 2U];
-        bool valid_second = baca_utf8_continuation(second) &&
+        bool valid_second = mereader_tui_utf8_continuation(second) &&
                             (first != 0xe0U || second >= 0xa0U) &&
                             (first != 0xedU || second <= 0x9fU);
-        if (valid_second && baca_utf8_continuation(third)) {
+        if (valid_second && mereader_tui_utf8_continuation(third)) {
             *codepoint = ((uint32_t)(first & 0x0fU) << 12U) | ((uint32_t)(second & 0x3fU) << 6U) |
                          (uint32_t)(third & 0x3fU);
             return offset + 3U;
@@ -1150,10 +1168,10 @@ static size_t baca_utf8_decode(const char *text, size_t length, size_t offset, u
         unsigned char second = (unsigned char)text[offset + 1U];
         unsigned char third = (unsigned char)text[offset + 2U];
         unsigned char fourth = (unsigned char)text[offset + 3U];
-        bool valid_second = baca_utf8_continuation(second) &&
+        bool valid_second = mereader_tui_utf8_continuation(second) &&
                             (first != 0xf0U || second >= 0x90U) &&
                             (first != 0xf4U || second <= 0x8fU);
-        if (valid_second && baca_utf8_continuation(third) && baca_utf8_continuation(fourth)) {
+        if (valid_second && mereader_tui_utf8_continuation(third) && mereader_tui_utf8_continuation(fourth)) {
             *codepoint = ((uint32_t)(first & 0x07U) << 18U) | ((uint32_t)(second & 0x3fU) << 12U) |
                          ((uint32_t)(third & 0x3fU) << 6U) | (uint32_t)(fourth & 0x3fU);
             return offset + 4U;
@@ -1164,13 +1182,13 @@ static size_t baca_utf8_decode(const char *text, size_t length, size_t offset, u
     return offset + 1U;
 }
 
-typedef struct BacaCodepointRange {
+typedef struct MereaderTuiCodepointRange {
     uint32_t first;
     uint32_t last;
-} BacaCodepointRange;
+} MereaderTuiCodepointRange;
 
-static bool baca_codepoint_combining(uint32_t value) {
-    static const BacaCodepointRange ranges[] = {
+static bool mereader_tui_codepoint_combining(uint32_t value) {
+    static const MereaderTuiCodepointRange ranges[] = {
         {0x0300U, 0x036fU}, {0x0483U, 0x0489U}, {0x0591U, 0x05bdU}, {0x05bfU, 0x05bfU},
         {0x05c1U, 0x05c2U}, {0x05c4U, 0x05c5U}, {0x05c7U, 0x05c7U}, {0x0610U, 0x061aU},
         {0x064bU, 0x065fU}, {0x0670U, 0x0670U}, {0x06d6U, 0x06edU}, {0x0711U, 0x0711U},
@@ -1202,7 +1220,7 @@ static bool baca_codepoint_combining(uint32_t value) {
         {0xfe20U, 0xfe2fU}, {0xe0100U, 0xe01efU},
     };
 
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(ranges); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(ranges); ++index) {
         if (value < ranges[index].first) {
             return false;
         }
@@ -1213,7 +1231,7 @@ static bool baca_codepoint_combining(uint32_t value) {
     return false;
 }
 
-static bool baca_codepoint_wide(uint32_t value) {
+static bool mereader_tui_codepoint_wide(uint32_t value) {
     return value >= 0x1100U &&
            (value <= 0x115fU || value == 0x2329U || value == 0x232aU ||
             (value >= 0x2e80U && value <= 0xa4cfU && value != 0x303fU) ||
@@ -1224,15 +1242,15 @@ static bool baca_codepoint_wide(uint32_t value) {
             (value >= 0x20000U && value <= 0x3fffdU));
 }
 
-static int baca_codepoint_width(uint32_t value) {
+static int mereader_tui_codepoint_width(uint32_t value) {
     if (value == 0U || value < 0x20U || (value >= 0x7fU && value < 0xa0U) ||
-        baca_codepoint_combining(value)) {
+        mereader_tui_codepoint_combining(value)) {
         return 0;
     }
-    return baca_codepoint_wide(value) ? 2 : 1;
+    return mereader_tui_codepoint_wide(value) ? 2 : 1;
 }
 
-size_t baca_utf8_next(const char *text, size_t length, size_t offset, int *columns) {
+size_t mereader_tui_utf8_next(const char *text, size_t length, size_t offset, int *columns) {
     if (columns != nullptr) {
         *columns = 0;
     }
@@ -1241,14 +1259,14 @@ size_t baca_utf8_next(const char *text, size_t length, size_t offset, int *colum
     }
 
     uint32_t codepoint = 0U;
-    size_t next = baca_utf8_decode(text, length, offset, &codepoint);
+    size_t next = mereader_tui_utf8_decode(text, length, offset, &codepoint);
     if (columns != nullptr) {
-        *columns = baca_codepoint_width(codepoint);
+        *columns = mereader_tui_codepoint_width(codepoint);
     }
     return next;
 }
 
-size_t baca_utf8_width(const char *text, size_t length) {
+size_t mereader_tui_utf8_width(const char *text, size_t length) {
     if (text == nullptr) {
         return 0U;
     }
@@ -1256,7 +1274,7 @@ size_t baca_utf8_width(const char *text, size_t length) {
     size_t width = 0U;
     for (size_t offset = 0U; offset < length;) {
         int columns = 0;
-        size_t next = baca_utf8_next(text, length, offset, &columns);
+        size_t next = mereader_tui_utf8_next(text, length, offset, &columns);
         if (columns > 0) {
             size_t addition = (size_t)columns;
             if (width > SIZE_MAX - addition) {
@@ -1269,11 +1287,11 @@ size_t baca_utf8_width(const char *text, size_t length) {
     return width;
 }
 
-static unsigned char baca_ascii_fold(unsigned char value) {
+static unsigned char mereader_tui_ascii_fold(unsigned char value) {
     return value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A')) : value;
 }
 
-int baca_casecmp(const char *left, const char *right) {
+int mereader_tui_casecmp(const char *left, const char *right) {
     if (left == right) {
         return 0;
     }
@@ -1285,8 +1303,8 @@ int baca_casecmp(const char *left, const char *right) {
     }
 
     while (*left != '\0' && *right != '\0') {
-        unsigned char folded_left = baca_ascii_fold((unsigned char)*left);
-        unsigned char folded_right = baca_ascii_fold((unsigned char)*right);
+        unsigned char folded_left = mereader_tui_ascii_fold((unsigned char)*left);
+        unsigned char folded_right = mereader_tui_ascii_fold((unsigned char)*right);
         if (folded_left != folded_right) {
             return folded_left < folded_right ? -1 : 1;
         }
@@ -1299,7 +1317,7 @@ int baca_casecmp(const char *left, const char *right) {
     return *left == '\0' ? -1 : 1;
 }
 
-bool baca_contains_casefold(const char *text, const char *query) {
+bool mereader_tui_contains_casefold(const char *text, const char *query) {
     if (text == nullptr || query == nullptr) {
         return false;
     }
@@ -1311,7 +1329,7 @@ bool baca_contains_casefold(const char *text, const char *query) {
         const char *left = start;
         const char *right = query;
         while (*left != '\0' && *right != '\0' &&
-               baca_ascii_fold((unsigned char)*left) == baca_ascii_fold((unsigned char)*right)) {
+               mereader_tui_ascii_fold((unsigned char)*left) == mereader_tui_ascii_fold((unsigned char)*right)) {
             ++left;
             ++right;
         }

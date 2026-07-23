@@ -1,5 +1,5 @@
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -20,52 +20,52 @@
 #include <libxml/tree.h>
 
 enum {
-    BACA_FB2_MAX_BINARIES = 10000,
-    BACA_FB2_MAX_XML_DEPTH = 256,
+    MEREADER_TUI_FB2_MAX_BINARIES = 10000,
+    MEREADER_TUI_FB2_MAX_XML_DEPTH = 256,
 };
 
-#define BACA_FB2_MAX_INPUT_BYTES (64U * 1024U * 1024U)
-#define BACA_FB2_MAX_HTML_BYTES (64U * 1024U * 1024U)
-#define BACA_FB2_MAX_FIELD_BYTES (1024U * 1024U)
-#define BACA_FB2_MAX_BINARY_ID_BYTES (8U * 1024U * 1024U)
-#define BACA_FB2_MAX_TOTAL_BINARY_BYTES (1024ULL * 1024ULL * 1024ULL)
-#define BACA_FB2_SECTION_ID "fb2/document"
-#define BACA_FB2_BINARY_PREFIX "fb2://binary/"
+#define MEREADER_TUI_FB2_MAX_INPUT_BYTES (64U * 1024U * 1024U)
+#define MEREADER_TUI_FB2_MAX_HTML_BYTES (64U * 1024U * 1024U)
+#define MEREADER_TUI_FB2_MAX_FIELD_BYTES (1024U * 1024U)
+#define MEREADER_TUI_FB2_MAX_BINARY_ID_BYTES (8U * 1024U * 1024U)
+#define MEREADER_TUI_FB2_MAX_TOTAL_BINARY_BYTES (1024ULL * 1024ULL * 1024ULL)
+#define MEREADER_TUI_FB2_SECTION_ID "fb2/document"
+#define MEREADER_TUI_FB2_BINARY_PREFIX "fb2://binary/"
 
-typedef struct BacaFb2Binary {
+typedef struct MereaderTuiFb2Binary {
     char *id;
     const char *mime_type;
     const char *extension;
     xmlNode *node;
     size_t size;
-} BacaFb2Binary;
+} MereaderTuiFb2Binary;
 
-typedef struct BacaFb2Section {
+typedef struct MereaderTuiFb2Section {
     xmlNode *node;
     char *label;
     char *anchor;
     unsigned depth;
-} BacaFb2Section;
+} MereaderTuiFb2Section;
 
-typedef struct BacaFb2Backend {
+typedef struct MereaderTuiFb2Backend {
     xmlDocPtr xml;
-    BacaFb2Binary *binaries;
+    MereaderTuiFb2Binary *binaries;
     size_t binary_count;
     size_t binary_capacity;
     size_t binary_id_bytes;
     uint64_t binary_bytes;
-    BacaFb2Section *sections;
+    MereaderTuiFb2Section *sections;
     size_t section_count;
     size_t section_capacity;
-} BacaFb2Backend;
+} MereaderTuiFb2Backend;
 
-typedef struct BacaFb2Html {
-    const BacaFb2Backend *backend;
-    BacaString output;
+typedef struct MereaderTuiFb2Html {
+    const MereaderTuiFb2Backend *backend;
+    MereaderTuiString output;
     size_t section_index;
     unsigned section_depth;
-    BacaError *error;
-} BacaFb2Html;
+    MereaderTuiError *error;
+} MereaderTuiFb2Html;
 
 static bool fb2_node_is(const xmlNode *node, const char *name) {
     return node != NULL && node->type == XML_ELEMENT_NODE && xmlStrcmp(node->name, BAD_CAST name) == 0;
@@ -94,38 +94,38 @@ static bool fb2_xml_space(unsigned char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f';
 }
 
-static char *fb2_normalize_value(const char *value, size_t length, const char *field, BacaError *error) {
-    if (length > BACA_FB2_MAX_FIELD_BYTES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 %s exceeds the supported size limit", field);
+static char *fb2_normalize_value(const char *value, size_t length, const char *field, MereaderTuiError *error) {
+    if (length > MEREADER_TUI_FB2_MAX_FIELD_BYTES) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 %s exceeds the supported size limit", field);
         return NULL;
     }
-    BacaString normalized = {0};
+    MereaderTuiString normalized = {0};
     bool pending_space = false;
     for (size_t index = 0U; index < length; ++index) {
         if (fb2_xml_space((unsigned char)value[index])) {
             pending_space = normalized.length > 0U;
             continue;
         }
-        if (pending_space && !baca_string_append_char(&normalized, ' ', error)) {
-            baca_string_free(&normalized);
+        if (pending_space && !mereader_tui_string_append_char(&normalized, ' ', error)) {
+            mereader_tui_string_free(&normalized);
             return NULL;
         }
         pending_space = false;
-        if (!baca_string_append_char(&normalized, value[index], error)) {
-            baca_string_free(&normalized);
+        if (!mereader_tui_string_append_char(&normalized, value[index], error)) {
+            mereader_tui_string_free(&normalized);
             return NULL;
         }
     }
-    return baca_string_take(&normalized);
+    return mereader_tui_string_take(&normalized);
 }
 
-static char *fb2_node_text(xmlNode *node, const char *field, BacaError *error) {
+static char *fb2_node_text(xmlNode *node, const char *field, MereaderTuiError *error) {
     if (node == NULL) {
         return NULL;
     }
     xmlChar *content = xmlNodeGetContent(node);
     if (content == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not read FB2 %s", field);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not read FB2 %s", field);
         return NULL;
     }
     const size_t length = strlen((const char *)content);
@@ -134,88 +134,88 @@ static char *fb2_node_text(xmlNode *node, const char *field, BacaError *error) {
     return text;
 }
 
-static char *fb2_date_text(xmlNode *node, const char *field, BacaError *error) {
+static char *fb2_date_text(xmlNode *node, const char *field, MereaderTuiError *error) {
     xmlChar *value = fb2_attribute(node, "value");
     char *date = NULL;
     if (value != NULL && value[0] != '\0') {
         date = fb2_normalize_value((const char *)value, strlen((const char *)value), field, error);
     }
     xmlFree(value);
-    return date != NULL || baca_error_is_set(error) ? date : fb2_node_text(node, field, error);
+    return date != NULL || mereader_tui_error_is_set(error) ? date : fb2_node_text(node, field, error);
 }
 
-static bool fb2_append_name_part(BacaString *name, xmlNode *person, const char *part, BacaError *error) {
+static bool fb2_append_name_part(MereaderTuiString *name, xmlNode *person, const char *part, MereaderTuiError *error) {
     char *value = fb2_node_text(fb2_child(person, part), "author name", error);
     if (value == NULL) {
-        return !baca_error_is_set(error);
+        return !mereader_tui_error_is_set(error);
     }
     bool success =
-        (name->length == 0U || baca_string_append_char(name, ' ', error)) && baca_string_append(name, value, error);
+        (name->length == 0U || mereader_tui_string_append_char(name, ' ', error)) && mereader_tui_string_append(name, value, error);
     free(value);
     return success;
 }
 
-static char *fb2_person_name(xmlNode *person, BacaError *error) {
-    BacaString name = {0};
+static char *fb2_person_name(xmlNode *person, MereaderTuiError *error) {
+    MereaderTuiString name = {0};
     if (!fb2_append_name_part(&name, person, "first-name", error) ||
         !fb2_append_name_part(&name, person, "middle-name", error) ||
         !fb2_append_name_part(&name, person, "last-name", error)) {
-        baca_string_free(&name);
+        mereader_tui_string_free(&name);
         return NULL;
     }
     if (name.length == 0U) {
         char *nickname = fb2_node_text(fb2_child(person, "nickname"), "author nickname", error);
-        if (nickname != NULL && !baca_string_append(&name, nickname, error)) {
+        if (nickname != NULL && !mereader_tui_string_append(&name, nickname, error)) {
             free(nickname);
-            baca_string_free(&name);
+            mereader_tui_string_free(&name);
             return NULL;
         }
         free(nickname);
     }
-    if (name.length > BACA_FB2_MAX_FIELD_BYTES) {
-        baca_string_free(&name);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 author name exceeds the supported size limit");
+    if (name.length > MEREADER_TUI_FB2_MAX_FIELD_BYTES) {
+        mereader_tui_string_free(&name);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 author name exceeds the supported size limit");
         return NULL;
     }
-    return baca_string_take(&name);
+    return mereader_tui_string_take(&name);
 }
 
-static char *fb2_authors(xmlNode *parent, BacaError *error) {
-    BacaString authors = {0};
+static char *fb2_authors(xmlNode *parent, MereaderTuiError *error) {
+    MereaderTuiString authors = {0};
     for (xmlNode *node = parent == NULL ? NULL : parent->children; node != NULL; node = node->next) {
         if (!fb2_node_is(node, "author")) {
             continue;
         }
         char *name = fb2_person_name(node, error);
         if (name == NULL) {
-            if (baca_error_is_set(error)) {
-                baca_string_free(&authors);
+            if (mereader_tui_error_is_set(error)) {
+                mereader_tui_string_free(&authors);
                 return NULL;
             }
             continue;
         }
-        bool success = (authors.length == 0U || baca_string_append(&authors, ", ", error)) &&
-                       baca_string_append(&authors, name, error);
+        bool success = (authors.length == 0U || mereader_tui_string_append(&authors, ", ", error)) &&
+                       mereader_tui_string_append(&authors, name, error);
         free(name);
-        if (!success || authors.length > BACA_FB2_MAX_FIELD_BYTES) {
-            baca_string_free(&authors);
-            if (!baca_error_is_set(error)) {
-                baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 authors exceed the supported size limit");
+        if (!success || authors.length > MEREADER_TUI_FB2_MAX_FIELD_BYTES) {
+            mereader_tui_string_free(&authors);
+            if (!mereader_tui_error_is_set(error)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 authors exceed the supported size limit");
             }
             return NULL;
         }
     }
-    return baca_string_take(&authors);
+    return mereader_tui_string_take(&authors);
 }
 
-static bool fb2_metadata(BacaDocument *document, xmlNode *root, const char *path, BacaError *error) {
+static bool fb2_metadata(MereaderTuiDocument *document, xmlNode *root, const char *path, MereaderTuiError *error) {
     xmlNode *description = fb2_child(root, "description");
     xmlNode *title_info = fb2_child(description, "title-info");
     xmlNode *document_info = fb2_child(description, "document-info");
     xmlNode *publish_info = fb2_child(description, "publish-info");
     document->metadata.title = fb2_node_text(fb2_child(title_info, "book-title"), "book title", error);
-    if (document->metadata.title == NULL && !baca_error_is_set(error)) {
-        document->metadata.title = baca_path_basename(path, error);
+    if (document->metadata.title == NULL && !mereader_tui_error_is_set(error)) {
+        document->metadata.title = mereader_tui_path_basename(path, error);
     }
     document->metadata.author = fb2_authors(title_info, error);
     document->metadata.creator = fb2_authors(document_info, error);
@@ -227,9 +227,9 @@ static bool fb2_metadata(BacaDocument *document, xmlNode *root, const char *path
     document->metadata.language = fb2_node_text(fb2_child(title_info, "lang"), "language", error);
     document->metadata.identifier = fb2_node_text(fb2_child(document_info, "id"), "identifier", error);
     document->metadata.source = fb2_node_text(fb2_child(document_info, "src-url"), "source URL", error);
-    document->metadata.format = baca_strdup("FictionBook 2", error);
-    return !baca_error_is_set(error) && document->metadata.title != NULL && document->metadata.format != NULL &&
-           baca_document_account_metadata(document, error);
+    document->metadata.format = mereader_tui_strdup("FictionBook 2", error);
+    return !mereader_tui_error_is_set(error) && document->metadata.title != NULL && document->metadata.format != NULL &&
+           mereader_tui_document_account_metadata(document, error);
 }
 
 static int fb2_base64_value(unsigned char value) {
@@ -245,10 +245,10 @@ static int fb2_base64_value(unsigned char value) {
     return value == '+' ? 62 : value == '/' ? 63 : -1;
 }
 
-static bool fb2_base64_size(xmlNode *node, size_t *size, BacaError *error) {
+static bool fb2_base64_size(xmlNode *node, size_t *size, MereaderTuiError *error) {
     xmlChar *content = xmlNodeGetContent(node);
     if (content == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not read FB2 binary data");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not read FB2 binary data");
         return false;
     }
     size_t significant = 0U;
@@ -270,7 +270,7 @@ static bool fb2_base64_size(xmlNode *node, size_t *size, BacaError *error) {
     }
     if (!valid || significant == 0U || significant % 4U != 0U || padding > 2U) {
         xmlFree(content);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 binary contains invalid base64 data");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 binary contains invalid base64 data");
         return false;
     }
     *size = (significant / 4U) * 3U - padding;
@@ -288,8 +288,8 @@ static bool fb2_image_type(const char *value, const char **mime_type, const char
         {.mime_type = "image/webp", .extension = ".webp"},   {.mime_type = "image/bmp", .extension = ".bmp"},
         {.mime_type = "image/svg+xml", .extension = ".svg"},
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(types); ++index) {
-        if (baca_casecmp(value, types[index].mime_type) == 0) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(types); ++index) {
+        if (mereader_tui_casecmp(value, types[index].mime_type) == 0) {
             *mime_type = types[index].mime_type;
             *extension = types[index].extension;
             return true;
@@ -299,12 +299,12 @@ static bool fb2_image_type(const char *value, const char **mime_type, const char
 }
 
 static int fb2_binary_compare(const void *left_pointer, const void *right_pointer) {
-    const BacaFb2Binary *left = left_pointer;
-    const BacaFb2Binary *right = right_pointer;
+    const MereaderTuiFb2Binary *left = left_pointer;
+    const MereaderTuiFb2Binary *right = right_pointer;
     return strcmp(left->id, right->id);
 }
 
-static bool fb2_collect_binaries(BacaFb2Backend *backend, xmlNode *root, BacaError *error) {
+static bool fb2_collect_binaries(MereaderTuiFb2Backend *backend, xmlNode *root, MereaderTuiError *error) {
     for (xmlNode *node = root->children; node != NULL; node = node->next) {
         if (!fb2_node_is(node, "binary")) {
             continue;
@@ -320,30 +320,30 @@ static bool fb2_collect_binaries(BacaFb2Backend *backend, xmlNode *root, BacaErr
             xmlFree(type_value);
             continue;
         }
-        if (backend->binary_count >= BACA_FB2_MAX_BINARIES) {
+        if (backend->binary_count >= MEREADER_TUI_FB2_MAX_BINARIES) {
             xmlFree(id_value);
             xmlFree(type_value);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 contains more than %d supported images",
-                           BACA_FB2_MAX_BINARIES);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 contains more than %d supported images",
+                           MEREADER_TUI_FB2_MAX_BINARIES);
             return false;
         }
         const size_t id_length = strlen((const char *)id_value);
         size_t decoded_size = 0U;
-        if (id_length + 1U > BACA_FB2_MAX_BINARY_ID_BYTES - backend->binary_id_bytes ||
-            !fb2_base64_size(node, &decoded_size, error) || decoded_size > BACA_GRAPHICS_MAX_INPUT_BYTES ||
-            (uint64_t)decoded_size > BACA_FB2_MAX_TOTAL_BINARY_BYTES - backend->binary_bytes) {
+        if (id_length + 1U > MEREADER_TUI_FB2_MAX_BINARY_ID_BYTES - backend->binary_id_bytes ||
+            !fb2_base64_size(node, &decoded_size, error) || decoded_size > MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES ||
+            (uint64_t)decoded_size > MEREADER_TUI_FB2_MAX_TOTAL_BINARY_BYTES - backend->binary_bytes) {
             xmlFree(id_value);
             xmlFree(type_value);
-            if (!baca_error_is_set(error)) {
-                baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 embedded images exceed the supported size limit");
+            if (!mereader_tui_error_is_set(error)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 embedded images exceed the supported size limit");
             }
             return false;
         }
-        BacaError reserve_error = {0};
-        BacaFb2Binary *binaries =
-            baca_array_reserve(backend->binaries, &backend->binary_capacity, sizeof(*backend->binaries),
+        MereaderTuiError reserve_error = {0};
+        MereaderTuiFb2Binary *binaries =
+            mereader_tui_array_reserve(backend->binaries, &backend->binary_capacity, sizeof(*backend->binaries),
                                backend->binary_count + 1U, &reserve_error);
-        if (baca_error_is_set(&reserve_error)) {
+        if (mereader_tui_error_is_set(&reserve_error)) {
             xmlFree(id_value);
             xmlFree(type_value);
             if (error != NULL) {
@@ -352,13 +352,13 @@ static bool fb2_collect_binaries(BacaFb2Backend *backend, xmlNode *root, BacaErr
             return false;
         }
         backend->binaries = binaries;
-        char *id = baca_strdup((const char *)id_value, error);
+        char *id = mereader_tui_strdup((const char *)id_value, error);
         xmlFree(id_value);
         xmlFree(type_value);
         if (id == NULL) {
             return false;
         }
-        backend->binaries[backend->binary_count++] = (BacaFb2Binary){
+        backend->binaries[backend->binary_count++] = (MereaderTuiFb2Binary){
             .id = id,
             .mime_type = mime_type,
             .extension = extension,
@@ -373,7 +373,7 @@ static bool fb2_collect_binaries(BacaFb2Backend *backend, xmlNode *root, BacaErr
     }
     for (size_t index = 1U; index < backend->binary_count; ++index) {
         if (strcmp(backend->binaries[index - 1U].id, backend->binaries[index].id) == 0) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 contains duplicate binary id: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 contains duplicate binary id: %s",
                            backend->binaries[index].id);
             return false;
         }
@@ -381,7 +381,7 @@ static bool fb2_collect_binaries(BacaFb2Backend *backend, xmlNode *root, BacaErr
     return true;
 }
 
-static const BacaFb2Binary *fb2_binary_by_id(const BacaFb2Backend *backend, const char *id, size_t *index) {
+static const MereaderTuiFb2Binary *fb2_binary_by_id(const MereaderTuiFb2Backend *backend, const char *id, size_t *index) {
     size_t first = 0U;
     size_t last = backend->binary_count;
     while (first < last) {
@@ -403,13 +403,13 @@ static const BacaFb2Binary *fb2_binary_by_id(const BacaFb2Backend *backend, cons
 }
 
 static bool fb2_binary_uri(size_t index, const char *extension, char output[64]) {
-    const int length = snprintf(output, 64U, BACA_FB2_BINARY_PREFIX "%zu%s", index, extension);
+    const int length = snprintf(output, 64U, MEREADER_TUI_FB2_BINARY_PREFIX "%zu%s", index, extension);
     return length > 0 && length < 64;
 }
 
-static const BacaFb2Binary *fb2_binary_for_uri(const BacaFb2Backend *backend, const char *uri) {
-    const size_t prefix_length = sizeof(BACA_FB2_BINARY_PREFIX) - 1U;
-    if (uri == NULL || strncmp(uri, BACA_FB2_BINARY_PREFIX, prefix_length) != 0) {
+static const MereaderTuiFb2Binary *fb2_binary_for_uri(const MereaderTuiFb2Backend *backend, const char *uri) {
+    const size_t prefix_length = sizeof(MEREADER_TUI_FB2_BINARY_PREFIX) - 1U;
+    if (uri == NULL || strncmp(uri, MEREADER_TUI_FB2_BINARY_PREFIX, prefix_length) != 0) {
         return NULL;
     }
     errno = 0;
@@ -418,16 +418,16 @@ static const BacaFb2Binary *fb2_binary_for_uri(const BacaFb2Backend *backend, co
     if (errno == ERANGE || end == uri + prefix_length || parsed > SIZE_MAX || (size_t)parsed >= backend->binary_count) {
         return NULL;
     }
-    const BacaFb2Binary *binary = &backend->binaries[(size_t)parsed];
+    const MereaderTuiFb2Binary *binary = &backend->binaries[(size_t)parsed];
     char expected[64] = {0};
     return fb2_binary_uri((size_t)parsed, binary->extension, expected) && strcmp(uri, expected) == 0 ? binary : NULL;
 }
 
-static bool fb2_resource_size(const BacaDocument *document, const char *uri, size_t *size) {
+static bool fb2_resource_size(const MereaderTuiDocument *document, const char *uri, size_t *size) {
     if (document == NULL || document->backend == NULL || size == NULL) {
         return false;
     }
-    const BacaFb2Binary *binary = fb2_binary_for_uri(document->backend, uri);
+    const MereaderTuiFb2Binary *binary = fb2_binary_for_uri(document->backend, uri);
     if (binary == NULL) {
         return false;
     }
@@ -435,16 +435,16 @@ static bool fb2_resource_size(const BacaDocument *document, const char *uri, siz
     return true;
 }
 
-static bool fb2_load_resource(BacaDocument *document, const char *uri, BacaResource *resource, BacaError *error) {
-    BacaFb2Backend *backend = document->backend;
-    const BacaFb2Binary *binary = backend == NULL ? NULL : fb2_binary_for_uri(backend, uri);
+static bool fb2_load_resource(MereaderTuiDocument *document, const char *uri, MereaderTuiResource *resource, MereaderTuiError *error) {
+    MereaderTuiFb2Backend *backend = document->backend;
+    const MereaderTuiFb2Binary *binary = backend == NULL ? NULL : fb2_binary_for_uri(backend, uri);
     if (binary == NULL) {
-        baca_error_set(error, BACA_ERROR_NOT_FOUND, "FB2 image resource not found: %s", uri);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND, "FB2 image resource not found: %s", uri);
         return false;
     }
     xmlChar *content = xmlNodeGetContent(binary->node);
     if (content == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not read FB2 image data");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not read FB2 image data");
         return false;
     }
     gsize decoded_length = 0U;
@@ -452,27 +452,27 @@ static bool fb2_load_resource(BacaDocument *document, const char *uri, BacaResou
     xmlFree(content);
     if (decoded == NULL || decoded_length != binary->size) {
         g_free(decoded);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 image base64 changed after validation");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 image base64 changed after validation");
         return false;
     }
     unsigned char *data = malloc(binary->size == 0U ? 1U : binary->size);
-    char *mime_type = baca_strdup(binary->mime_type, error);
+    char *mime_type = mereader_tui_strdup(binary->mime_type, error);
     if (data == NULL || mime_type == NULL) {
         free(data);
         free(mime_type);
         g_free(decoded);
-        if (!baca_error_is_set(error)) {
-            baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate FB2 image resource");
+        if (!mereader_tui_error_is_set(error)) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate FB2 image resource");
         }
         return false;
     }
     memcpy(data, decoded, binary->size);
     g_free(decoded);
-    *resource = (BacaResource){.data = data, .length = binary->size, .mime_type = mime_type};
+    *resource = (MereaderTuiResource){.data = data, .length = binary->size, .mime_type = mime_type};
     return true;
 }
 
-static void fb2_backend_destroy(BacaFb2Backend *backend) {
+static void fb2_backend_destroy(MereaderTuiFb2Backend *backend) {
     if (backend == NULL) {
         return;
     }
@@ -489,21 +489,21 @@ static void fb2_backend_destroy(BacaFb2Backend *backend) {
     free(backend);
 }
 
-static void fb2_close(BacaDocument *document) {
+static void fb2_close(MereaderTuiDocument *document) {
     fb2_backend_destroy(document->backend);
     document->backend = NULL;
 }
 
-static const BacaDocumentOps fb2_document_ops = {
+static const MereaderTuiDocumentOps fb2_document_ops = {
     .load_resource = fb2_load_resource,
     .resource_size = fb2_resource_size,
     .close = fb2_close,
 };
 
-static bool fb2_collect_sections(BacaFb2Backend *backend, xmlNode *node, unsigned depth, unsigned xml_depth,
-                                 BacaError *error) {
-    if (xml_depth > BACA_FB2_MAX_XML_DEPTH) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 sections are nested too deeply");
+static bool fb2_collect_sections(MereaderTuiFb2Backend *backend, xmlNode *node, unsigned depth, unsigned xml_depth,
+                                 MereaderTuiError *error) {
+    if (xml_depth > MEREADER_TUI_FB2_MAX_XML_DEPTH) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 sections are nested too deeply");
         return false;
     }
     for (xmlNode *child = node == NULL ? NULL : node->children; child != NULL; child = child->next) {
@@ -515,27 +515,27 @@ static bool fb2_collect_sections(BacaFb2Backend *backend, xmlNode *node, unsigne
             continue;
         }
         char *label = fb2_node_text(fb2_child(child, "title"), "section title", error);
-        if (baca_error_is_set(error)) {
+        if (mereader_tui_error_is_set(error)) {
             return false;
         }
         char anchor_buffer[64] = {0};
         const int anchor_length =
-            snprintf(anchor_buffer, sizeof(anchor_buffer), "__baca_fb2_section_%zu", backend->section_count);
+            snprintf(anchor_buffer, sizeof(anchor_buffer), "__mereader_tui_fb2_section_%zu", backend->section_count);
         if (anchor_length <= 0 || (size_t)anchor_length >= sizeof(anchor_buffer)) {
             free(label);
-            baca_error_set(error, BACA_ERROR_INTERNAL, "could not format FB2 section anchor");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format FB2 section anchor");
             return false;
         }
-        if (backend->section_count >= BACA_DOCUMENT_MAX_TOC_ENTRIES) {
+        if (backend->section_count >= MEREADER_TUI_DOCUMENT_MAX_TOC_ENTRIES) {
             free(label);
-            baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 contains too many sections");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 contains too many sections");
             return false;
         }
-        BacaError reserve_error = {0};
-        BacaFb2Section *sections =
-            baca_array_reserve(backend->sections, &backend->section_capacity, sizeof(*backend->sections),
+        MereaderTuiError reserve_error = {0};
+        MereaderTuiFb2Section *sections =
+            mereader_tui_array_reserve(backend->sections, &backend->section_capacity, sizeof(*backend->sections),
                                backend->section_count + 1U, &reserve_error);
-        if (baca_error_is_set(&reserve_error)) {
+        if (mereader_tui_error_is_set(&reserve_error)) {
             free(label);
             if (error != NULL) {
                 *error = reserve_error;
@@ -543,12 +543,12 @@ static bool fb2_collect_sections(BacaFb2Backend *backend, xmlNode *node, unsigne
             return false;
         }
         backend->sections = sections;
-        char *anchor = baca_strdup(anchor_buffer, error);
+        char *anchor = mereader_tui_strdup(anchor_buffer, error);
         if (anchor == NULL) {
             free(label);
             return false;
         }
-        backend->sections[backend->section_count++] = (BacaFb2Section){
+        backend->sections[backend->section_count++] = (MereaderTuiFb2Section){
             .node = child,
             .label = label,
             .anchor = anchor,
@@ -561,19 +561,19 @@ static bool fb2_collect_sections(BacaFb2Backend *backend, xmlNode *node, unsigne
     return true;
 }
 
-static bool fb2_html_append_n(BacaFb2Html *context, const char *value, size_t length) {
-    if (context->output.length > BACA_FB2_MAX_HTML_BYTES || length > BACA_FB2_MAX_HTML_BYTES - context->output.length) {
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "FB2 rendered markup exceeds the supported size limit");
+static bool fb2_html_append_n(MereaderTuiFb2Html *context, const char *value, size_t length) {
+    if (context->output.length > MEREADER_TUI_FB2_MAX_HTML_BYTES || length > MEREADER_TUI_FB2_MAX_HTML_BYTES - context->output.length) {
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "FB2 rendered markup exceeds the supported size limit");
         return false;
     }
-    return baca_string_append_n(&context->output, value, length, context->error);
+    return mereader_tui_string_append_n(&context->output, value, length, context->error);
 }
 
-static bool fb2_html_append(BacaFb2Html *context, const char *value) {
+static bool fb2_html_append(MereaderTuiFb2Html *context, const char *value) {
     return fb2_html_append_n(context, value, strlen(value));
 }
 
-static bool fb2_html_escape(BacaFb2Html *context, const char *value, size_t length, bool attribute) {
+static bool fb2_html_escape(MereaderTuiFb2Html *context, const char *value, size_t length, bool attribute) {
     size_t start = 0U;
     for (size_t index = 0U; index < length; ++index) {
         const char *replacement = NULL;
@@ -601,16 +601,16 @@ static bool fb2_html_escape(BacaFb2Html *context, const char *value, size_t leng
     return true;
 }
 
-static bool fb2_html_attribute(BacaFb2Html *context, const char *name, const xmlChar *value) {
+static bool fb2_html_attribute(MereaderTuiFb2Html *context, const char *name, const xmlChar *value) {
     return value == NULL ||
            (fb2_html_append(context, " ") && fb2_html_append(context, name) && fb2_html_append(context, "=\"") &&
             fb2_html_escape(context, (const char *)value, strlen((const char *)value), true) &&
             fb2_html_append(context, "\""));
 }
 
-static bool fb2_html_node(BacaFb2Html *context, xmlNode *node, unsigned xml_depth);
+static bool fb2_html_node(MereaderTuiFb2Html *context, xmlNode *node, unsigned xml_depth);
 
-static bool fb2_html_children(BacaFb2Html *context, xmlNode *node, unsigned xml_depth) {
+static bool fb2_html_children(MereaderTuiFb2Html *context, xmlNode *node, unsigned xml_depth) {
     for (xmlNode *child = node == NULL ? NULL : node->children; child != NULL; child = child->next) {
         if (!fb2_html_node(context, child, xml_depth + 1U)) {
             return false;
@@ -619,7 +619,7 @@ static bool fb2_html_children(BacaFb2Html *context, xmlNode *node, unsigned xml_
     return true;
 }
 
-static bool fb2_html_wrapped(BacaFb2Html *context, xmlNode *node, const char *tag, unsigned xml_depth) {
+static bool fb2_html_wrapped(MereaderTuiFb2Html *context, xmlNode *node, const char *tag, unsigned xml_depth) {
     xmlChar *id = fb2_attribute(node, "id");
     bool success = fb2_html_append(context, "<") && fb2_html_append(context, tag) &&
                    fb2_html_attribute(context, "id", id) && fb2_html_append(context, ">") &&
@@ -629,7 +629,7 @@ static bool fb2_html_wrapped(BacaFb2Html *context, xmlNode *node, const char *ta
     return success;
 }
 
-static bool fb2_html_title(BacaFb2Html *context, xmlNode *node, unsigned level, unsigned xml_depth) {
+static bool fb2_html_title(MereaderTuiFb2Html *context, xmlNode *node, unsigned level, unsigned xml_depth) {
     char tag[4] = {'h', (char)('0' + (level > 6U ? 6U : level)), '\0', '\0'};
     xmlChar *id = fb2_attribute(node, "id");
     bool success = fb2_html_append(context, "<") && fb2_html_append(context, tag) &&
@@ -655,17 +655,17 @@ static bool fb2_html_title(BacaFb2Html *context, xmlNode *node, unsigned level, 
     return success;
 }
 
-static bool fb2_html_image(BacaFb2Html *context, xmlNode *node) {
+static bool fb2_html_image(MereaderTuiFb2Html *context, xmlNode *node) {
     xmlChar *href = fb2_attribute(node, "href");
     xmlChar *alt = fb2_attribute(node, "alt");
     char uri[64] = "fb2://missing";
     if (href != NULL && href[0] == '#') {
         size_t index = 0U;
-        const BacaFb2Binary *binary = fb2_binary_by_id(context->backend, (const char *)href + 1U, &index);
+        const MereaderTuiFb2Binary *binary = fb2_binary_by_id(context->backend, (const char *)href + 1U, &index);
         if (binary != NULL && !fb2_binary_uri(index, binary->extension, uri)) {
             xmlFree(href);
             xmlFree(alt);
-            baca_error_set(context->error, BACA_ERROR_INTERNAL, "could not format FB2 image URI");
+            mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_INTERNAL, "could not format FB2 image URI");
             return false;
         }
     }
@@ -677,7 +677,7 @@ static bool fb2_html_image(BacaFb2Html *context, xmlNode *node) {
     return success;
 }
 
-static bool fb2_html_link(BacaFb2Html *context, xmlNode *node, unsigned xml_depth) {
+static bool fb2_html_link(MereaderTuiFb2Html *context, xmlNode *node, unsigned xml_depth) {
     xmlChar *href = fb2_attribute(node, "href");
     xmlChar *id = fb2_attribute(node, "id");
     bool success = fb2_html_append(context, "<a") && fb2_html_attribute(context, "href", href) &&
@@ -688,13 +688,13 @@ static bool fb2_html_link(BacaFb2Html *context, xmlNode *node, unsigned xml_dept
     return success;
 }
 
-static bool fb2_html_section(BacaFb2Html *context, xmlNode *node, unsigned xml_depth) {
+static bool fb2_html_section(MereaderTuiFb2Html *context, xmlNode *node, unsigned xml_depth) {
     if (context->section_index >= context->backend->section_count ||
         context->backend->sections[context->section_index].node != node) {
-        baca_error_set(context->error, BACA_ERROR_INTERNAL, "FB2 section traversal changed");
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_INTERNAL, "FB2 section traversal changed");
         return false;
     }
-    const BacaFb2Section *section = &context->backend->sections[context->section_index++];
+    const MereaderTuiFb2Section *section = &context->backend->sections[context->section_index++];
     xmlChar *original_id = fb2_attribute(node, "id");
     bool success = fb2_html_append(context, "<section id=\"") &&
                    fb2_html_escape(context, section->anchor, strlen(section->anchor), true) &&
@@ -716,9 +716,9 @@ static bool fb2_html_section(BacaFb2Html *context, xmlNode *node, unsigned xml_d
     return success;
 }
 
-static bool fb2_html_node(BacaFb2Html *context, xmlNode *node, unsigned xml_depth) {
-    if (xml_depth > BACA_FB2_MAX_XML_DEPTH) {
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "FB2 markup is nested too deeply");
+static bool fb2_html_node(MereaderTuiFb2Html *context, xmlNode *node, unsigned xml_depth) {
+    if (xml_depth > MEREADER_TUI_FB2_MAX_XML_DEPTH) {
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "FB2 markup is nested too deeply");
         return false;
     }
     if (node->type == XML_TEXT_NODE || node->type == XML_CDATA_SECTION_NODE) {
@@ -767,7 +767,7 @@ static bool fb2_html_node(BacaFb2Html *context, xmlNode *node, unsigned xml_dept
         return fb2_html_wrapped(context, node, "div", xml_depth);
     }
     static const char *const table_tags[] = {"table", "tr", "td", "th"};
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(table_tags); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(table_tags); ++index) {
         if (fb2_node_is(node, table_tags[index])) {
             return fb2_html_wrapped(context, node, table_tags[index], xml_depth);
         }
@@ -786,7 +786,7 @@ static bool fb2_html_node(BacaFb2Html *context, xmlNode *node, unsigned xml_dept
     return success;
 }
 
-static bool fb2_build_html(BacaFb2Html *context, xmlNode *root, BacaError *error) {
+static bool fb2_build_html(MereaderTuiFb2Html *context, xmlNode *root, MereaderTuiError *error) {
     if (!fb2_html_append(context, "<html><body>")) {
         return false;
     }
@@ -808,24 +808,24 @@ static bool fb2_build_html(BacaFb2Html *context, xmlNode *root, BacaError *error
         }
     }
     if (body_count == 0U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 document contains no body");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 document contains no body");
         return false;
     }
     return fb2_html_append(context, "</body></html>");
 }
 
-static bool fb2_add_toc(BacaDocument *document, const BacaFb2Backend *backend, BacaError *error) {
+static bool fb2_add_toc(MereaderTuiDocument *document, const MereaderTuiFb2Backend *backend, MereaderTuiError *error) {
     for (size_t index = 0U; index < backend->section_count; ++index) {
-        const BacaFb2Section *section = &backend->sections[index];
+        const MereaderTuiFb2Section *section = &backend->sections[index];
         if (section->label == NULL) {
             continue;
         }
         char target[128] = {0};
-        const int length = snprintf(target, sizeof(target), BACA_FB2_SECTION_ID "#%s", section->anchor);
+        const int length = snprintf(target, sizeof(target), MEREADER_TUI_FB2_SECTION_ID "#%s", section->anchor);
         if (length <= 0 || (size_t)length >= sizeof(target) ||
-            !baca_document_add_toc(document, section->label, target, section->depth, error)) {
-            if (!baca_error_is_set(error)) {
-                baca_error_set(error, BACA_ERROR_INTERNAL, "could not format FB2 TOC target");
+            !mereader_tui_document_add_toc(document, section->label, target, section->depth, error)) {
+            if (!mereader_tui_error_is_set(error)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format FB2 TOC target");
             }
             return false;
         }
@@ -833,14 +833,14 @@ static bool fb2_add_toc(BacaDocument *document, const BacaFb2Backend *backend, B
     return true;
 }
 
-bool baca_fb2_open(BacaDocument *document, const char *path, const struct stat *expected_identity, BacaError *error) {
+bool mereader_tui_fb2_open(MereaderTuiDocument *document, const char *path, const struct stat *expected_identity, MereaderTuiError *error) {
     if (document == NULL || path == NULL || path[0] == '\0' || document->path == NULL ||
         strcmp(path, document->path) != 0 || expected_identity == NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "document, canonical FB2 path, and detected identity are required");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "document, canonical FB2 path, and detected identity are required");
         return false;
     }
-    BacaBuffer snapshot = {0};
-    if (!baca_document_read_snapshot(path, expected_identity, BACA_FB2_MAX_INPUT_BYTES, &snapshot, error)) {
+    MereaderTuiBuffer snapshot = {0};
+    if (!mereader_tui_document_read_snapshot(path, expected_identity, MEREADER_TUI_FB2_MAX_INPUT_BYTES, &snapshot, error)) {
         return false;
     }
     int options = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
@@ -853,28 +853,28 @@ bool baca_fb2_open(BacaDocument *document, const char *path, const struct stat *
 #endif
     xmlResetLastError();
     xmlDocPtr xml = xmlReadMemory((const char *)snapshot.data, (int)snapshot.length, path, NULL, options);
-    baca_buffer_free(&snapshot);
+    mereader_tui_buffer_free(&snapshot);
     if (xml == NULL) {
         const xmlError *parse_error = xmlGetLastError();
         const char *detail = parse_error == NULL || parse_error->message == NULL ? "invalid XML" : parse_error->message;
-        baca_error_set(error, BACA_ERROR_CORRUPT, "could not parse FB2 XML: %.400s", detail);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not parse FB2 XML: %.400s", detail);
         return false;
     }
     xmlNode *root = xmlDocGetRootElement(xml);
     if (!fb2_node_is(root, "FictionBook") || xml->extSubset != NULL ||
         (xml->intSubset != NULL && xml->intSubset->children != NULL)) {
         xmlFreeDoc(xml);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "FB2 root is invalid or contains a DTD subset");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "FB2 root is invalid or contains a DTD subset");
         return false;
     }
-    BacaFb2Backend *backend = calloc(1U, sizeof(*backend));
+    MereaderTuiFb2Backend *backend = calloc(1U, sizeof(*backend));
     if (backend == NULL) {
         xmlFreeDoc(xml);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate FB2 backend");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate FB2 backend");
         return false;
     }
     backend->xml = xml;
-    document->format = BACA_FORMAT_FB2;
+    document->format = MEREADER_TUI_FORMAT_FB2;
     document->backend = backend;
     document->ops = &fb2_document_ops;
     if (!fb2_collect_binaries(backend, root, error) || !fb2_metadata(document, root, path, error)) {
@@ -885,16 +885,16 @@ bool baca_fb2_open(BacaDocument *document, const char *path, const struct stat *
             return false;
         }
     }
-    BacaFb2Html html = {.backend = backend, .error = error};
+    MereaderTuiFb2Html html = {.backend = backend, .error = error};
     const bool rendered = fb2_build_html(&html, root, error) && html.section_index == backend->section_count &&
-                          baca_html_append_section(document, html.output.data == NULL ? "" : html.output.data,
-                                                   html.output.length, BACA_FB2_SECTION_ID, error);
-    baca_string_free(&html.output);
+                          mereader_tui_html_append_section(document, html.output.data == NULL ? "" : html.output.data,
+                                                   html.output.length, MEREADER_TUI_FB2_SECTION_ID, error);
+    mereader_tui_string_free(&html.output);
     if (!rendered) {
-        if (!baca_error_is_set(error)) {
-            baca_error_set(error, BACA_ERROR_INTERNAL, "FB2 section rendering was incomplete");
+        if (!mereader_tui_error_is_set(error)) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "FB2 section rendering was incomplete");
         }
         return false;
     }
-    return fb2_add_toc(document, backend, error) && baca_document_index_toc_sections(document, error);
+    return fb2_add_toc(document, backend, error) && mereader_tui_document_index_toc_sections(document, error);
 }

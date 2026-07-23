@@ -1,6 +1,6 @@
 #include "test_support.h"
 
-#include "baca/library.h"
+#include "mereader-tui/library.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -26,7 +26,7 @@ static const unsigned char library_pixel_png[] = {
     0x49U, 0x45U, 0x4eU, 0x44U, 0xaeU, 0x42U, 0x60U, 0x82U,
 };
 
-[[nodiscard]] int baca_platform_block_exit_signals(sigset_t *previous);
+[[nodiscard]] int mereader_tui_platform_block_exit_signals(sigset_t *previous);
 
 typedef struct LibraryPtyEnvironment {
     char *cache;
@@ -39,7 +39,7 @@ typedef struct LibraryPtyProcess {
     pid_t pid;
     int master;
     int status;
-    BacaString output;
+    MereaderTuiString output;
     size_t output_checkpoint;
     bool exited;
 } LibraryPtyProcess;
@@ -59,9 +59,9 @@ typedef struct LibrarySignalMaskResult {
     bool blocked;
 } LibrarySignalMaskResult;
 
-static BacaHistoryEntry library_entry(const char *filepath, const char *title, const char *author, double progress,
+static MereaderTuiHistoryEntry library_entry(const char *filepath, const char *title, const char *author, double progress,
                                        const char *last_read) {
-    return (BacaHistoryEntry){
+    return (MereaderTuiHistoryEntry){
         .filepath = (char *)filepath,
         .title = (char *)title,
         .author = (char *)author,
@@ -90,28 +90,28 @@ static void library_pty_environment_free(LibraryPtyEnvironment *environment) {
 static bool library_pty_environment_init(const char *name, LibraryPtyEnvironment *environment) {
     char relative[256] = {0};
     (void)snprintf(relative, sizeof(relative), "library-pty/%s/cache", name);
-    if (!baca_test_mkdir(relative)) {
+    if (!mereader_tui_test_mkdir(relative)) {
         return false;
     }
-    environment->cache = baca_test_path(relative);
+    environment->cache = mereader_tui_test_path(relative);
     (void)snprintf(relative, sizeof(relative), "library-pty/%s/config", name);
-    if (!baca_test_mkdir(relative)) {
+    if (!mereader_tui_test_mkdir(relative)) {
         library_pty_environment_free(environment);
         return false;
     }
-    environment->config = baca_test_path(relative);
+    environment->config = mereader_tui_test_path(relative);
     (void)snprintf(relative, sizeof(relative), "library-pty/%s/home", name);
-    if (!baca_test_mkdir(relative)) {
+    if (!mereader_tui_test_mkdir(relative)) {
         library_pty_environment_free(environment);
         return false;
     }
-    environment->home = baca_test_path(relative);
+    environment->home = mereader_tui_test_path(relative);
     (void)snprintf(relative, sizeof(relative), "library-pty/%s/tmp", name);
-    if (!baca_test_mkdir(relative)) {
+    if (!mereader_tui_test_mkdir(relative)) {
         library_pty_environment_free(environment);
         return false;
     }
-    environment->temporary = baca_test_path(relative);
+    environment->temporary = mereader_tui_test_path(relative);
     if (environment->cache == NULL || environment->config == NULL || environment->home == NULL ||
         environment->temporary == NULL) {
         library_pty_environment_free(environment);
@@ -158,10 +158,10 @@ static char *library_create_epub(const char *relative, const char *title, const 
         return NULL;
     }
 
-    char *path = baca_test_path(relative);
-    BacaError error = {0};
-    char *directory = path == NULL ? NULL : baca_path_dirname(path, &error);
-    if (path == NULL || directory == NULL || !baca_mkdirs(directory, &error)) {
+    char *path = mereader_tui_test_path(relative);
+    MereaderTuiError error = {0};
+    char *directory = path == NULL ? NULL : mereader_tui_path_dirname(path, &error);
+    if (path == NULL || directory == NULL || !mereader_tui_mkdirs(directory, &error)) {
         free(directory);
         free(path);
         return NULL;
@@ -191,34 +191,34 @@ static char *library_create_epub(const char *relative, const char *title, const 
     return path;
 }
 
-static bool library_seed_history(const LibraryPtyEnvironment *environment, const BacaHistoryEntry *entries,
+static bool library_seed_history(const LibraryPtyEnvironment *environment, const MereaderTuiHistoryEntry *entries,
                                  size_t count) {
-    BacaError error = {0};
-    char *database_path = baca_path_join(environment->cache, "mereader-tui/mereader-tui.db", &error);
-    char *directory = database_path == NULL ? NULL : baca_path_dirname(database_path, &error);
-    BacaDatabase database = {0};
-    bool seeded = database_path != NULL && directory != NULL && baca_mkdirs(directory, &error) &&
-                  baca_database_open(&database, database_path, &error) && baca_database_migrate(&database, &error);
+    MereaderTuiError error = {0};
+    char *database_path = mereader_tui_path_join(environment->cache, "mereader-tui/mereader-tui.db", &error);
+    char *directory = database_path == NULL ? NULL : mereader_tui_path_dirname(database_path, &error);
+    MereaderTuiDatabase database = {0};
+    bool seeded = database_path != NULL && directory != NULL && mereader_tui_mkdirs(directory, &error) &&
+                  mereader_tui_database_open(&database, database_path, &error) && mereader_tui_database_migrate(&database, &error);
     for (size_t index = 0U; seeded && index < count; ++index) {
-        seeded = baca_database_save_progress(&database, &entries[index], &error);
+        seeded = mereader_tui_database_save_progress(&database, &entries[index], &error);
     }
     if (!seeded) {
         fprintf(stderr, "library PTY fixture: %s\n", error.message);
     }
-    baca_database_close(&database);
+    mereader_tui_database_close(&database);
     free(directory);
     free(database_path);
     return seeded;
 }
 
 static bool library_configure_root(const LibraryPtyEnvironment *environment, const char *root) {
-    BacaError error = {0};
-    char *path = baca_path_join(environment->config, "mereader-tui/config.ini", &error);
-    char *directory = path == NULL ? NULL : baca_path_dirname(path, &error);
-    BacaString text = {0};
-    const bool ready = path != NULL && directory != NULL && baca_mkdirs(directory, &error) &&
-                       baca_string_append(&text, "[General]\nLibraryPath = ", &error) &&
-                       baca_string_append(&text, root, &error) && baca_string_append_char(&text, '\n', &error);
+    MereaderTuiError error = {0};
+    char *path = mereader_tui_path_join(environment->config, "mereader-tui/config.ini", &error);
+    char *directory = path == NULL ? NULL : mereader_tui_path_dirname(path, &error);
+    MereaderTuiString text = {0};
+    const bool ready = path != NULL && directory != NULL && mereader_tui_mkdirs(directory, &error) &&
+                       mereader_tui_string_append(&text, "[General]\nLibraryPath = ", &error) &&
+                       mereader_tui_string_append(&text, root, &error) && mereader_tui_string_append_char(&text, '\n', &error);
     bool written = false;
     if (ready) {
         FILE *file = fopen(path, "wb");
@@ -227,7 +227,7 @@ static bool library_configure_root(const LibraryPtyEnvironment *environment, con
             written = fclose(file) == 0 && written;
         }
     }
-    baca_string_free(&text);
+    mereader_tui_string_free(&text);
     free(directory);
     free(path);
     return written;
@@ -238,8 +238,8 @@ static bool library_configure_root_with_mode(const LibraryPtyEnvironment *enviro
     if (!library_configure_root(environment, root)) {
         return false;
     }
-    BacaError error = {0};
-    char *path = baca_path_join(environment->config, "mereader-tui/config.ini", &error);
+    MereaderTuiError error = {0};
+    char *path = mereader_tui_path_join(environment->config, "mereader-tui/config.ini", &error);
     FILE *file = path == NULL ? NULL : fopen(path, "ab");
     bool written = false;
     if (file != NULL) {
@@ -251,8 +251,8 @@ static bool library_configure_root_with_mode(const LibraryPtyEnvironment *enviro
 }
 
 static bool library_database_execute(const LibraryPtyEnvironment *environment, const char *sql) {
-    BacaError error = {0};
-    char *database_path = baca_path_join(environment->cache, "mereader-tui/mereader-tui.db", &error);
+    MereaderTuiError error = {0};
+    char *database_path = mereader_tui_path_join(environment->cache, "mereader-tui/mereader-tui.db", &error);
     sqlite3 *database = NULL;
     int status = database_path == NULL ? SQLITE_NOMEM : sqlite3_open(database_path, &database);
     char *message = NULL;
@@ -273,7 +273,7 @@ static bool library_database_execute(const LibraryPtyEnvironment *environment, c
 
 static bool library_pty_drain(LibraryPtyProcess *process, bool *had_data) {
     char buffer[4096] = {0};
-    BacaError error = {0};
+    MereaderTuiError error = {0};
     if (had_data != NULL) {
         *had_data = false;
     }
@@ -283,7 +283,7 @@ static bool library_pty_drain(LibraryPtyProcess *process, bool *had_data) {
             if (had_data != NULL) {
                 *had_data = true;
             }
-            if (!baca_string_append_n(&process->output, buffer, (size_t)length, &error)) {
+            if (!mereader_tui_string_append_n(&process->output, buffer, (size_t)length, &error)) {
                 return false;
             }
         } else if (length < 0 && errno == EINTR) {
@@ -626,7 +626,7 @@ static bool library_pty_screen_replay(const LibraryPtyProcess *process, size_t r
                         if (parameters[count - 1U] <= (INT_MAX - 9) / 10) {
                             parameters[count - 1U] = parameters[count - 1U] * 10 + (int)(part - '0');
                         }
-                    } else if (part == ';' && count < BACA_ARRAY_LEN(parameters)) {
+                    } else if (part == ';' && count < MEREADER_TUI_ARRAY_LEN(parameters)) {
                         ++count;
                     } else if (part == '?' && count == 1U && parameters[0] == 0) {
                         private_mode = true;
@@ -750,105 +750,105 @@ static void library_pty_process_free(LibraryPtyProcess *process) {
     if (process->master >= 0) {
         (void)close(process->master);
     }
-    baca_string_free(&process->output);
+    mereader_tui_string_free(&process->output);
     *process = (LibraryPtyProcess){.master = -1};
 }
 
-static BacaTestResult test_projection_and_literal_filtering(void) {
-    BacaHistoryEntry entries[] = {
+static MereaderTuiTestResult test_projection_and_literal_filtering(void) {
+    MereaderTuiHistoryEntry entries[] = {
         library_entry("/books/one.epub", "One [Draft]", "Alice", 0.1, "2026-03-03 00:00:00"),
         library_entry("/shelf/two.epub", "Second", "Bob", 0.2, "2026-03-02 00:00:00"),
         library_entry("/books/three.epub", "Third", "Carol", 0.3, "2026-03-01 00:00:00"),
     };
-    BacaHistory history = {.items = entries, .length = BACA_ARRAY_LEN(entries)};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
+    MereaderTuiHistory history = {.items = entries, .length = MEREADER_TUI_ARRAY_LEN(entries)};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "[DRAFT]", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "[DRAFT]", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 1U);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/books/one.epub");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "bOb", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "bOb", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 1U);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/shelf/two.epub");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "/BOOKS/", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "/BOOKS/", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 2U);
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_sorting_and_filepath_ties(void) {
-    BacaHistoryEntry entries[] = {
+static MereaderTuiTestResult test_sorting_and_filepath_ties(void) {
+    MereaderTuiHistoryEntry entries[] = {
         library_entry("/z.epub", "Same", "Beta", 0.1, "2026-03-02 00:00:00"),
         library_entry("/a.epub", "same", "Beta", 0.2, "2026-03-02 00:00:00"),
         library_entry("/m.epub", "Alpha", "alpha", 0.3, "2026-03-03 00:00:00"),
     };
-    BacaHistory history = {.items = entries, .length = BACA_ARRAY_LEN(entries)};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
+    MereaderTuiHistory history = {.items = entries, .length = MEREADER_TUI_ARRAY_LEN(entries)};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/m.epub");
     TEST_ASSERT_STR(view.rows[1].entry->filepath, "/a.epub");
     TEST_ASSERT_STR(view.rows[2].entry->filepath, "/z.epub");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/m.epub");
     TEST_ASSERT_STR(view.rows[1].entry->filepath, "/a.epub");
     TEST_ASSERT_STR(view.rows[2].entry->filepath, "/z.epub");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_AUTHOR, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_AUTHOR, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/m.epub");
     TEST_ASSERT_STR(view.rows[1].entry->filepath, "/a.epub");
     TEST_ASSERT_STR(view.rows[2].entry->filepath, "/z.epub");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT(baca_library_sort_next(BACA_LIBRARY_SORT_RECENT) == BACA_LIBRARY_SORT_TITLE);
-    TEST_ASSERT(baca_library_sort_next(BACA_LIBRARY_SORT_TITLE) == BACA_LIBRARY_SORT_AUTHOR);
-    TEST_ASSERT(baca_library_sort_next(BACA_LIBRARY_SORT_AUTHOR) == BACA_LIBRARY_SORT_RECENT);
-    TEST_ASSERT_STR(baca_library_sort_name(BACA_LIBRARY_SORT_AUTHOR), "author");
-    return BACA_TEST_PASS;
+    TEST_ASSERT(mereader_tui_library_sort_next(MEREADER_TUI_LIBRARY_SORT_RECENT) == MEREADER_TUI_LIBRARY_SORT_TITLE);
+    TEST_ASSERT(mereader_tui_library_sort_next(MEREADER_TUI_LIBRARY_SORT_TITLE) == MEREADER_TUI_LIBRARY_SORT_AUTHOR);
+    TEST_ASSERT(mereader_tui_library_sort_next(MEREADER_TUI_LIBRARY_SORT_AUTHOR) == MEREADER_TUI_LIBRARY_SORT_RECENT);
+    TEST_ASSERT_STR(mereader_tui_library_sort_name(MEREADER_TUI_LIBRARY_SORT_AUTHOR), "author");
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_recent_sorting_rejects_invalid_timestamps(void) {
-    BacaHistoryEntry entries[] = {
+static MereaderTuiTestResult test_recent_sorting_rejects_invalid_timestamps(void) {
+    MereaderTuiHistoryEntry entries[] = {
         library_entry("/invalid-z.epub", "Invalid Z", "A", 0.1, "9999-99-99 99:99:99"),
         library_entry("/older.epub", "Older", "A", 0.2, "2025-12-31 23:59:59"),
         library_entry("/missing.epub", "Missing", "A", 0.3, NULL),
         library_entry("/newer.epub", "Newer", "A", 0.4, "2026-01-01 00:00:00"),
         library_entry("/invalid-a.epub", "Invalid A", "A", 0.5, "2026-01-01 00:00:00junk"),
     };
-    BacaHistory history = {.items = entries, .length = BACA_ARRAY_LEN(entries)};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
+    MereaderTuiHistory history = {.items = entries, .length = MEREADER_TUI_ARRAY_LEN(entries)};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_STR(view.rows[0].entry->filepath, "/newer.epub");
     TEST_ASSERT_STR(view.rows[1].entry->filepath, "/older.epub");
     TEST_ASSERT_STR(view.rows[2].entry->filepath, "/invalid-a.epub");
     TEST_ASSERT_STR(view.rows[3].entry->filepath, "/invalid-z.epub");
     TEST_ASSERT_STR(view.rows[4].entry->filepath, "/missing.epub");
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_detached_worker_exit_signal_mask(void) {
+static MereaderTuiTestResult test_detached_worker_exit_signal_mask(void) {
     sigset_t previous;
     LibrarySignalMaskResult mask = {0};
     pthread_t thread = {0};
-    const int block_status = baca_platform_block_exit_signals(&previous);
+    const int block_status = mereader_tui_platform_block_exit_signals(&previous);
     const int create_status = block_status == 0 ? pthread_create(&thread, NULL, library_check_exit_signal_mask, &mask)
                                                 : block_status;
     const int restore_status = block_status == 0 ? pthread_sigmask(SIG_SETMASK, &previous, NULL) : 0;
@@ -860,124 +860,124 @@ static BacaTestResult test_detached_worker_exit_signal_mask(void) {
     TEST_ASSERT_INT(join_status, 0);
     TEST_ASSERT_INT(mask.status, 0);
     TEST_ASSERT(mask.blocked);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_unicode_and_control_sanitization(void) {
+static MereaderTuiTestResult test_unicode_and_control_sanitization(void) {
     static const char hostile_title[] = "Caf\xc3\xa9\n\x1b[31m \xe6\x9b\xb8\xc2\x85" "end\xff";
-    BacaHistoryEntry entry =
+    MereaderTuiHistoryEntry entry =
         library_entry("/unicode.epub", hostile_title, "Au\tthor\x7f", 0.5, "2026-03-01 00:00:00");
-    BacaHistory history = {.items = &entry, .length = 1U};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
+    MereaderTuiHistory history = {.items = &entry, .length = 1U};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 1U);
     TEST_ASSERT_STR(view.rows[0].title, "Caf\xc3\xa9[31m \xe6\x9b\xb8" "end\xef\xbf\xbd");
     TEST_ASSERT_STR(view.rows[0].author, "Author");
     TEST_ASSERT(strchr(view.rows[0].title, '\n') == NULL);
     TEST_ASSERT(strchr(view.rows[0].title, '\x1b') == NULL);
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    char *truncated = baca_library_sanitize_text(
+    char *truncated = mereader_tui_library_sanitize_text(
         "A\x1b" "B\xc2\x85\xe2\x80\xae\xe6\x9b\xb8" "e\xcc\x81Z", 5U, &error);
     TEST_ASSERT_MSG(truncated != NULL, "%s", error.message);
     TEST_ASSERT_STR(truncated, "AB\xe6\x9b\xb8" "e\xcc\x81");
-    TEST_ASSERT_SIZE(baca_utf8_width(truncated, strlen(truncated)), 5U);
+    TEST_ASSERT_SIZE(mereader_tui_utf8_width(truncated, strlen(truncated)), 5U);
     free(truncated);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "CAF\xc3\x89", BACA_LIBRARY_SORT_TITLE, &error),
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "CAF\xc3\x89", MEREADER_TUI_LIBRARY_SORT_TITLE, &error),
                     "%s", error.message);
     TEST_ASSERT_SIZE(view.length, 1U);
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_empty_missing_and_fallback_rows(void) {
-    BacaHistory empty = {0};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &empty, "", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+static MereaderTuiTestResult test_empty_missing_and_fallback_rows(void) {
+    MereaderTuiHistory empty = {0};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &empty, "", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 0U);
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    BacaHistoryEntry entries[] = {
+    MereaderTuiHistoryEntry entries[] = {
         library_entry("/missing/fallback.epub", NULL, NULL, 0.0, NULL),
         library_entry(NULL, "", "", 0.0, NULL),
     };
-    BacaHistory history = {.items = entries, .length = BACA_ARRAY_LEN(entries)};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    MereaderTuiHistory history = {.items = entries, .length = MEREADER_TUI_ARRAY_LEN(entries)};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 2U);
     TEST_ASSERT_STR(view.rows[0].title, "fallback.epub");
     TEST_ASSERT_STR(view.rows[0].author, "");
     TEST_ASSERT_STR(view.rows[1].title, "untitled");
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    BacaHistoryEntry unicode_whitespace =
+    MereaderTuiHistoryEntry unicode_whitespace =
         library_entry("/missing/unicode.epub", "\xc2\xa0\xe3\x80\x80", "\xe2\x80\x83", 0.0, NULL);
-    history = (BacaHistory){.items = &unicode_whitespace, .length = 1U};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    history = (MereaderTuiHistory){.items = &unicode_whitespace, .length = 1U};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(view.length, 1U);
     TEST_ASSERT_STR(view.rows[0].title, "unicode.epub");
     TEST_ASSERT_STR(view.rows[0].author, "");
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_selection_preservation(void) {
-    BacaHistoryEntry entries[] = {
+static MereaderTuiTestResult test_selection_preservation(void) {
+    MereaderTuiHistoryEntry entries[] = {
         library_entry("/c.epub", "Charlie", "C", 0.1, "2026-03-03 00:00:00"),
         library_entry("/a.epub", "Alpha", "A", 0.2, "2026-03-02 00:00:00"),
         library_entry("/b.epub", "Bravo", "B", 0.3, "2026-03-01 00:00:00"),
     };
-    BacaHistory history = {.items = entries, .length = BACA_ARRAY_LEN(entries)};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    MereaderTuiHistory history = {.items = entries, .length = MEREADER_TUI_ARRAY_LEN(entries)};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
-    TEST_ASSERT_SIZE(baca_library_preserve_selection(&view, "/b.epub", 0U), 1U);
-    TEST_ASSERT_SIZE(baca_library_preserve_selection(&view, "/gone.epub", 2U), 2U);
-    TEST_ASSERT_SIZE(baca_library_preserve_selection(&view, "/gone.epub", 99U), 2U);
-    baca_library_view_free(&view);
+    TEST_ASSERT_SIZE(mereader_tui_library_preserve_selection(&view, "/b.epub", 0U), 1U);
+    TEST_ASSERT_SIZE(mereader_tui_library_preserve_selection(&view, "/gone.epub", 2U), 2U);
+    TEST_ASSERT_SIZE(mereader_tui_library_preserve_selection(&view, "/gone.epub", 99U), 2U);
+    mereader_tui_library_view_free(&view);
 
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &history, "alpha", BACA_LIBRARY_SORT_TITLE, &error), "%s",
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &history, "alpha", MEREADER_TUI_LIBRARY_SORT_TITLE, &error), "%s",
                     error.message);
-    TEST_ASSERT_SIZE(baca_library_preserve_selection(&view, "/b.epub", 9U), 0U);
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    TEST_ASSERT_SIZE(mereader_tui_library_preserve_selection(&view, "/b.epub", 9U), 0U);
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_deleted_middle_selection_preservation(void) {
-    BacaHistoryEntry before_entries[] = {
+static MereaderTuiTestResult test_deleted_middle_selection_preservation(void) {
+    MereaderTuiHistoryEntry before_entries[] = {
         library_entry("/alpha.epub", "Alpha", "A", 0.1, "2026-03-03 00:00:00"),
         library_entry("/missing.epub", "Missing", "M", 0.2, "2026-03-02 00:00:00"),
         library_entry("/charlie.epub", "Charlie", "C", 0.3, "2026-03-01 00:00:00"),
     };
-    BacaHistory before = {.items = before_entries, .length = BACA_ARRAY_LEN(before_entries)};
-    BacaLibraryView view = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &before, "", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    MereaderTuiHistory before = {.items = before_entries, .length = MEREADER_TUI_ARRAY_LEN(before_entries)};
+    MereaderTuiLibraryView view = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &before, "", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
-    const size_t deleted_index = baca_library_preserve_selection(&view, "/missing.epub", 0U);
+    const size_t deleted_index = mereader_tui_library_preserve_selection(&view, "/missing.epub", 0U);
     TEST_ASSERT_SIZE(deleted_index, 1U);
-    baca_library_view_free(&view);
+    mereader_tui_library_view_free(&view);
 
-    BacaHistoryEntry after_entries[] = {
+    MereaderTuiHistoryEntry after_entries[] = {
         before_entries[0],
         before_entries[2],
     };
-    BacaHistory after = {.items = after_entries, .length = BACA_ARRAY_LEN(after_entries)};
-    TEST_ASSERT_MSG(baca_library_view_build(&view, &after, "", BACA_LIBRARY_SORT_RECENT, &error), "%s",
+    MereaderTuiHistory after = {.items = after_entries, .length = MEREADER_TUI_ARRAY_LEN(after_entries)};
+    TEST_ASSERT_MSG(mereader_tui_library_view_build(&view, &after, "", MEREADER_TUI_LIBRARY_SORT_RECENT, &error), "%s",
                     error.message);
-    const size_t selected = baca_library_preserve_selection(&view, "/missing.epub", deleted_index);
+    const size_t selected = mereader_tui_library_preserve_selection(&view, "/missing.epub", deleted_index);
     TEST_ASSERT_SIZE(selected, 1U);
     TEST_ASSERT_STR(view.rows[selected].entry->filepath, "/charlie.epub");
-    baca_library_view_free(&view);
-    return BACA_TEST_PASS;
+    mereader_tui_library_view_free(&view);
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_empty_library(void) {
@@ -985,11 +985,11 @@ static bool run_pty_empty_library(void) {
     LibraryPtyProcess process = {.master = -1};
     char *book = library_create_epub("library-pty/setup/root/book.epub", "Setup Book", "Reader",
                                      "SETUP BOOK BODY");
-    char *root = baca_test_path("library-pty/setup/root");
-    BacaString input = {0};
-    BacaError error = {0};
-    bool success = book != NULL && root != NULL && baca_string_append(&input, root, &error) &&
-                   baca_string_append_char(&input, '\n', &error) &&
+    char *root = mereader_tui_test_path("library-pty/setup/root");
+    MereaderTuiString input = {0};
+    MereaderTuiError error = {0};
+    bool success = book != NULL && root != NULL && mereader_tui_string_append(&input, root, &error) &&
+                   mereader_tui_string_append_char(&input, '\n', &error) &&
                    library_pty_environment_init("empty", &environment) &&
                     library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                     library_pty_wait_for(&process, "Paste the path to your book directory") &&
@@ -1001,18 +1001,18 @@ static bool run_pty_empty_library(void) {
                     library_pty_send_text(&process, "q") &&
                     library_pty_wait_exit(&process) && WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
     if (success) {
-        char *config = baca_path_join(environment.config, "mereader-tui/config.ini", &error);
-        BacaBuffer contents = {0};
-        success = config != NULL && baca_read_file(config, &contents, &error) &&
+        char *config = mereader_tui_path_join(environment.config, "mereader-tui/config.ini", &error);
+        MereaderTuiBuffer contents = {0};
+        success = config != NULL && mereader_tui_read_file(config, &contents, &error) &&
                   strstr((const char *)contents.data, root) != NULL;
-        baca_buffer_free(&contents);
+        mereader_tui_buffer_free(&contents);
         free(config);
     }
     if (!success) {
         fprintf(stderr, "setup PTY capture: %s\n",
                 process.output.data == NULL ? "(empty)" : process.output.data);
     }
-    baca_string_free(&input);
+    mereader_tui_string_free(&input);
     library_pty_process_free(&process);
     library_pty_environment_free(&environment);
     free(book);
@@ -1020,9 +1020,9 @@ static bool run_pty_empty_library(void) {
     return success;
 }
 
-static BacaTestResult test_pty_empty_library(void) {
+static MereaderTuiTestResult test_pty_empty_library(void) {
     TEST_ASSERT(run_pty_empty_library());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_open_return(void) {
@@ -1030,7 +1030,7 @@ static bool run_pty_open_return(void) {
     LibraryPtyProcess process = {.master = -1};
     char *book = library_create_epub("library-pty/open/book.epub", "Library One", "Reader",
                                      "OPEN RETURN BODY");
-    BacaHistoryEntry entry = library_entry(book, "Library One", "Reader", 0.25, "2026-07-19 12:00:00");
+    MereaderTuiHistoryEntry entry = library_entry(book, "Library One", "Reader", 0.25, "2026-07-19 12:00:00");
     bool success = book != NULL && library_pty_environment_init("open", &environment) &&
                    library_seed_history(&environment, &entry, 1U) &&
                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
@@ -1055,12 +1055,12 @@ static bool run_pty_typed_path(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
     char *book = library_create_epub("library-pty/typed/book.epub", "Typed Book", "Reader", "TYPED PATH BODY");
-    BacaString input = {0};
-    BacaError error = {0};
+    MereaderTuiString input = {0};
+    MereaderTuiError error = {0};
     bool success = book != NULL && library_pty_environment_init("typed", &environment) &&
-                    baca_string_append_char(&input, 27, &error) && baca_string_append_char(&input, 'o', &error) &&
-                    baca_string_append(&input, book, &error) &&
-                    baca_string_append_char(&input, '\n', &error) &&
+                    mereader_tui_string_append_char(&input, 27, &error) && mereader_tui_string_append_char(&input, 'o', &error) &&
+                    mereader_tui_string_append(&input, book, &error) &&
+                    mereader_tui_string_append_char(&input, '\n', &error) &&
                     library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                     library_pty_wait_for(&process, "Paste the path to your book directory") &&
                    library_pty_send_text(&process, input.data) && library_pty_wait_for(&process, "TYPED PATH BODY");
@@ -1070,17 +1070,17 @@ static bool run_pty_typed_path(void) {
                   library_pty_send_text(&process, "q") && library_pty_wait_exit(&process) &&
                   WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
     }
-    baca_string_free(&input);
+    mereader_tui_string_free(&input);
     library_pty_process_free(&process);
     library_pty_environment_free(&environment);
     free(book);
     return success;
 }
 
-static BacaTestResult test_pty_open_return_and_typed_path(void) {
+static MereaderTuiTestResult test_pty_open_return_and_typed_path(void) {
     TEST_ASSERT(run_pty_open_return());
     TEST_ASSERT(run_pty_typed_path());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_progress_save_failure(void) {
@@ -1088,7 +1088,7 @@ static bool run_pty_progress_save_failure(void) {
     LibraryPtyProcess process = {.master = -1};
     char *book = library_create_epub("library-pty/save-failure/book.epub", "Save Failure", "Reader",
                                      "SAVE FAILURE BODY");
-    BacaHistoryEntry entry = library_entry(book, "Save Failure", "Reader", 0.25, "2026-07-19 12:00:00");
+    MereaderTuiHistoryEntry entry = library_entry(book, "Save Failure", "Reader", 0.25, "2026-07-19 12:00:00");
     bool success = book != NULL && library_pty_environment_init("save-failure", &environment) &&
                    library_seed_history(&environment, &entry, 1U) &&
                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
@@ -1110,9 +1110,9 @@ static bool run_pty_progress_save_failure(void) {
     return success;
 }
 
-static BacaTestResult test_pty_progress_save_failure(void) {
+static MereaderTuiTestResult test_pty_progress_save_failure(void) {
     TEST_ASSERT(run_pty_progress_save_failure());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_literal_filtering(void) {
@@ -1120,14 +1120,14 @@ static bool run_pty_literal_filtering(void) {
     LibraryPtyProcess process = {.master = -1};
     char *needle = library_create_epub("library-pty/filter/needle.epub", "Needle [One]", "Alice",
                                        "FILTER TARGET BODY");
-    bool fixtures = needle != NULL && baca_test_write_text("library-pty/filter/other.epub", "other");
-    char *other = baca_test_path("library-pty/filter/other.epub");
-    BacaHistoryEntry entries[] = {
+    bool fixtures = needle != NULL && mereader_tui_test_write_text("library-pty/filter/other.epub", "other");
+    char *other = mereader_tui_test_path("library-pty/filter/other.epub");
+    MereaderTuiHistoryEntry entries[] = {
         library_entry(needle, "Needle [One]", "Alice", 0.1, "2026-07-19 12:00:00"),
         library_entry(other, "Other Book", "Bob", 0.2, "2026-07-18 12:00:00"),
     };
     bool success = fixtures && needle != NULL && other != NULL && library_pty_environment_init("filter", &environment) &&
-                    library_seed_history(&environment, entries, BACA_ARRAY_LEN(entries)) &&
+                    library_seed_history(&environment, entries, MEREADER_TUI_ARRAY_LEN(entries)) &&
                     library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                     library_pty_wait_for(&process, "Needle [One]") && library_pty_wait_for(&process, "Other Book") &&
                     library_pty_send_text(&process, "j") && library_pty_settle(&process) &&
@@ -1164,22 +1164,22 @@ static bool run_pty_literal_filtering(void) {
     return success;
 }
 
-static BacaTestResult test_pty_literal_filtering(void) {
+static MereaderTuiTestResult test_pty_literal_filtering(void) {
     TEST_ASSERT(run_pty_literal_filtering());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_sorting_and_refresh(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    bool fixtures = baca_test_write_text("library-pty/sort/alpha.epub", "alpha") &&
-                    baca_test_write_text("library-pty/sort/bravo.epub", "bravo") &&
-                    baca_test_write_text("library-pty/sort/charlie.epub", "charlie");
-    char *alpha = baca_test_path("library-pty/sort/alpha.epub");
-    char *bravo = baca_test_path("library-pty/sort/bravo.epub");
-    char *charlie = baca_test_path("library-pty/sort/charlie.epub");
-    char *missing = baca_test_path("library-pty/sort/missing.epub");
-    BacaHistoryEntry entries[] = {
+    bool fixtures = mereader_tui_test_write_text("library-pty/sort/alpha.epub", "alpha") &&
+                    mereader_tui_test_write_text("library-pty/sort/bravo.epub", "bravo") &&
+                    mereader_tui_test_write_text("library-pty/sort/charlie.epub", "charlie");
+    char *alpha = mereader_tui_test_path("library-pty/sort/alpha.epub");
+    char *bravo = mereader_tui_test_path("library-pty/sort/bravo.epub");
+    char *charlie = mereader_tui_test_path("library-pty/sort/charlie.epub");
+    char *missing = mereader_tui_test_path("library-pty/sort/missing.epub");
+    MereaderTuiHistoryEntry entries[] = {
         library_entry(missing, "Missing", "M", 0.0, "2026-07-20 12:00:00"),
         library_entry(alpha, "Zulu", "Z", 0.1, "2026-07-19 12:00:00"),
         library_entry(bravo, "Bravo", "B", 0.2, "2026-07-18 12:00:00"),
@@ -1187,7 +1187,7 @@ static bool run_pty_sorting_and_refresh(void) {
     };
     bool success = fixtures && alpha != NULL && bravo != NULL && charlie != NULL && missing != NULL &&
                    library_pty_environment_init("sort", &environment) &&
-                   library_seed_history(&environment, entries, BACA_ARRAY_LEN(entries)) &&
+                   library_seed_history(&environment, entries, MEREADER_TUI_ARRAY_LEN(entries)) &&
                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                    library_pty_wait_for(&process, "Charlie") && library_pty_send_text(&process, "jjr") &&
                    library_pty_wait_for(&process, "library refreshed");
@@ -1219,22 +1219,22 @@ static bool run_pty_sorting_and_refresh(void) {
     return success;
 }
 
-static BacaTestResult test_pty_sorting_and_refresh(void) {
+static MereaderTuiTestResult test_pty_sorting_and_refresh(void) {
     TEST_ASSERT(run_pty_sorting_and_refresh());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_refresh_deleted_middle(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    bool fixtures = baca_test_write_text("library-pty/refresh-middle/alpha.epub", "alpha") &&
-                    baca_test_write_text("library-pty/refresh-middle/delta.epub", "delta");
-    char *alpha = baca_test_path("library-pty/refresh-middle/alpha.epub");
-    char *missing = baca_test_path("library-pty/refresh-middle/missing.epub");
+    bool fixtures = mereader_tui_test_write_text("library-pty/refresh-middle/alpha.epub", "alpha") &&
+                    mereader_tui_test_write_text("library-pty/refresh-middle/delta.epub", "delta");
+    char *alpha = mereader_tui_test_path("library-pty/refresh-middle/alpha.epub");
+    char *missing = mereader_tui_test_path("library-pty/refresh-middle/missing.epub");
     char *charlie = library_create_epub("library-pty/refresh-middle/charlie.epub", "Charlie", "C",
                                         "REFRESH MIDDLE BODY");
-    char *delta = baca_test_path("library-pty/refresh-middle/delta.epub");
-    BacaHistoryEntry entries[] = {
+    char *delta = mereader_tui_test_path("library-pty/refresh-middle/delta.epub");
+    MereaderTuiHistoryEntry entries[] = {
         library_entry(alpha, "Alpha", "A", 0.1, "2026-07-20 12:00:00"),
         library_entry(missing, "Missing", "M", 0.2, "2026-07-19 12:00:00"),
         library_entry(charlie, "Charlie", "C", 0.3, "2026-07-18 12:00:00"),
@@ -1242,7 +1242,7 @@ static bool run_pty_refresh_deleted_middle(void) {
     };
     bool success = fixtures && alpha != NULL && missing != NULL && charlie != NULL && delta != NULL &&
                    library_pty_environment_init("refresh-middle", &environment) &&
-                   library_seed_history(&environment, entries, BACA_ARRAY_LEN(entries)) &&
+                   library_seed_history(&environment, entries, MEREADER_TUI_ARRAY_LEN(entries)) &&
                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                    library_pty_wait_for(&process, "Missing") && library_pty_send_text(&process, "jr") &&
                    library_pty_wait_for(&process, "library refreshed");
@@ -1269,17 +1269,17 @@ static bool run_pty_refresh_deleted_middle(void) {
     return success;
 }
 
-static BacaTestResult test_pty_refresh_deleted_middle(void) {
+static MereaderTuiTestResult test_pty_refresh_deleted_middle(void) {
     TEST_ASSERT(run_pty_refresh_deleted_middle());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_tiny_monochrome(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    bool fixture = baca_test_write_text("library-pty/tiny/book.epub", "tiny");
-    char *book = baca_test_path("library-pty/tiny/book.epub");
-    BacaHistoryEntry entry = library_entry(book, "Tiny Unicode \xe6\x9b\xb8", "Author", 0.5,
+    bool fixture = mereader_tui_test_write_text("library-pty/tiny/book.epub", "tiny");
+    char *book = mereader_tui_test_path("library-pty/tiny/book.epub");
+    MereaderTuiHistoryEntry entry = library_entry(book, "Tiny Unicode \xe6\x9b\xb8", "Author", 0.5,
                                            "2026-07-19 12:00:00");
     static const char commands[] = {'G', 2, 6, 'g', 'g', 'q'};
     bool success = fixture && book != NULL && library_pty_environment_init("tiny", &environment) &&
@@ -1298,9 +1298,9 @@ static bool run_pty_tiny_monochrome(void) {
     return success;
 }
 
-static BacaTestResult test_pty_tiny_monochrome(void) {
+static MereaderTuiTestResult test_pty_tiny_monochrome(void) {
     TEST_ASSERT(run_pty_tiny_monochrome());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_tiny_height(unsigned short rows) {
@@ -1310,7 +1310,7 @@ static bool run_pty_tiny_height(unsigned short rows) {
     LibraryPtyProcess process = {.master = -1};
     char *book = library_create_epub("library-pty/heights/book.epub", "Tiny Height", "Reader",
                                      "TINY HEIGHT BODY");
-    BacaHistoryEntry entry = library_entry(book, "Tiny Height", "Reader", 0.5, "2026-07-19 12:00:00");
+    MereaderTuiHistoryEntry entry = library_entry(book, "Tiny Height", "Reader", 0.5, "2026-07-19 12:00:00");
     bool success = book != NULL && library_pty_environment_init(name, &environment) &&
                    library_seed_history(&environment, &entry, 1U) &&
                    library_pty_spawn(&environment, "xterm-256color", rows, 40U, NULL, &process) &&
@@ -1336,19 +1336,19 @@ static bool run_pty_tiny_height(unsigned short rows) {
     return success;
 }
 
-static BacaTestResult test_pty_height_one(void) {
+static MereaderTuiTestResult test_pty_height_one(void) {
     TEST_ASSERT(run_pty_tiny_height(1U));
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_pty_height_two(void) {
+static MereaderTuiTestResult test_pty_height_two(void) {
     TEST_ASSERT(run_pty_tiny_height(2U));
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_pty_height_three(void) {
+static MereaderTuiTestResult test_pty_height_three(void) {
     TEST_ASSERT(run_pty_tiny_height(3U));
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_height_one_filter_prompt(void) {
@@ -1378,9 +1378,9 @@ static bool run_pty_height_one_filter_prompt(void) {
     return success;
 }
 
-static BacaTestResult test_pty_height_one_filter_prompt(void) {
+static MereaderTuiTestResult test_pty_height_one_filter_prompt(void) {
     TEST_ASSERT(run_pty_height_one_filter_prompt());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_narrow_path_prompt(void) {
@@ -1410,9 +1410,9 @@ static bool run_pty_narrow_path_prompt(void) {
     return success;
 }
 
-static BacaTestResult test_pty_narrow_path_prompt(void) {
+static MereaderTuiTestResult test_pty_narrow_path_prompt(void) {
     TEST_ASSERT(run_pty_narrow_path_prompt());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_strict_timestamps(void) {
@@ -1432,26 +1432,26 @@ static bool run_pty_strict_timestamps(void) {
     };
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    char *paths[BACA_ARRAY_LEN(titles)] = {0};
-    BacaHistoryEntry entries[BACA_ARRAY_LEN(titles)] = {0};
-    BacaError error = {0};
-    char *now = baca_now_iso8601(&error);
+    char *paths[MEREADER_TUI_ARRAY_LEN(titles)] = {0};
+    MereaderTuiHistoryEntry entries[MEREADER_TUI_ARRAY_LEN(titles)] = {0};
+    MereaderTuiError error = {0};
+    char *now = mereader_tui_now_iso8601(&error);
     bool fixtures = now != NULL;
-    for (size_t index = 0U; fixtures && index < BACA_ARRAY_LEN(titles); ++index) {
+    for (size_t index = 0U; fixtures && index < MEREADER_TUI_ARRAY_LEN(titles); ++index) {
         char relative[128] = {0};
         (void)snprintf(relative, sizeof(relative), "library-pty/timestamps/%zu.epub", index);
-        fixtures = baca_test_write_text(relative, "timestamp");
-        paths[index] = fixtures ? baca_test_path(relative) : NULL;
+        fixtures = mereader_tui_test_write_text(relative, "timestamp");
+        paths[index] = fixtures ? mereader_tui_test_path(relative) : NULL;
         fixtures = fixtures && paths[index] != NULL;
         entries[index] = library_entry(paths[index], titles[index], "A", 0.5,
                                        index == 0U ? now : timestamps[index]);
     }
     bool success = fixtures && library_pty_environment_init("timestamps", &environment) &&
-                   library_seed_history(&environment, entries, BACA_ARRAY_LEN(entries)) &&
+                   library_seed_history(&environment, entries, MEREADER_TUI_ARRAY_LEN(entries)) &&
                    library_pty_spawn(&environment, "xterm-256color", 12U, 80U, NULL, &process) &&
                    library_pty_wait_for(&process, "Valid Time") && library_pty_settle(&process) &&
                    library_pty_screen_line_matches(&process, 12U, 80U, "Valid Time", "now");
-    for (size_t index = 1U; success && index < BACA_ARRAY_LEN(titles); ++index) {
+    for (size_t index = 1U; success && index < MEREADER_TUI_ARRAY_LEN(titles); ++index) {
         success = library_pty_screen_line_matches(&process, 12U, 80U, titles[index], "-");
     }
     if (success) {
@@ -1464,16 +1464,16 @@ static bool run_pty_strict_timestamps(void) {
     }
     library_pty_process_free(&process);
     library_pty_environment_free(&environment);
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(paths); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(paths); ++index) {
         free(paths[index]);
     }
     free(now);
     return success;
 }
 
-static BacaTestResult test_pty_strict_timestamps(void) {
+static MereaderTuiTestResult test_pty_strict_timestamps(void) {
     TEST_ASSERT(run_pty_strict_timestamps());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_signal_restore(void) {
@@ -1491,9 +1491,9 @@ static bool run_pty_signal_restore(void) {
     return success;
 }
 
-static BacaTestResult test_pty_signal_restore(void) {
+static MereaderTuiTestResult test_pty_signal_restore(void) {
     TEST_ASSERT(run_pty_signal_restore());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_direct_path_bypass(void) {
@@ -1516,9 +1516,9 @@ static bool run_pty_direct_path_bypass(void) {
     return success;
 }
 
-static BacaTestResult test_pty_direct_path_bypass(void) {
+static MereaderTuiTestResult test_pty_direct_path_bypass(void) {
     TEST_ASSERT(run_pty_direct_path_bypass());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_calibre_navigation(void) {
@@ -1527,12 +1527,12 @@ static bool run_pty_calibre_navigation(void) {
     char *epub = library_create_epub("library-pty/calibre/root/Alice Writer/First Book (42)/first.epub",
                                      "First Book", "Alice Writer", "CALIBRE EPUB BODY");
     bool fixtures = epub != NULL &&
-                    baca_test_write_text("library-pty/calibre/root/metadata.db", "") &&
-                    baca_test_write_text("library-pty/calibre/root/Alice Writer/First Book (42)/first.pdf",
+                    mereader_tui_test_write_text("library-pty/calibre/root/metadata.db", "") &&
+                    mereader_tui_test_write_text("library-pty/calibre/root/Alice Writer/First Book (42)/first.pdf",
                                          "%PDF-1.4\n%%EOF\n") &&
-                    baca_test_write_text("library-pty/calibre/root/Bob Writer/Second Book (7)/second.epub",
+                    mereader_tui_test_write_text("library-pty/calibre/root/Bob Writer/Second Book (7)/second.epub",
                                          "second");
-    char *root = baca_test_path("library-pty/calibre/root");
+    char *root = mereader_tui_test_path("library-pty/calibre/root");
     bool success = fixtures && root != NULL && library_pty_environment_init("calibre", &environment) &&
                     library_configure_root(&environment, root) &&
                     library_pty_spawn(&environment, "xterm-256color", 14U, 80U, NULL, &process) &&
@@ -1606,9 +1606,9 @@ static bool run_pty_calibre_navigation(void) {
     return success;
 }
 
-static BacaTestResult test_pty_calibre_navigation(void) {
+static MereaderTuiTestResult test_pty_calibre_navigation(void) {
     TEST_ASSERT(run_pty_calibre_navigation());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_cover_preview(void) {
@@ -1616,10 +1616,10 @@ static bool run_pty_cover_preview(void) {
     LibraryPtyProcess process = {.master = -1};
     char *epub = library_create_epub("library-pty/cover/root/Writer/Cover Book (1)/book.epub",
                                      "Cover Book", "Writer", "COVER BODY");
-    bool fixtures = epub != NULL && baca_test_write_text("library-pty/cover/root/metadata.db", "") &&
-                    baca_test_write("library-pty/cover/root/Writer/Cover Book (1)/cover.png",
+    bool fixtures = epub != NULL && mereader_tui_test_write_text("library-pty/cover/root/metadata.db", "") &&
+                    mereader_tui_test_write("library-pty/cover/root/Writer/Cover Book (1)/cover.png",
                                     library_pixel_png, sizeof(library_pixel_png));
-    char *root = baca_test_path("library-pty/cover/root");
+    char *root = mereader_tui_test_path("library-pty/cover/root");
     bool success = fixtures && root != NULL && library_pty_environment_init("cover", &environment) &&
                    library_configure_root_with_mode(&environment, root, "kitty") &&
                    library_pty_spawn(&environment, "xterm-256color", 14U, 80U, NULL, &process) &&
@@ -1638,30 +1638,30 @@ static bool run_pty_cover_preview(void) {
     return success;
 }
 
-static BacaTestResult test_pty_cover_preview(void) {
+static MereaderTuiTestResult test_pty_cover_preview(void) {
     TEST_ASSERT(run_pty_cover_preview());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
 static bool run_pty_picker_scroll(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
     const char *titles[] = {"First Pick", "Second Pick", "Third Pick", "Fourth Pick"};
-    char *paths[BACA_ARRAY_LEN(titles)] = {0};
-    BacaHistoryEntry entries[BACA_ARRAY_LEN(titles)] = {0};
+    char *paths[MEREADER_TUI_ARRAY_LEN(titles)] = {0};
+    MereaderTuiHistoryEntry entries[MEREADER_TUI_ARRAY_LEN(titles)] = {0};
     bool fixtures = true;
-    for (size_t index = 0U; fixtures && index < BACA_ARRAY_LEN(titles); ++index) {
+    for (size_t index = 0U; fixtures && index < MEREADER_TUI_ARRAY_LEN(titles); ++index) {
         char relative[128] = {0};
         (void)snprintf(relative, sizeof(relative), "library-pty/picker-scroll/%zu.epub", index);
-        fixtures = baca_test_write_text(relative, "pick");
-        paths[index] = fixtures ? baca_test_path(relative) : NULL;
+        fixtures = mereader_tui_test_write_text(relative, "pick");
+        paths[index] = fixtures ? mereader_tui_test_path(relative) : NULL;
         fixtures = fixtures && paths[index] != NULL;
         entries[index] = library_entry(paths[index], titles[index], "Reader", (double)index / 10.0,
                                        "2026-07-19 12:00:00");
     }
     static const char down_twice[] = "\033OB\033OB";
     bool success = fixtures && library_pty_environment_init("picker-scroll", &environment) &&
-                   library_seed_history(&environment, entries, BACA_ARRAY_LEN(entries)) &&
+                   library_seed_history(&environment, entries, MEREADER_TUI_ARRAY_LEN(entries)) &&
                    library_pty_spawn(&environment, "xterm-256color", 10U, 60U, NULL, &process) &&
                    library_pty_wait_for(&process, "First Pick") && library_pty_send_text(&process, "  ") &&
                    library_pty_wait_for(&process, "find a book") &&
@@ -1680,19 +1680,19 @@ static bool run_pty_picker_scroll(void) {
     }
     library_pty_process_free(&process);
     library_pty_environment_free(&environment);
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(paths); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(paths); ++index) {
         free(paths[index]);
     }
     return success;
 }
 
-static BacaTestResult test_pty_picker_scroll(void) {
+static MereaderTuiTestResult test_pty_picker_scroll(void) {
     TEST_ASSERT(run_pty_picker_scroll());
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_library_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_library_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "projection_and_literal_filtering", .function = test_projection_and_literal_filtering},
         {.name = "sorting_and_filepath_ties", .function = test_sorting_and_filepath_ties},
         {.name = "recent_sorting_rejects_invalid_timestamps",
@@ -1721,6 +1721,6 @@ const BacaTestCase *baca_library_test_cases(size_t *count) {
         {.name = "pty_cover_preview", .function = test_pty_cover_preview},
         {.name = "pty_picker_scroll", .function = test_pty_picker_scroll},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

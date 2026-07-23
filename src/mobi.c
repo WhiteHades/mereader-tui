@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "baca/document_backend.h"
+#include "mereader-tui/document_backend.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,12 +29,12 @@ static void remove_temp_directory(const char *path) {
     if (path == NULL) {
         return;
     }
-    BacaError ignored = {0};
-    (void) baca_remove_tree(path, &ignored);
+    MereaderTuiError ignored = {0};
+    (void) mereader_tui_remove_tree(path, &ignored);
 }
 
-static bool make_private_temp(char **directory, BacaError *error) {
-    char *path = baca_make_temp_directory(BACA_NAME "-mobi-", error);
+static bool make_private_temp(char **directory, MereaderTuiError *error) {
+    char *path = mereader_tui_make_temp_directory(MEREADER_TUI_NAME "-mobi-", error);
     if (path == NULL) {
         return false;
     }
@@ -42,14 +42,14 @@ static bool make_private_temp(char **directory, BacaError *error) {
     if (lstat(path, &stat) != 0 || !S_ISDIR(stat.st_mode) || stat.st_uid != geteuid()) {
         remove_temp_directory(path);
         free(path);
-        baca_error_set(error, BACA_ERROR_IO, "could not create a private MOBI extraction directory");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create a private MOBI extraction directory");
         return false;
     }
     if (chmod(path, S_IRWXU) != 0) {
         int saved_errno = errno;
         remove_temp_directory(path);
         free(path);
-        baca_error_set(error, BACA_ERROR_IO, "could not secure MOBI extraction directory: %s",
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not secure MOBI extraction directory: %s",
                        strerror(saved_errno));
         return false;
     }
@@ -57,21 +57,21 @@ static bool make_private_temp(char **directory, BacaError *error) {
     return true;
 }
 
-static bool add_spawn_action(int result, BacaError *error) {
+static bool add_spawn_action(int result, MereaderTuiError *error) {
     if (result == 0) {
         return true;
     }
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "could not configure mobitool process: %s", strerror(result));
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not configure mobitool process: %s", strerror(result));
     return false;
 }
 
-static bool move_descriptor_above_stdio(int *descriptor, BacaError *error) {
+static bool move_descriptor_above_stdio(int *descriptor, MereaderTuiError *error) {
     if (*descriptor > STDERR_FILENO) {
         return true;
     }
     int moved = fcntl(*descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
     if (moved < 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not secure a mobitool descriptor: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not secure a mobitool descriptor: %s", strerror(errno));
         return false;
     }
     close(*descriptor);
@@ -79,26 +79,26 @@ static bool move_descriptor_above_stdio(int *descriptor, BacaError *error) {
     return true;
 }
 
-static bool monotonic_milliseconds(uint64_t *milliseconds, BacaError *error) {
+static bool monotonic_milliseconds(uint64_t *milliseconds, MereaderTuiError *error) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not read the monotonic clock: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not read the monotonic clock: %s", strerror(errno));
         return false;
     }
     if (now.tv_sec < 0 || now.tv_nsec < 0) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "monotonic clock returned a negative value");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "monotonic clock returned a negative value");
         return false;
     }
     uint64_t seconds = (uint64_t) now.tv_sec;
     if (seconds > UINT64_MAX / 1000U) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "monotonic clock value overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "monotonic clock value overflow");
         return false;
     }
     *milliseconds = seconds * 1000U + (uint64_t) now.tv_nsec / 1000000U;
     return true;
 }
 
-static bool capture_child_output(int descriptor, BacaString *output, bool *eof, BacaError *error) {
+static bool capture_child_output(int descriptor, MereaderTuiString *output, bool *eof, MereaderTuiError *error) {
     char buffer[4096];
     while (true) {
         ssize_t count = read(descriptor, buffer, sizeof(buffer));
@@ -113,35 +113,35 @@ static bool capture_child_output(int descriptor, BacaString *output, bool *eof, 
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return true;
             }
-            baca_error_set(error, BACA_ERROR_IO, "could not read mobitool diagnostics: %s", strerror(errno));
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not read mobitool diagnostics: %s", strerror(errno));
             return false;
         }
         if (output->length > MOBITOOL_OUTPUT_MAX ||
             (size_t) count > MOBITOOL_OUTPUT_MAX - output->length) {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool exceeded the diagnostic output limit");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool exceeded the diagnostic output limit");
             return false;
         }
-        if (!baca_string_append_n(output, buffer, (size_t) count, error)) {
+        if (!mereader_tui_string_append_n(output, buffer, (size_t) count, error)) {
             return false;
         }
     }
 }
 
-static bool mobitool_output_within_limit(const char *path, BacaError *error) {
+static bool mobitool_output_within_limit(const char *path, MereaderTuiError *error) {
     struct stat status;
     if (lstat(path, &status) != 0) {
         if (errno == ENOENT) {
             return true;
         }
-        baca_error_set(error, BACA_ERROR_IO, "could not inspect mobitool output: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not inspect mobitool output: %s", strerror(errno));
         return false;
     }
     if (!S_ISREG(status.st_mode)) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool produced a non-regular EPUB output");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool produced a non-regular EPUB output");
         return false;
     }
     if (status.st_size < 0 || (uintmax_t) status.st_size > MOBITOOL_EPUB_MAX) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool EPUB output exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool EPUB output exceeds the supported size limit");
         return false;
     }
     return true;
@@ -150,7 +150,7 @@ static bool mobitool_output_within_limit(const char *path, BacaError *error) {
 static void terminate_process_group(pid_t child, bool child_reaped, int *status) {
     (void) kill(-child, SIGTERM);
     uint64_t started = 0;
-    BacaError ignored = {0};
+    MereaderTuiError ignored = {0};
     bool have_clock = monotonic_milliseconds(&started, &ignored);
     while (!child_reaped) {
         pid_t waited = waitpid(child, status, WNOHANG);
@@ -182,10 +182,10 @@ static void terminate_process_group(pid_t child, bool child_reaped, int *status)
 }
 
 static bool run_mobitool(const char *path, const char *output_directory, const char *expected_output,
-                         char **diagnostics, int *status, BacaError *error) {
+                         char **diagnostics, int *status, MereaderTuiError *error) {
     int descriptors[2];
     if (pipe2(descriptors, O_CLOEXEC) != 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not create mobitool output pipe: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create mobitool output pipe: %s", strerror(errno));
         return false;
     }
     if (!move_descriptor_above_stdio(&descriptors[0], error) ||
@@ -196,14 +196,14 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
     }
     int read_flags = fcntl(descriptors[0], F_GETFL);
     if (read_flags < 0 || fcntl(descriptors[0], F_SETFL, read_flags | O_NONBLOCK) != 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not configure mobitool output pipe: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not configure mobitool output pipe: %s", strerror(errno));
         close(descriptors[0]);
         close(descriptors[1]);
         return false;
     }
     int null_descriptor = open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (null_descriptor < 0) {
-        baca_error_set(error, BACA_ERROR_IO, "could not open /dev/null for mobitool: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not open /dev/null for mobitool: %s", strerror(errno));
         close(descriptors[0]);
         close(descriptors[1]);
         return false;
@@ -280,15 +280,15 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
     if (spawn_result != 0) {
         close(descriptors[0]);
         if (spawn_result == ENOENT) {
-            baca_error_set(error, BACA_ERROR_EXTERNAL,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                            "MOBI/AZW support requires mobitool from libmobi, but mobitool was not found in PATH");
         } else {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "could not start mobitool: %s", strerror(spawn_result));
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not start mobitool: %s", strerror(spawn_result));
         }
         return false;
     }
 
-    BacaString captured = {0};
+    MereaderTuiString captured = {0};
     int child_status = 0;
     bool child_reaped = false;
     bool pipe_eof = false;
@@ -301,7 +301,7 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
     if (started > UINT64_MAX - MOBITOOL_TIMEOUT_MS) {
         close(descriptors[0]);
         terminate_process_group(child, child_reaped, &child_status);
-        baca_error_set(error, BACA_ERROR_INTERNAL, "mobitool timeout value overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "mobitool timeout value overflow");
         return false;
     }
     uint64_t deadline = started + MOBITOOL_TIMEOUT_MS;
@@ -320,7 +320,7 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
             if (waited == child) {
                 child_reaped = true;
             } else if (waited < 0 && errno != EINTR) {
-                baca_error_set(error, BACA_ERROR_EXTERNAL, "could not wait for mobitool: %s", strerror(errno));
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not wait for mobitool: %s", strerror(errno));
                 success = false;
                 break;
             }
@@ -335,7 +335,7 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
             break;
         }
         if (now >= deadline) {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool exceeded the %u ms timeout",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool exceeded the %u ms timeout",
                            MOBITOOL_TIMEOUT_MS);
             success = false;
             break;
@@ -351,7 +351,7 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
             polled = poll(&poll_descriptor, 1, timeout);
         } while (polled < 0 && errno == EINTR);
         if (polled < 0 || (poll_descriptor.revents & POLLNVAL) != 0) {
-            baca_error_set(error, BACA_ERROR_IO, "could not poll mobitool diagnostics: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not poll mobitool diagnostics: %s",
                            polled < 0 ? strerror(errno) : "invalid descriptor");
             success = false;
             break;
@@ -360,13 +360,13 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
     close(descriptors[0]);
     if (!success) {
         terminate_process_group(child, child_reaped, &child_status);
-        baca_string_free(&captured);
+        mereader_tui_string_free(&captured);
         return false;
     }
 
-    char *text = baca_string_take(&captured);
+    char *text = mereader_tui_string_take(&captured);
     if (text == NULL) {
-        text = baca_strdup("", error);
+        text = mereader_tui_strdup("", error);
         if (text == NULL) {
             return false;
         }
@@ -377,8 +377,8 @@ static bool run_mobitool(const char *path, const char *output_directory, const c
 }
 
 static char *mobitool_expected_output(const char *input_path, const char *output_directory,
-                                      BacaError *error) {
-    char *basename = baca_path_basename(input_path, error);
+                                      MereaderTuiError *error) {
+    char *basename = mereader_tui_path_basename(input_path, error);
     if (basename == NULL) {
         return NULL;
     }
@@ -386,43 +386,43 @@ static char *mobitool_expected_output(const char *input_path, const char *output
     if (extension != NULL) {
         *extension = '\0';
     }
-    BacaString filename = {0};
-    bool built = baca_string_append(&filename, basename, error) &&
-                 baca_string_append(&filename, ".epub", error);
+    MereaderTuiString filename = {0};
+    bool built = mereader_tui_string_append(&filename, basename, error) &&
+                 mereader_tui_string_append(&filename, ".epub", error);
     free(basename);
     if (!built) {
-        baca_string_free(&filename);
+        mereader_tui_string_free(&filename);
         return NULL;
     }
-    char *name = baca_string_take(&filename);
-    char *path = baca_path_join(output_directory, name, error);
+    char *name = mereader_tui_string_take(&filename);
+    char *path = mereader_tui_path_join(output_directory, name, error);
     free(name);
     return path;
 }
 
-static bool expected_output_exists(const char *path, bool *exists, BacaError *error) {
+static bool expected_output_exists(const char *path, bool *exists, MereaderTuiError *error) {
     struct stat status;
     if (lstat(path, &status) != 0) {
         if (errno == ENOENT) {
             *exists = false;
             return true;
         }
-        baca_error_set(error, BACA_ERROR_IO, "could not inspect mobitool EPUB output: %s", strerror(errno));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not inspect mobitool EPUB output: %s", strerror(errno));
         return false;
     }
     if (!S_ISREG(status.st_mode)) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool produced a non-regular EPUB output");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool produced a non-regular EPUB output");
         return false;
     }
     if (status.st_size < 0 || (uintmax_t) status.st_size > MOBITOOL_EPUB_MAX) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool EPUB output exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool EPUB output exceeds the supported size limit");
         return false;
     }
     *exists = true;
     return true;
 }
 
-static char *diagnostic_summary(const char *diagnostics, BacaError *error) {
+static char *diagnostic_summary(const char *diagnostics, MereaderTuiError *error) {
     const char *start = diagnostics;
     while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') {
         start++;
@@ -435,7 +435,7 @@ static char *diagnostic_summary(const char *diagnostics, BacaError *error) {
     if (length > 300) {
         length = 300;
     }
-    char *summary = baca_strndup(start, length, error);
+    char *summary = mereader_tui_strndup(start, length, error);
     if (summary == NULL) {
         return NULL;
     }
@@ -451,46 +451,46 @@ static char *diagnostic_summary(const char *diagnostics, BacaError *error) {
 }
 
 static bool diagnostics_indicate_drm(const char *diagnostics) {
-    return baca_contains_casefold(diagnostics, "document is encrypted") ||
-           baca_contains_casefold(diagnostics, "encrypted document") ||
-           baca_contains_casefold(diagnostics, "drm protected") ||
-           baca_contains_casefold(diagnostics, "decryption key") ||
-           baca_contains_casefold(diagnostics, "encryption key");
+    return mereader_tui_contains_casefold(diagnostics, "document is encrypted") ||
+           mereader_tui_contains_casefold(diagnostics, "encrypted document") ||
+           mereader_tui_contains_casefold(diagnostics, "drm protected") ||
+           mereader_tui_contains_casefold(diagnostics, "decryption key") ||
+           mereader_tui_contains_casefold(diagnostics, "encryption key");
 }
 
 static bool diagnostics_indicate_replica(const char *diagnostics) {
-    return baca_contains_casefold(diagnostics, "print replica") ||
-           baca_contains_casefold(diagnostics, "replica book") || baca_contains_casefold(diagnostics, "azw4");
+    return mereader_tui_contains_casefold(diagnostics, "print replica") ||
+           mereader_tui_contains_casefold(diagnostics, "replica book") || mereader_tui_contains_casefold(diagnostics, "azw4");
 }
 
-static void set_extraction_error(const char *diagnostics, int status, bool missing_epub, BacaError *error) {
+static void set_extraction_error(const char *diagnostics, int status, bool missing_epub, MereaderTuiError *error) {
     if (diagnostics_indicate_drm(diagnostics)) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                        "this MOBI/AZW book is DRM protected; %s cannot decrypt protected Kindle books",
-                       BACA_NAME);
+                       MEREADER_TUI_NAME);
         return;
     }
     if (diagnostics_indicate_replica(diagnostics)) {
-        baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                        "Kindle Print Replica/AZW4 books are not supported by the EPUB reader");
         return;
     }
-    if (baca_contains_casefold(diagnostics, "unknown option") ||
-        baca_contains_casefold(diagnostics, "invalid option")) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL,
+    if (mereader_tui_contains_casefold(diagnostics, "unknown option") ||
+        mereader_tui_contains_casefold(diagnostics, "invalid option")) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                        "mobitool was built without EPUB extraction support; install libmobi with XML writer support");
         return;
     }
     if (missing_epub) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                        "mobitool completed without producing the expected EPUB file");
         return;
     }
 
-    BacaError summary_error = {0};
+    MereaderTuiError summary_error = {0};
     char *summary = diagnostic_summary(diagnostics, &summary_error);
     if (summary == NULL) {
-        if (error != NULL && baca_error_is_set(&summary_error)) {
+        if (error != NULL && mereader_tui_error_is_set(&summary_error)) {
             *error = summary_error;
         }
         return;
@@ -498,42 +498,42 @@ static void set_extraction_error(const char *diagnostics, int status, bool missi
     if (summary[0] == '\0') {
         free(summary);
         if (WIFSIGNALED(status)) {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool was terminated by signal %d", WTERMSIG(status));
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool was terminated by signal %d", WTERMSIG(status));
         } else {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool failed with exit status %d",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool failed with exit status %d",
                            WIFEXITED(status) ? WEXITSTATUS(status) : status);
         }
         return;
     }
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "mobitool extraction failed: %s", summary);
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "mobitool extraction failed: %s", summary);
     free(summary);
 }
 
-static BacaDocumentFormat mobi_format(const BacaDocument *document, const char *path) {
-    if (document->format == BACA_FORMAT_AZW) {
-        return BACA_FORMAT_AZW;
+static MereaderTuiDocumentFormat mobi_format(const MereaderTuiDocument *document, const char *path) {
+    if (document->format == MEREADER_TUI_FORMAT_AZW) {
+        return MEREADER_TUI_FORMAT_AZW;
     }
-    const char *extension = baca_path_extension(path);
+    const char *extension = mereader_tui_path_extension(path);
     return extension != NULL &&
-                   (baca_casecmp(extension, ".azw") == 0 || baca_casecmp(extension, ".azw3") == 0 ||
-                    baca_casecmp(extension, ".azw4") == 0) ?
-               BACA_FORMAT_AZW :
-               BACA_FORMAT_MOBI;
+                   (mereader_tui_casecmp(extension, ".azw") == 0 || mereader_tui_casecmp(extension, ".azw3") == 0 ||
+                    mereader_tui_casecmp(extension, ".azw4") == 0) ?
+               MEREADER_TUI_FORMAT_AZW :
+               MEREADER_TUI_FORMAT_MOBI;
 }
 
-bool baca_mobi_open(BacaDocument *document, const char *path, BacaError *error) {
+bool mereader_tui_mobi_open(MereaderTuiDocument *document, const char *path, MereaderTuiError *error) {
     if (document == NULL || path == NULL || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "document and MOBI/AZW path are required");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "document and MOBI/AZW path are required");
         return false;
     }
-    BacaDocumentFormat format = mobi_format(document, path);
-    char *absolute_path = baca_realpath(path, error);
+    MereaderTuiDocumentFormat format = mobi_format(document, path);
+    char *absolute_path = mereader_tui_realpath(path, error);
     if (absolute_path == NULL) {
         return false;
     }
     if (strlen(absolute_path) >= FILENAME_MAX) {
         free(absolute_path);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "MOBI/AZW path is too long for mobitool");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "MOBI/AZW path is too long for mobitool");
         return false;
     }
     char *temporary_directory = NULL;
@@ -584,7 +584,7 @@ bool baca_mobi_open(BacaDocument *document, const char *path, BacaError *error) 
     }
 
     // mobitool selects the KF8 half of a hybrid by default; passing -7 would regress AZW3 rendering.
-    bool opened = baca_epub_open(document, expected_output, temporary_directory, error);
+    bool opened = mereader_tui_epub_open(document, expected_output, temporary_directory, error);
     free(expected_output);
     free(diagnostics);
     if (!opened) {

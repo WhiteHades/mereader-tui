@@ -1,4 +1,4 @@
-#include "baca/graphics.h"
+#include "mereader-tui/graphics.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -16,18 +16,18 @@
 #endif
 
 enum {
-  BACA_GRAPHICS_PAIR_CACHE_LIMIT = 256,
-  BACA_GRAPHICS_PNG_RAW_CHUNK = 3072,
-  BACA_GRAPHICS_SCREEN_PNG_RAW_CHUNK = 480,
-  BACA_GRAPHICS_CONTEXT_ID_SPAN = 131072,
-  BACA_GRAPHICS_MAX_REMOTE_IMAGES = BACA_GRAPHICS_MAX_PROBES * 2,
-  BACA_GRAPHICS_MAX_REMOTE_PLACEMENTS = BACA_GRAPHICS_MAX_PROBES * 8,
+  MEREADER_TUI_GRAPHICS_PAIR_CACHE_LIMIT = 256,
+  MEREADER_TUI_GRAPHICS_PNG_RAW_CHUNK = 3072,
+  MEREADER_TUI_GRAPHICS_SCREEN_PNG_RAW_CHUNK = 480,
+  MEREADER_TUI_GRAPHICS_CONTEXT_ID_SPAN = 131072,
+  MEREADER_TUI_GRAPHICS_MAX_REMOTE_IMAGES = MEREADER_TUI_GRAPHICS_MAX_PROBES * 2,
+  MEREADER_TUI_GRAPHICS_MAX_REMOTE_PLACEMENTS = MEREADER_TUI_GRAPHICS_MAX_PROBES * 8,
 };
 
-typedef struct BacaGraphicsCacheEntry {
+typedef struct MereaderTuiGraphicsCacheEntry {
   GdkPixbuf *pixbuf;
   char *uri;
-  const BacaDocument *document;
+  const MereaderTuiDocument *document;
   uint64_t document_instance_id;
   size_t bytes;
   uint64_t last_used;
@@ -35,21 +35,21 @@ typedef struct BacaGraphicsCacheEntry {
   int columns;
   int rows;
   bool transmitted;
-} BacaGraphicsCacheEntry;
+} MereaderTuiGraphicsCacheEntry;
 
-typedef struct BacaGraphicsRemotePlacement {
+typedef struct MereaderTuiGraphicsRemotePlacement {
   uint32_t image_id;
   uint32_t placement_id;
-} BacaGraphicsRemotePlacement;
+} MereaderTuiGraphicsRemotePlacement;
 
-typedef struct BacaGraphicsPairEntry {
+typedef struct MereaderTuiGraphicsPairEntry {
   unsigned foreground;
   unsigned background;
   short pair;
-} BacaGraphicsPairEntry;
+} MereaderTuiGraphicsPairEntry;
 
-struct BacaGraphicsContext {
-  BacaGraphicsCacheEntry *entries;
+struct MereaderTuiGraphicsContext {
+  MereaderTuiGraphicsCacheEntry *entries;
   size_t entry_count;
   size_t entry_capacity;
   size_t bytes;
@@ -64,26 +64,26 @@ struct BacaGraphicsContext {
   int terminal_rows;
   int cell_pixel_width;
   int cell_pixel_height;
-  BacaGraphicsMultiplexer multiplexer;
+  MereaderTuiGraphicsMultiplexer multiplexer;
   uint32_t *remote_images;
   size_t remote_image_count;
   size_t remote_image_capacity;
-  BacaGraphicsRemotePlacement *remote_placements;
+  MereaderTuiGraphicsRemotePlacement *remote_placements;
   size_t remote_placement_count;
   size_t remote_placement_capacity;
-  BacaGraphicsWriter writer;
+  MereaderTuiGraphicsWriter writer;
   void *writer_data;
-  BacaGraphicsPairEntry pairs[BACA_GRAPHICS_PAIR_CACHE_LIMIT];
+  MereaderTuiGraphicsPairEntry pairs[MEREADER_TUI_GRAPHICS_PAIR_CACHE_LIMIT];
   size_t pair_count;
 };
 
-typedef struct BacaProbeState {
+typedef struct MereaderTuiProbeState {
   int width;
   int height;
   int target_width;
   int target_height;
   bool invalid;
-} BacaProbeState;
+} MereaderTuiProbeState;
 
 static atomic_uint_least32_t graphics_id_seed;
 static atomic_uint_least32_t graphics_context_serial;
@@ -120,24 +120,24 @@ static bool graphics_case_contains(const char *value, const char *needle) {
   return false;
 }
 
-BacaGraphicsMultiplexer
-baca_graphics_multiplexer(const BacaGraphicsEnvironment *environment) {
+MereaderTuiGraphicsMultiplexer
+mereader_tui_graphics_multiplexer(const MereaderTuiGraphicsEnvironment *environment) {
   if (environment == NULL) {
-    return BACA_GRAPHICS_MULTIPLEXER_NONE;
+    return MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE;
   }
   if (graphics_nonempty(environment->tmux) ||
       graphics_case_contains(environment->term, "tmux")) {
-    return BACA_GRAPHICS_MULTIPLEXER_TMUX;
+    return MEREADER_TUI_GRAPHICS_MULTIPLEXER_TMUX;
   }
   if (graphics_nonempty(environment->sty) ||
       graphics_case_contains(environment->term, "screen")) {
-    return BACA_GRAPHICS_MULTIPLEXER_SCREEN;
+    return MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN;
   }
-  return BACA_GRAPHICS_MULTIPLEXER_NONE;
+  return MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE;
 }
 
-bool baca_graphics_truecolor_available(
-    const BacaGraphicsEnvironment *environment) {
+bool mereader_tui_graphics_truecolor_available(
+    const MereaderTuiGraphicsEnvironment *environment) {
   if (environment == NULL || !environment->colors) {
     return false;
   }
@@ -151,25 +151,25 @@ bool baca_graphics_truecolor_available(
          graphics_nonempty(environment->kitty_window_id);
 }
 
-BacaImageMode
-baca_graphics_select_mode(BacaImageMode configured, bool explicit_mode,
-                          const BacaGraphicsEnvironment *environment) {
-  if (configured == BACA_IMAGE_MODE_PLACEHOLDER || environment == NULL ||
+MereaderTuiImageMode
+mereader_tui_graphics_select_mode(MereaderTuiImageMode configured, bool explicit_mode,
+                          const MereaderTuiGraphicsEnvironment *environment) {
+  if (configured == MEREADER_TUI_IMAGE_MODE_PLACEHOLDER || environment == NULL ||
       !environment->output_is_tty) {
-    return BACA_IMAGE_MODE_PLACEHOLDER;
+    return MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
   }
-  const BacaGraphicsMultiplexer multiplexer =
-      baca_graphics_multiplexer(environment);
-  if (configured == BACA_IMAGE_MODE_KITTY) {
-    if (multiplexer != BACA_GRAPHICS_MULTIPLEXER_NONE && !explicit_mode) {
-      return environment->colors ? BACA_IMAGE_MODE_ANSI
-                                 : BACA_IMAGE_MODE_PLACEHOLDER;
+  const MereaderTuiGraphicsMultiplexer multiplexer =
+      mereader_tui_graphics_multiplexer(environment);
+  if (configured == MEREADER_TUI_IMAGE_MODE_KITTY) {
+    if (multiplexer != MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE && !explicit_mode) {
+      return environment->colors ? MEREADER_TUI_IMAGE_MODE_ANSI
+                                 : MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
     }
-    return BACA_IMAGE_MODE_KITTY;
+    return MEREADER_TUI_IMAGE_MODE_KITTY;
   }
-  if (configured == BACA_IMAGE_MODE_ANSI) {
-    return environment->colors ? BACA_IMAGE_MODE_ANSI
-                               : BACA_IMAGE_MODE_PLACEHOLDER;
+  if (configured == MEREADER_TUI_IMAGE_MODE_ANSI) {
+    return environment->colors ? MEREADER_TUI_IMAGE_MODE_ANSI
+                               : MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
   }
 
   const bool kitty =
@@ -177,11 +177,11 @@ baca_graphics_select_mode(BacaImageMode configured, bool explicit_mode,
       graphics_case_contains(environment->term_program, "kitty") ||
       graphics_case_contains(environment->term, "kitty") ||
       graphics_nonempty(environment->kitty_window_id);
-  if (kitty && multiplexer == BACA_GRAPHICS_MULTIPLEXER_NONE) {
-    return BACA_IMAGE_MODE_KITTY;
+  if (kitty && multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE) {
+    return MEREADER_TUI_IMAGE_MODE_KITTY;
   }
-  return environment->colors ? BACA_IMAGE_MODE_ANSI
-                             : BACA_IMAGE_MODE_PLACEHOLDER;
+  return environment->colors ? MEREADER_TUI_IMAGE_MODE_ANSI
+                             : MEREADER_TUI_IMAGE_MODE_PLACEHOLDER;
 }
 
 static GdkPixbufLoader *graphics_loader_new(void) {
@@ -203,7 +203,7 @@ static bool graphics_loader_is_animated(GdkPixbufLoader *loader) {
 
 static void graphics_probe_size(GdkPixbufLoader *loader, int width, int height,
                                  gpointer user_data) {
-  BacaProbeState *state = user_data;
+  MereaderTuiProbeState *state = user_data;
   if (state->width == 0 && state->height == 0) {
     state->width = width;
     state->height = height;
@@ -227,9 +227,9 @@ static void graphics_probe_size(GdkPixbufLoader *loader, int width, int height,
       gdk_pixbuf_loader_set_size(loader, scaled_width, scaled_height);
     }
   }
-  if (width <= 0 || height <= 0 || width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      (size_t)width > BACA_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)height) {
+  if (width <= 0 || height <= 0 || width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      (size_t)width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)height) {
     state->invalid = true;
   }
 }
@@ -283,7 +283,7 @@ static bool graphics_gif_has_multiple_frames(const unsigned char *data,
       return false;
     }
     ++frames;
-    if (frames > BACA_GRAPHICS_MAX_FRAMES) {
+    if (frames > MEREADER_TUI_GRAPHICS_MAX_FRAMES) {
       return true;
     }
     const unsigned packed = data[offset + 8U];
@@ -333,7 +333,7 @@ static bool graphics_png_has_multiple_frames(const unsigned char *data,
     if (memcmp(data + offset + 4U, "acTL", 4U) == 0 &&
         chunk_length >= 8U &&
         graphics_read_be32(data + offset + 8U) >
-            BACA_GRAPHICS_MAX_FRAMES) {
+            MEREADER_TUI_GRAPHICS_MAX_FRAMES) {
       return true;
     }
     offset += chunk_length + 12U;
@@ -367,14 +367,14 @@ static bool graphics_webp_has_multiple_frames(const unsigned char *data,
   return false;
 }
 
-static bool graphics_resource_has_multiple_frames(const BacaResource *resource) {
+static bool graphics_resource_has_multiple_frames(const MereaderTuiResource *resource) {
   return graphics_gif_has_multiple_frames(resource->data, resource->length) ||
          graphics_png_has_multiple_frames(resource->data, resource->length) ||
          graphics_webp_has_multiple_frames(resource->data, resource->length);
 }
 
-bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
-                                  int *height, BacaError *error) {
+bool mereader_tui_graphics_probe_resource(const MereaderTuiResource *resource, int *width,
+                                  int *height, MereaderTuiError *error) {
   if (width != NULL) {
     *width = 0;
   }
@@ -383,17 +383,17 @@ bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
   }
   if (resource == NULL || width == NULL || height == NULL ||
       resource->data == NULL || resource->length == 0U) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "image resource and dimension outputs are required");
     return false;
   }
-  if (resource->length > BACA_GRAPHICS_MAX_INPUT_BYTES) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+  if (resource->length > MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "compressed image exceeds the supported size limit");
     return false;
   }
   if (graphics_resource_has_multiple_frames(resource)) {
-    baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                    "animated images are not rendered");
     return false;
   }
@@ -401,13 +401,13 @@ bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
   GError *gerror = NULL;
   GdkPixbufLoader *loader = graphics_loader_new();
   if (loader == NULL) {
-    baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                    "no GdkPixbuf loader for image: %s",
                    gerror == NULL ? "unknown format" : gerror->message);
     g_clear_error(&gerror);
     return false;
   }
-  BacaProbeState state = {
+  MereaderTuiProbeState state = {
       .target_width = 2,
       .target_height = 2,
   };
@@ -421,19 +421,19 @@ bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
   const bool animated = closed && graphics_loader_is_animated(loader);
   g_object_unref(loader);
   if (state.invalid) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "image dimensions exceed the supported limits");
     g_clear_error(&gerror);
     return false;
   }
   if (animated) {
-    baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                    "animated images are not rendered");
     g_clear_error(&gerror);
     return false;
   }
   if (!closed || state.width <= 0 || state.height <= 0) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "cannot decode image dimensions: %s",
                    gerror == NULL ? "invalid image data" : gerror->message);
     g_clear_error(&gerror);
@@ -445,7 +445,7 @@ bool baca_graphics_probe_resource(const BacaResource *resource, int *width,
   return true;
 }
 
-void baca_graphics_composite_pixel(uint32_t background,
+void mereader_tui_graphics_composite_pixel(uint32_t background,
                                    const unsigned char source[4],
                                    unsigned char output[3]) {
   const unsigned alpha = source[3];
@@ -464,25 +464,25 @@ void baca_graphics_composite_pixel(uint32_t background,
                               255U);
 }
 
-static bool graphics_delete_remote_image(BacaGraphicsContext *context,
+static bool graphics_delete_remote_image(MereaderTuiGraphicsContext *context,
                                          uint32_t image_id,
-                                         BacaGraphicsWriter writer,
-                                         void *user_data, BacaError *error);
-static bool graphics_delete_all_remote(BacaGraphicsContext *context,
-                                       BacaGraphicsWriter writer,
-                                       void *user_data, BacaError *error);
-static size_t graphics_remote_image_index(const BacaGraphicsContext *context,
+                                         MereaderTuiGraphicsWriter writer,
+                                         void *user_data, MereaderTuiError *error);
+static bool graphics_delete_all_remote(MereaderTuiGraphicsContext *context,
+                                       MereaderTuiGraphicsWriter writer,
+                                       void *user_data, MereaderTuiError *error);
+static size_t graphics_remote_image_index(const MereaderTuiGraphicsContext *context,
                                           uint32_t image_id);
 
-static void graphics_entry_free(BacaGraphicsCacheEntry *entry) {
+static void graphics_entry_free(MereaderTuiGraphicsCacheEntry *entry) {
   if (entry->pixbuf != NULL) {
     g_object_unref(entry->pixbuf);
   }
   free(entry->uri);
-  *entry = (BacaGraphicsCacheEntry){0};
+  *entry = (MereaderTuiGraphicsCacheEntry){0};
 }
 
-static void graphics_cache_free_local(BacaGraphicsContext *context) {
+static void graphics_cache_free_local(MereaderTuiGraphicsContext *context) {
   for (size_t index = 0U; index < context->entry_count; ++index) {
     graphics_entry_free(&context->entries[index]);
   }
@@ -494,8 +494,8 @@ static void graphics_cache_free_local(BacaGraphicsContext *context) {
   context->pair_count = 0U;
 }
 
-static bool graphics_cache_clear(BacaGraphicsContext *context,
-                                 BacaError *error) {
+static bool graphics_cache_clear(MereaderTuiGraphicsContext *context,
+                                 MereaderTuiError *error) {
   if (!graphics_delete_all_remote(context, context->writer,
                                   context->writer_data, error)) {
     return false;
@@ -524,20 +524,20 @@ static uint32_t graphics_process_id_seed(void) {
   return (uint32_t)candidate;
 }
 
-BacaGraphicsContext *baca_graphics_create(size_t maximum_bytes,
-                                          BacaGraphicsMultiplexer multiplexer,
+MereaderTuiGraphicsContext *mereader_tui_graphics_create(size_t maximum_bytes,
+                                          MereaderTuiGraphicsMultiplexer multiplexer,
                                           uint32_t background,
-                                          BacaError *error) {
-  if (multiplexer > BACA_GRAPHICS_MULTIPLEXER_SCREEN) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid graphics multiplexer");
+                                          MereaderTuiError *error) {
+  if (multiplexer > MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid graphics multiplexer");
     return NULL;
   }
   if (maximum_bytes == 0U) {
-    maximum_bytes = BACA_GRAPHICS_DEFAULT_CACHE_BYTES;
+    maximum_bytes = MEREADER_TUI_GRAPHICS_DEFAULT_CACHE_BYTES;
   }
-  BacaGraphicsContext *context = calloc(1U, sizeof(*context));
+  MereaderTuiGraphicsContext *context = calloc(1U, sizeof(*context));
   if (context == NULL) {
-    baca_error_set(error, BACA_ERROR_MEMORY,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "cannot allocate graphics context");
     return NULL;
   }
@@ -551,7 +551,7 @@ BacaGraphicsContext *baca_graphics_create(size_t maximum_bytes,
       &graphics_context_serial, 1U, memory_order_relaxed);
   context->image_id_base =
       graphics_process_id_seed() +
-      (uint32_t)serial * (uint32_t)BACA_GRAPHICS_CONTEXT_ID_SPAN;
+      (uint32_t)serial * (uint32_t)MEREADER_TUI_GRAPHICS_CONTEXT_ID_SPAN;
   context->next_placement_id = g_random_int();
   if (context->next_placement_id == 0U) {
     context->next_placement_id = 1U;
@@ -559,11 +559,11 @@ BacaGraphicsContext *baca_graphics_create(size_t maximum_bytes,
   return context;
 }
 
-void baca_graphics_free(BacaGraphicsContext *context) {
+void mereader_tui_graphics_free(MereaderTuiGraphicsContext *context) {
   if (context == NULL) {
     return;
   }
-  BacaError ignored = {0};
+  MereaderTuiError ignored = {0};
   if (!graphics_cache_clear(context, &ignored)) {
     graphics_cache_free_local(context);
   }
@@ -572,18 +572,18 @@ void baca_graphics_free(BacaGraphicsContext *context) {
   free(context);
 }
 
-bool baca_graphics_resize(BacaGraphicsContext *context, int columns, int rows,
-                          BacaError *error) {
+bool mereader_tui_graphics_resize(MereaderTuiGraphicsContext *context, int columns, int rows,
+                          MereaderTuiError *error) {
   if (context == NULL || columns < 0 || rows < 0) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid graphics terminal dimensions");
     return false;
   }
-  if (columns > BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION) {
-    columns = BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION;
+  if (columns > MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION) {
+    columns = MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION;
   }
-  if (rows > BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION) {
-    rows = BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION;
+  if (rows > MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION) {
+    rows = MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION;
   }
   if (context->terminal_columns == columns && context->terminal_rows == rows) {
     return true;
@@ -596,12 +596,12 @@ bool baca_graphics_resize(BacaGraphicsContext *context, int columns, int rows,
   return true;
 }
 
-bool baca_graphics_set_cell_pixels(BacaGraphicsContext *context, int width,
-                                   int height, BacaError *error) {
+bool mereader_tui_graphics_set_cell_pixels(MereaderTuiGraphicsContext *context, int width,
+                                   int height, MereaderTuiError *error) {
   if (context == NULL || width <= 0 || height <= 0 ||
-      width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+      width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid terminal cell pixel dimensions");
     return false;
   }
@@ -617,10 +617,10 @@ bool baca_graphics_set_cell_pixels(BacaGraphicsContext *context, int width,
   return true;
 }
 
-bool baca_graphics_set_background(BacaGraphicsContext *context,
-                                  uint32_t background, BacaError *error) {
+bool mereader_tui_graphics_set_background(MereaderTuiGraphicsContext *context,
+                                  uint32_t background, MereaderTuiError *error) {
   if (context == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT, "graphics context is required");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "graphics context is required");
     return false;
   }
   if (context->background == background) {
@@ -633,12 +633,12 @@ bool baca_graphics_set_background(BacaGraphicsContext *context,
   return true;
 }
 
-BacaGraphicsCacheStats
-baca_graphics_cache_stats(const BacaGraphicsContext *context) {
+MereaderTuiGraphicsCacheStats
+mereader_tui_graphics_cache_stats(const MereaderTuiGraphicsContext *context) {
   if (context == NULL) {
-    return (BacaGraphicsCacheStats){0};
+    return (MereaderTuiGraphicsCacheStats){0};
   }
-  return (BacaGraphicsCacheStats){
+  return (MereaderTuiGraphicsCacheStats){
       .entries = context->entry_count,
       .bytes = context->bytes,
       .maximum_bytes = context->maximum_bytes,
@@ -656,8 +656,8 @@ static size_t graphics_pixbuf_bytes(GdkPixbuf *pixbuf) {
   return (size_t)height * (size_t)rowstride;
 }
 
-static BacaGraphicsCacheEntry *graphics_find_entry(BacaGraphicsContext *context,
-                                                   const BacaDocument *document,
+static MereaderTuiGraphicsCacheEntry *graphics_find_entry(MereaderTuiGraphicsContext *context,
+                                                   const MereaderTuiDocument *document,
                                                    const char *uri,
                                                    int columns, int rows) {
   for (size_t index = 0U; index < context->entry_count; ++index) {
@@ -672,7 +672,7 @@ static BacaGraphicsCacheEntry *graphics_find_entry(BacaGraphicsContext *context,
   return NULL;
 }
 
-static BacaGraphicsCacheEntry *graphics_find_image(BacaGraphicsContext *context,
+static MereaderTuiGraphicsCacheEntry *graphics_find_image(MereaderTuiGraphicsContext *context,
                                                    uint32_t image_id) {
   for (size_t index = 0U; index < context->entry_count; ++index) {
     if (context->entries[index].image_id == image_id) {
@@ -682,8 +682,8 @@ static BacaGraphicsCacheEntry *graphics_find_image(BacaGraphicsContext *context,
   return NULL;
 }
 
-static bool graphics_remove_entry(BacaGraphicsContext *context, size_t index,
-                                  BacaError *error) {
+static bool graphics_remove_entry(MereaderTuiGraphicsContext *context, size_t index,
+                                  MereaderTuiError *error) {
   const size_t removed = context->entries[index].bytes;
   if (!graphics_delete_remote_image(context, context->entries[index].image_id,
                                     context->writer, context->writer_data,
@@ -700,10 +700,10 @@ static bool graphics_remove_entry(BacaGraphicsContext *context, size_t index,
   return true;
 }
 
-static bool graphics_make_room(BacaGraphicsContext *context, size_t additional,
-                               uint32_t preserve_image, BacaError *error) {
+static bool graphics_make_room(MereaderTuiGraphicsContext *context, size_t additional,
+                               uint32_t preserve_image, MereaderTuiError *error) {
   if (additional > context->maximum_bytes) {
-    baca_error_set(error, BACA_ERROR_MEMORY,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "target image exceeds graphics cache limit");
     return false;
   }
@@ -719,7 +719,7 @@ static bool graphics_make_room(BacaGraphicsContext *context, size_t additional,
       }
     }
     if (oldest == SIZE_MAX) {
-      baca_error_set(error, BACA_ERROR_MEMORY,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                      "graphics cache cannot evict the retained image");
       return false;
     }
@@ -730,12 +730,12 @@ static bool graphics_make_room(BacaGraphicsContext *context, size_t additional,
   return true;
 }
 
-static uint32_t graphics_image_id(BacaGraphicsContext *context) {
+static uint32_t graphics_image_id(MereaderTuiGraphicsContext *context) {
   for (uint32_t attempt = 0U;
-       attempt < (uint32_t)BACA_GRAPHICS_CONTEXT_ID_SPAN - 1U; ++attempt) {
+       attempt < (uint32_t)MEREADER_TUI_GRAPHICS_CONTEXT_ID_SPAN - 1U; ++attempt) {
     context->image_id_offset =
         context->image_id_offset >=
-                (uint32_t)BACA_GRAPHICS_CONTEXT_ID_SPAN - 1U
+                (uint32_t)MEREADER_TUI_GRAPHICS_CONTEXT_ID_SPAN - 1U
             ? 1U
             : context->image_id_offset + 1U;
     const uint32_t candidate =
@@ -748,29 +748,29 @@ static uint32_t graphics_image_id(BacaGraphicsContext *context) {
   return 0U;
 }
 
-static GdkPixbuf *graphics_decode_target(const BacaResource *resource,
+static GdkPixbuf *graphics_decode_target(const MereaderTuiResource *resource,
                                          int width, int height,
-                                         BacaError *error) {
-  if (resource->length > BACA_GRAPHICS_MAX_INPUT_BYTES) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+                                         MereaderTuiError *error) {
+  if (resource->length > MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "compressed image exceeds the supported size limit");
     return NULL;
   }
   if (graphics_resource_has_multiple_frames(resource)) {
-    baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                    "animated images are not rendered");
     return NULL;
   }
   GError *gerror = NULL;
   GdkPixbufLoader *loader = graphics_loader_new();
   if (loader == NULL) {
-    baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                    "no GdkPixbuf loader for image: %s",
                    gerror == NULL ? "unknown format" : gerror->message);
     g_clear_error(&gerror);
     return NULL;
   }
-  BacaProbeState state = {
+  MereaderTuiProbeState state = {
       .target_width = width,
       .target_height = height,
   };
@@ -792,13 +792,13 @@ static GdkPixbuf *graphics_decode_target(const BacaResource *resource,
   g_object_unref(loader);
   if (pixbuf == NULL) {
     if (state.invalid) {
-      baca_error_set(error, BACA_ERROR_CORRUPT,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                      "image dimensions exceed the supported limits");
     } else if (animated) {
-      baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                      "animated images are not rendered");
     } else {
-      baca_error_set(error, BACA_ERROR_CORRUPT, "cannot decode image: %s",
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "cannot decode image: %s",
                      gerror == NULL ? "invalid image data" : gerror->message);
     }
   }
@@ -808,15 +808,15 @@ static GdkPixbuf *graphics_decode_target(const BacaResource *resource,
 
 static GdkPixbuf *graphics_scale_composited(GdkPixbuf *source, int width,
                                              int height, uint32_t background,
-                                             BacaError *error) {
+                                             MereaderTuiError *error) {
   const int decoded_width = gdk_pixbuf_get_width(source);
   const int decoded_height = gdk_pixbuf_get_height(source);
   if (decoded_width <= 0 || decoded_height <= 0 ||
-      decoded_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-      decoded_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      decoded_width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+      decoded_height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
       (size_t)decoded_width >
-          BACA_GRAPHICS_MAX_RENDER_PIXELS / (size_t)decoded_height) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+          MEREADER_TUI_GRAPHICS_MAX_RENDER_PIXELS / (size_t)decoded_height) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "decoder ignored the bounded image target");
     return NULL;
   }
@@ -825,14 +825,14 @@ static GdkPixbuf *graphics_scale_composited(GdkPixbuf *source, int width,
                           : gdk_pixbuf_scale_simple(source, width, height,
                                                     GDK_INTERP_BILINEAR);
   if (scaled == NULL) {
-    baca_error_set(error, BACA_ERROR_MEMORY, "cannot scale image");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "cannot scale image");
     return NULL;
   }
   GdkPixbuf *result =
       gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, width, height);
   if (result == NULL) {
     g_object_unref(scaled);
-    baca_error_set(error, BACA_ERROR_MEMORY,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "cannot allocate composited image");
     return NULL;
   }
@@ -857,7 +857,7 @@ static GdkPixbuf *graphics_scale_composited(GdkPixbuf *source, int width,
       if (has_alpha) {
         rgba[3] = source_pixel[3];
       }
-      baca_graphics_composite_pixel(background, rgba,
+      mereader_tui_graphics_composite_pixel(background, rgba,
                                     result_row + (size_t)column * 3U);
     }
   }
@@ -883,46 +883,46 @@ static bool graphics_estimated_bytes(int width, int height, unsigned channels,
   return true;
 }
 
-bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
+bool mereader_tui_graphics_prepare(MereaderTuiGraphicsContext *context, MereaderTuiDocument *document,
                            size_t block_index, int columns, int rows,
-                           BacaGraphicsSurface *surface, BacaError *error) {
+                           MereaderTuiGraphicsSurface *surface, MereaderTuiError *error) {
   if (context == NULL || document == NULL || surface == NULL ||
       block_index >= document->block_count || document->blocks == NULL ||
       columns <= 0 || rows <= 0 || surface->pixels != NULL ||
       surface->backing != NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid image preparation request");
     return false;
   }
-  *surface = (BacaGraphicsSurface){0};
-  if (columns > BACA_GRAPHICS_MAX_COLUMNS) {
-    columns = BACA_GRAPHICS_MAX_COLUMNS;
+  *surface = (MereaderTuiGraphicsSurface){0};
+  if (columns > MEREADER_TUI_GRAPHICS_MAX_COLUMNS) {
+    columns = MEREADER_TUI_GRAPHICS_MAX_COLUMNS;
   }
-  if (rows > BACA_GRAPHICS_MAX_ROWS) {
-    rows = BACA_GRAPHICS_MAX_ROWS;
+  if (rows > MEREADER_TUI_GRAPHICS_MAX_ROWS) {
+    rows = MEREADER_TUI_GRAPHICS_MAX_ROWS;
   }
-  BacaBlock *block = &document->blocks[block_index];
-  const bool rendered_page = block->kind == BACA_BLOCK_IMAGE &&
+  MereaderTuiBlock *block = &document->blocks[block_index];
+  const bool rendered_page = block->kind == MEREADER_TUI_BLOCK_IMAGE &&
                              block->value.image.page_index >= 0 &&
                              document->ops != NULL &&
                              document->ops->render_page != NULL;
-  if (block->kind != BACA_BLOCK_IMAGE || block->value.image.uri == NULL ||
+  if (block->kind != MEREADER_TUI_BLOCK_IMAGE || block->value.image.uri == NULL ||
       block->value.image.broken || block->value.image.intrinsic_width <= 0 ||
       block->value.image.intrinsic_height <= 0 ||
       (!rendered_page &&
        (block->value.image.intrinsic_width >
-            BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+            MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
         block->value.image.intrinsic_height >
-            BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+            MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
         (size_t)block->value.image.intrinsic_width >
-            BACA_GRAPHICS_MAX_SOURCE_PIXELS /
+            MEREADER_TUI_GRAPHICS_MAX_SOURCE_PIXELS /
                 (size_t)block->value.image.intrinsic_height))) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "image block has no decodable resource");
     return false;
   }
 
-  BacaGraphicsCacheEntry *entry = graphics_find_entry(
+  MereaderTuiGraphicsCacheEntry *entry = graphics_find_entry(
       context, document, block->value.image.uri, columns, rows);
   if (entry == NULL) {
     int target_width = columns;
@@ -930,7 +930,7 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     if (rendered_page) {
       if (columns > INT_MAX / context->cell_pixel_width ||
           rows > INT_MAX / context->cell_pixel_height) {
-        baca_error_set(error, BACA_ERROR_MEMORY,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                        "PDF render dimensions overflow");
         return false;
       }
@@ -938,23 +938,23 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
       target_height = rows * context->cell_pixel_height;
     }
     size_t estimated = 0U;
-    if (target_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-        target_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
+    if (target_width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        target_height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
         (size_t)target_width >
-            BACA_GRAPHICS_MAX_RENDER_PIXELS / (size_t)target_height ||
+            MEREADER_TUI_GRAPHICS_MAX_RENDER_PIXELS / (size_t)target_height ||
         !graphics_estimated_bytes(target_width, target_height, 3U, &estimated) ||
         estimated > context->maximum_bytes) {
-      baca_error_set(error, BACA_ERROR_MEMORY,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                      "target image exceeds graphics cache limit");
       return false;
     }
-    BacaResource resource = {0};
+    MereaderTuiResource resource = {0};
     const bool loaded = rendered_page
-                            ? baca_document_render_page(
+                            ? mereader_tui_document_render_page(
                                   document, block->value.image.page_index,
                                   target_width, target_height,
                                   context->background, &resource, error)
-                            : baca_document_load_resource(
+                            : mereader_tui_document_load_resource(
                                   document, block->value.image.uri, &resource,
                                   error);
     if (!loaded) {
@@ -962,7 +962,7 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     }
     GdkPixbuf *decoded =
         graphics_decode_target(&resource, target_width, target_height, error);
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
     if (decoded == NULL) {
       return false;
     }
@@ -976,13 +976,13 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     if (bytes == SIZE_MAX ||
         !graphics_make_room(context, bytes, 0U, error)) {
       g_object_unref(pixbuf);
-      if (!baca_error_is_set(error)) {
-        baca_error_set(error, BACA_ERROR_MEMORY,
+      if (!mereader_tui_error_is_set(error)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                        "target image exceeds graphics cache limit");
       }
       return false;
     }
-    char *uri = baca_strdup(block->value.image.uri, error);
+    char *uri = mereader_tui_strdup(block->value.image.uri, error);
     if (uri == NULL) {
       g_object_unref(pixbuf);
       return false;
@@ -991,15 +991,15 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
     if (image_id == 0U) {
       free(uri);
       g_object_unref(pixbuf);
-      baca_error_set(error, BACA_ERROR_INTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                      "cannot allocate a unique Kitty image id");
       return false;
     }
-    BacaError reserve_error = {0};
-    BacaGraphicsCacheEntry *entries = baca_array_reserve(
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiGraphicsCacheEntry *entries = mereader_tui_array_reserve(
         context->entries, &context->entry_capacity, sizeof(*context->entries),
         context->entry_count + 1U, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
       free(uri);
       g_object_unref(pixbuf);
       if (error != NULL) {
@@ -1008,7 +1008,7 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
       return false;
     }
     context->entries = entries;
-    context->entries[context->entry_count++] = (BacaGraphicsCacheEntry){
+    context->entries[context->entry_count++] = (MereaderTuiGraphicsCacheEntry){
         .pixbuf = pixbuf,
         .uri = uri,
         .document = document,
@@ -1025,7 +1025,7 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
   }
 
   if (entry == NULL) {
-    baca_error_set(error, BACA_ERROR_INTERNAL,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                    "prepared image disappeared from the cache");
     return false;
   }
@@ -1043,17 +1043,17 @@ bool baca_graphics_prepare(BacaGraphicsContext *context, BacaDocument *document,
   return true;
 }
 
-void baca_graphics_surface_release(BacaGraphicsSurface *surface) {
+void mereader_tui_graphics_surface_release(MereaderTuiGraphicsSurface *surface) {
   if (surface == NULL) {
     return;
   }
   if (surface->backing != NULL) {
     g_object_unref(surface->backing);
   }
-  *surface = (BacaGraphicsSurface){0};
+  *surface = (MereaderTuiGraphicsSurface){0};
 }
 
-static bool graphics_valid_surface(const BacaGraphicsSurface *surface) {
+static bool graphics_valid_surface(const MereaderTuiGraphicsSurface *surface) {
   const int columns = surface != NULL && surface->columns > 0
                           ? surface->columns
                           : surface == NULL ? 0 : surface->width;
@@ -1062,48 +1062,48 @@ static bool graphics_valid_surface(const BacaGraphicsSurface *surface) {
                        : surface == NULL ? 0 : (surface->height + 1) / 2;
   return surface != NULL && surface->pixels != NULL && surface->width > 0 &&
           surface->height > 0 &&
-          surface->width <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION &&
-          surface->height <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION &&
+          surface->width <= MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION &&
+          surface->height <= MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION &&
           (size_t)surface->width <=
-              BACA_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)surface->height &&
-          columns > 0 && columns <= BACA_GRAPHICS_MAX_COLUMNS && rows > 0 &&
-          rows <= BACA_GRAPHICS_MAX_ROWS &&
+              MEREADER_TUI_GRAPHICS_MAX_SOURCE_PIXELS / (size_t)surface->height &&
+          columns > 0 && columns <= MEREADER_TUI_GRAPHICS_MAX_COLUMNS && rows > 0 &&
+          rows <= MEREADER_TUI_GRAPHICS_MAX_ROWS &&
           surface->rowstride >= surface->width * 3 &&
-          surface->rowstride <= BACA_GRAPHICS_MAX_SOURCE_DIMENSION * 4 &&
+          surface->rowstride <= MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION * 4 &&
          surface->pixel_bytes >= (size_t)surface->rowstride &&
          (size_t)surface->height <=
              surface->pixel_bytes / (size_t)surface->rowstride;
 }
 
-static int graphics_surface_columns(const BacaGraphicsSurface *surface) {
+static int graphics_surface_columns(const MereaderTuiGraphicsSurface *surface) {
   return surface->columns > 0 ? surface->columns : surface->width;
 }
 
-static int graphics_surface_rows(const BacaGraphicsSurface *surface) {
+static int graphics_surface_rows(const MereaderTuiGraphicsSurface *surface) {
   return surface->rows > 0 ? surface->rows : (surface->height + 1) / 2;
 }
 
 static bool
-graphics_valid_placement(const BacaGraphicsPlacement *placement) {
+graphics_valid_placement(const MereaderTuiGraphicsPlacement *placement) {
   return placement != NULL && placement->viewport_rows >= 0 &&
          placement->viewport_columns >= 0 &&
-         placement->occlusion_count <= BACA_GRAPHICS_MAX_OCCLUSIONS &&
+         placement->occlusion_count <= MEREADER_TUI_GRAPHICS_MAX_OCCLUSIONS &&
          (placement->occlusion_count == 0U ||
           placement->occlusions != NULL);
 }
 
-static BacaGraphicsRect
-graphics_visible_bounds(const BacaGraphicsSurface *surface,
-                          const BacaGraphicsPlacement *placement) {
+static MereaderTuiGraphicsRect
+graphics_visible_bounds(const MereaderTuiGraphicsSurface *surface,
+                          const MereaderTuiGraphicsPlacement *placement) {
   const int64_t image_rows = graphics_surface_rows(surface);
   const int64_t image_columns = graphics_surface_columns(surface);
   const int64_t viewport_rows =
-      placement->viewport_rows > BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
-          ? BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
+      placement->viewport_rows > MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION
+          ? MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION
           : placement->viewport_rows;
   const int64_t viewport_columns =
-      placement->viewport_columns > BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
-          ? BACA_GRAPHICS_MAX_VIEWPORT_DIMENSION
+      placement->viewport_columns > MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION
+          ? MEREADER_TUI_GRAPHICS_MAX_VIEWPORT_DIMENSION
           : placement->viewport_columns;
   int64_t top = placement->row > 0 ? placement->row : 0;
   int64_t left = placement->column > 0 ? placement->column : 0;
@@ -1121,7 +1121,7 @@ graphics_visible_bounds(const BacaGraphicsSurface *surface,
   if (left > viewport_columns) {
     left = viewport_columns;
   }
-  return (BacaGraphicsRect){
+  return (MereaderTuiGraphicsRect){
       .row = (int)top,
       .column = (int)left,
       .rows = bottom > top ? (int)(bottom - top) : 0,
@@ -1129,7 +1129,7 @@ graphics_visible_bounds(const BacaGraphicsSurface *surface,
   };
 }
 
-static bool graphics_rect_contains(const BacaGraphicsRect *rect, int row,
+static bool graphics_rect_contains(const MereaderTuiGraphicsRect *rect, int row,
                                     int column) {
   return rect->rows > 0 && rect->columns > 0 && row >= rect->row &&
          column >= rect->column &&
@@ -1137,7 +1137,7 @@ static bool graphics_rect_contains(const BacaGraphicsRect *rect, int row,
          (int64_t)column < (int64_t)rect->column + rect->columns;
 }
 
-static bool graphics_occluded(const BacaGraphicsPlacement *placement, int row,
+static bool graphics_occluded(const MereaderTuiGraphicsPlacement *placement, int row,
                               int column) {
   for (size_t index = 0U; index < placement->occlusion_count; ++index) {
     if (graphics_rect_contains(&placement->occlusions[index], row, column)) {
@@ -1147,7 +1147,7 @@ static bool graphics_occluded(const BacaGraphicsPlacement *placement, int row,
   return false;
 }
 
-static uint32_t graphics_surface_pixel(const BacaGraphicsSurface *surface,
+static uint32_t graphics_surface_pixel(const MereaderTuiGraphicsSurface *surface,
                                        int x, int y) {
   if (x < 0) {
     x = 0;
@@ -1165,7 +1165,7 @@ static uint32_t graphics_surface_pixel(const BacaGraphicsSurface *surface,
          (uint32_t)pixel[2];
 }
 
-static int graphics_source_column(const BacaGraphicsSurface *surface,
+static int graphics_source_column(const MereaderTuiGraphicsSurface *surface,
                                   int display_column) {
   const int columns = graphics_surface_columns(surface);
   if (display_column <= 0) {
@@ -1177,7 +1177,7 @@ static int graphics_source_column(const BacaGraphicsSurface *surface,
   return (int)((int64_t)display_column * surface->width / columns);
 }
 
-static int graphics_source_row(const BacaGraphicsSurface *surface,
+static int graphics_source_row(const MereaderTuiGraphicsSurface *surface,
                                int display_row) {
   const int rows = graphics_surface_rows(surface);
   if (display_row <= 0) {
@@ -1189,8 +1189,8 @@ static int graphics_source_row(const BacaGraphicsSurface *surface,
   return (int)((int64_t)display_row * surface->height / rows);
 }
 
-static bool graphics_has_visible_cell(const BacaGraphicsPlacement *placement,
-                                      BacaGraphicsRect bounds) {
+static bool graphics_has_visible_cell(const MereaderTuiGraphicsPlacement *placement,
+                                      MereaderTuiGraphicsRect bounds) {
   for (int row = bounds.row; row < bounds.row + bounds.rows; ++row) {
     for (int column = bounds.column; column < bounds.column + bounds.columns;
          ++column) {
@@ -1202,27 +1202,27 @@ static bool graphics_has_visible_cell(const BacaGraphicsPlacement *placement,
   return false;
 }
 
-static bool graphics_write(BacaGraphicsWriter writer, void *user_data,
-                           const void *data, size_t length, BacaError *error) {
+static bool graphics_write(MereaderTuiGraphicsWriter writer, void *user_data,
+                           const void *data, size_t length, MereaderTuiError *error) {
   if (length == 0U || writer(user_data, data, length)) {
     return true;
   }
-  baca_error_set(error, BACA_ERROR_IO,
+  mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO,
                  "cannot write terminal graphics escape sequence");
   return false;
 }
 
-bool baca_graphics_render_ansi(const BacaGraphicsSurface *surface,
-                               const BacaGraphicsPlacement *placement,
-                               BacaGraphicsWriter writer, void *user_data,
-                               BacaError *error) {
+bool mereader_tui_graphics_render_ansi(const MereaderTuiGraphicsSurface *surface,
+                               const MereaderTuiGraphicsPlacement *placement,
+                               MereaderTuiGraphicsWriter writer, void *user_data,
+                               MereaderTuiError *error) {
   if (!graphics_valid_surface(surface) ||
       !graphics_valid_placement(placement) || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid ANSI image rendering request");
     return false;
   }
-  const BacaGraphicsRect bounds = graphics_visible_bounds(surface, placement);
+  const MereaderTuiGraphicsRect bounds = graphics_visible_bounds(surface, placement);
   if (!graphics_has_visible_cell(placement, bounds)) {
     return true;
   }
@@ -1281,17 +1281,17 @@ bool baca_graphics_render_ansi(const BacaGraphicsSurface *surface,
   return graphics_write(writer, user_data, "\033[0m\0338", 6U, error);
 }
 
-bool baca_graphics_render_cells(const BacaGraphicsSurface *surface,
-                                const BacaGraphicsPlacement *placement,
-                                BacaGraphicsCellWriter writer, void *user_data,
-                                BacaError *error) {
+bool mereader_tui_graphics_render_cells(const MereaderTuiGraphicsSurface *surface,
+                                const MereaderTuiGraphicsPlacement *placement,
+                                MereaderTuiGraphicsCellWriter writer, void *user_data,
+                                MereaderTuiError *error) {
   if (!graphics_valid_surface(surface) ||
       !graphics_valid_placement(placement) || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid image cell rendering request");
     return false;
   }
-  const BacaGraphicsRect bounds = graphics_visible_bounds(surface, placement);
+  const MereaderTuiGraphicsRect bounds = graphics_visible_bounds(surface, placement);
   for (int row = bounds.row; row < bounds.row + bounds.rows; ++row) {
     for (int column = bounds.column; column < bounds.column + bounds.columns;
          ++column) {
@@ -1309,7 +1309,7 @@ bool baca_graphics_render_cells(const BacaGraphicsSurface *surface,
       if (!writer(user_data, row, column,
                    graphics_surface_pixel(surface, source_x, source_y),
                    graphics_surface_pixel(surface, source_x, source_bottom))) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                        "cannot draw terminal image cell");
         return false;
       }
@@ -1324,7 +1324,7 @@ static uint32_t graphics_palette_rgb(unsigned index) {
       0x008080U, 0xc0c0c0U, 0x808080U, 0xff0000U, 0x00ff00U, 0xffff00U,
       0x0000ffU, 0xff00ffU, 0x00ffffU, 0xffffffU,
   };
-  if (index < BACA_ARRAY_LEN(basic)) {
+  if (index < MEREADER_TUI_ARRAY_LEN(basic)) {
     return basic[index];
   }
   if (index < 232U) {
@@ -1365,11 +1365,11 @@ static uint64_t graphics_color_distance(uint32_t left, uint32_t right) {
          (uint64_t)(blue * blue);
 }
 
-unsigned baca_graphics_rgb_to_256(uint32_t rgb) {
-  return baca_graphics_rgb_to_palette(rgb, 256U);
+unsigned mereader_tui_graphics_rgb_to_256(uint32_t rgb) {
+  return mereader_tui_graphics_rgb_to_palette(rgb, 256U);
 }
 
-unsigned baca_graphics_rgb_to_palette(uint32_t rgb, unsigned colors) {
+unsigned mereader_tui_graphics_rgb_to_palette(uint32_t rgb, unsigned colors) {
   unsigned limit = colors;
   bool palette_88 = false;
   if (colors >= 256U) {
@@ -1398,7 +1398,7 @@ unsigned baca_graphics_rgb_to_palette(uint32_t rgb, unsigned colors) {
   return best;
 }
 
-short baca_graphics_pair(BacaGraphicsContext *context, unsigned foreground,
+short mereader_tui_graphics_pair(MereaderTuiGraphicsContext *context, unsigned foreground,
                          unsigned background, short first_pair,
                          short pair_capacity, bool *created) {
   if (created != NULL) {
@@ -1415,13 +1415,13 @@ short baca_graphics_pair(BacaGraphicsContext *context, unsigned foreground,
     }
   }
   size_t limit = (size_t)pair_capacity;
-  if (limit > BACA_GRAPHICS_PAIR_CACHE_LIMIT) {
-    limit = BACA_GRAPHICS_PAIR_CACHE_LIMIT;
+  if (limit > MEREADER_TUI_GRAPHICS_PAIR_CACHE_LIMIT) {
+    limit = MEREADER_TUI_GRAPHICS_PAIR_CACHE_LIMIT;
   }
   if (context->pair_count < limit &&
       (int)first_pair + (int)context->pair_count <= SHRT_MAX) {
     const short pair = (short)((int)first_pair + (int)context->pair_count);
-    context->pairs[context->pair_count++] = (BacaGraphicsPairEntry){
+    context->pairs[context->pair_count++] = (MereaderTuiGraphicsPairEntry){
         .foreground = foreground,
         .background = background,
         .pair = pair,
@@ -1450,63 +1450,63 @@ short baca_graphics_pair(BacaGraphicsContext *context, unsigned foreground,
   return context->pair_count == 0U ? 0 : context->pairs[nearest].pair;
 }
 
-size_t baca_graphics_pair_count(const BacaGraphicsContext *context) {
+size_t mereader_tui_graphics_pair_count(const MereaderTuiGraphicsContext *context) {
   return context == NULL ? 0U : context->pair_count;
 }
 
-static bool graphics_write_kitty(BacaGraphicsContext *context,
-                                 BacaGraphicsWriter writer, void *user_data,
+static bool graphics_write_kitty(MereaderTuiGraphicsContext *context,
+                                 MereaderTuiGraphicsWriter writer, void *user_data,
                                  const char *command, size_t length,
-                                 BacaError *error) {
-  if (context->multiplexer == BACA_GRAPHICS_MULTIPLEXER_NONE) {
+                                 MereaderTuiError *error) {
+  if (context->multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_NONE) {
     return graphics_write(writer, user_data, command, length, error);
   }
-  BacaString wrapped = {0};
-  const char *prefix = context->multiplexer == BACA_GRAPHICS_MULTIPLEXER_TMUX
+  MereaderTuiString wrapped = {0};
+  const char *prefix = context->multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_TMUX
                            ? "\033Ptmux;"
                            : "\033P";
-  if (!baca_string_append(&wrapped, prefix, error)) {
+  if (!mereader_tui_string_append(&wrapped, prefix, error)) {
     return false;
   }
   for (size_t index = 0U; index < length; ++index) {
-    if (context->multiplexer == BACA_GRAPHICS_MULTIPLEXER_TMUX &&
+    if (context->multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_TMUX &&
         command[index] == '\033' &&
-        !baca_string_append_char(&wrapped, '\033', error)) {
-      baca_string_free(&wrapped);
+        !mereader_tui_string_append_char(&wrapped, '\033', error)) {
+      mereader_tui_string_free(&wrapped);
       return false;
     }
-    if (!baca_string_append_char(&wrapped, command[index], error)) {
-      baca_string_free(&wrapped);
+    if (!mereader_tui_string_append_char(&wrapped, command[index], error)) {
+      mereader_tui_string_free(&wrapped);
       return false;
     }
   }
-  const bool built = baca_string_append(&wrapped, "\033\\", error);
-  if (built && context->multiplexer == BACA_GRAPHICS_MULTIPLEXER_SCREEN &&
-      wrapped.length >= BACA_GRAPHICS_KITTY_SCREEN_SEQUENCE_BYTES) {
-    baca_string_free(&wrapped);
-    baca_error_set(error, BACA_ERROR_INTERNAL,
+  const bool built = mereader_tui_string_append(&wrapped, "\033\\", error);
+  if (built && context->multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN &&
+      wrapped.length >= MEREADER_TUI_GRAPHICS_KITTY_SCREEN_SEQUENCE_BYTES) {
+    mereader_tui_string_free(&wrapped);
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                    "GNU Screen Kitty sequence reaches the 768-byte limit");
     return false;
   }
   const bool written = built && graphics_write(writer, user_data, wrapped.data,
                                                 wrapped.length, error);
-  baca_string_free(&wrapped);
+  mereader_tui_string_free(&wrapped);
   return written;
 }
 
 static char *graphics_base64(const unsigned char *data, size_t length,
-                             size_t *output_length, BacaError *error) {
+                             size_t *output_length, MereaderTuiError *error) {
   static const char alphabet[] =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   if (length > (SIZE_MAX - 2U) / 3U ||
       ((length + 2U) / 3U) > (SIZE_MAX - 1U) / 4U) {
-    baca_error_set(error, BACA_ERROR_MEMORY, "base64 image chunk is too large");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "base64 image chunk is too large");
     return NULL;
   }
   const size_t encoded_length = ((length + 2U) / 3U) * 4U;
   char *encoded = malloc(encoded_length + 1U);
   if (encoded == NULL) {
-    baca_error_set(error, BACA_ERROR_MEMORY,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "cannot allocate base64 image chunk");
     return NULL;
   }
@@ -1529,7 +1529,7 @@ static char *graphics_base64(const unsigned char *data, size_t length,
   return encoded;
 }
 
-static size_t graphics_remote_image_index(const BacaGraphicsContext *context,
+static size_t graphics_remote_image_index(const MereaderTuiGraphicsContext *context,
                                           uint32_t image_id) {
   for (size_t index = 0U; index < context->remote_image_count; ++index) {
     if (context->remote_images[index] == image_id) {
@@ -1539,22 +1539,22 @@ static size_t graphics_remote_image_index(const BacaGraphicsContext *context,
   return SIZE_MAX;
 }
 
-static bool graphics_remote_add_image(BacaGraphicsContext *context,
-                                      uint32_t image_id, BacaError *error) {
+static bool graphics_remote_add_image(MereaderTuiGraphicsContext *context,
+                                      uint32_t image_id, MereaderTuiError *error) {
   if (graphics_remote_image_index(context, image_id) != SIZE_MAX) {
     return true;
   }
-  if (context->remote_image_count >= BACA_GRAPHICS_MAX_REMOTE_IMAGES) {
-    baca_error_set(error, BACA_ERROR_MEMORY,
+  if (context->remote_image_count >= MEREADER_TUI_GRAPHICS_MAX_REMOTE_IMAGES) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "too many live Kitty images in this context");
     return false;
   }
-  BacaError reserve_error = {0};
-  uint32_t *images = baca_array_reserve(
+  MereaderTuiError reserve_error = {0};
+  uint32_t *images = mereader_tui_array_reserve(
       context->remote_images, &context->remote_image_capacity,
       sizeof(*context->remote_images), context->remote_image_count + 1U,
       &reserve_error);
-  if (baca_error_is_set(&reserve_error)) {
+  if (mereader_tui_error_is_set(&reserve_error)) {
     if (error != NULL) {
       *error = reserve_error;
     }
@@ -1565,7 +1565,7 @@ static bool graphics_remote_add_image(BacaGraphicsContext *context,
   return true;
 }
 
-static void graphics_remote_remove_image(BacaGraphicsContext *context,
+static void graphics_remote_remove_image(MereaderTuiGraphicsContext *context,
                                          size_t index) {
   if (index + 1U < context->remote_image_count) {
     memmove(&context->remote_images[index], &context->remote_images[index + 1U],
@@ -1575,7 +1575,7 @@ static void graphics_remote_remove_image(BacaGraphicsContext *context,
   --context->remote_image_count;
 }
 
-static bool graphics_placement_id_in_use(const BacaGraphicsContext *context,
+static bool graphics_placement_id_in_use(const MereaderTuiGraphicsContext *context,
                                          uint32_t placement_id) {
   for (size_t index = 0U; index < context->remote_placement_count; ++index) {
     if (context->remote_placements[index].placement_id == placement_id) {
@@ -1585,9 +1585,9 @@ static bool graphics_placement_id_in_use(const BacaGraphicsContext *context,
   return false;
 }
 
-static uint32_t graphics_next_placement_id(BacaGraphicsContext *context) {
+static uint32_t graphics_next_placement_id(MereaderTuiGraphicsContext *context) {
   for (size_t attempt = 0U;
-       attempt <= BACA_GRAPHICS_MAX_REMOTE_PLACEMENTS; ++attempt) {
+       attempt <= MEREADER_TUI_GRAPHICS_MAX_REMOTE_PLACEMENTS; ++attempt) {
     ++context->next_placement_id;
     if (context->next_placement_id != 0U &&
         !graphics_placement_id_in_use(context, context->next_placement_id)) {
@@ -1597,22 +1597,22 @@ static uint32_t graphics_next_placement_id(BacaGraphicsContext *context) {
   return 0U;
 }
 
-static bool graphics_remote_add_placement(BacaGraphicsContext *context,
+static bool graphics_remote_add_placement(MereaderTuiGraphicsContext *context,
                                           uint32_t image_id,
                                           uint32_t placement_id,
-                                          BacaError *error) {
+                                          MereaderTuiError *error) {
   if (context->remote_placement_count >=
-      BACA_GRAPHICS_MAX_REMOTE_PLACEMENTS) {
-    baca_error_set(error, BACA_ERROR_MEMORY,
+      MEREADER_TUI_GRAPHICS_MAX_REMOTE_PLACEMENTS) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY,
                    "too many live Kitty placements in this context");
     return false;
   }
-  BacaError reserve_error = {0};
-  BacaGraphicsRemotePlacement *placements = baca_array_reserve(
+  MereaderTuiError reserve_error = {0};
+  MereaderTuiGraphicsRemotePlacement *placements = mereader_tui_array_reserve(
       context->remote_placements, &context->remote_placement_capacity,
       sizeof(*context->remote_placements),
       context->remote_placement_count + 1U, &reserve_error);
-  if (baca_error_is_set(&reserve_error)) {
+  if (mereader_tui_error_is_set(&reserve_error)) {
     if (error != NULL) {
       *error = reserve_error;
     }
@@ -1620,14 +1620,14 @@ static bool graphics_remote_add_placement(BacaGraphicsContext *context,
   }
   context->remote_placements = placements;
   context->remote_placements[context->remote_placement_count++] =
-      (BacaGraphicsRemotePlacement){
+      (MereaderTuiGraphicsRemotePlacement){
           .image_id = image_id,
           .placement_id = placement_id,
       };
   return true;
 }
 
-static void graphics_remote_remove_placement(BacaGraphicsContext *context,
+static void graphics_remote_remove_placement(MereaderTuiGraphicsContext *context,
                                              size_t index) {
   if (index + 1U < context->remote_placement_count) {
     memmove(&context->remote_placements[index],
@@ -1639,14 +1639,14 @@ static void graphics_remote_remove_placement(BacaGraphicsContext *context,
 }
 
 static bool graphics_delete_remote_placement(
-    BacaGraphicsContext *context, size_t index, BacaGraphicsWriter writer,
-    void *user_data, BacaError *error) {
+    MereaderTuiGraphicsContext *context, size_t index, MereaderTuiGraphicsWriter writer,
+    void *user_data, MereaderTuiError *error) {
   if (writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "Kitty placement deletion requires a writer");
     return false;
   }
-  const BacaGraphicsRemotePlacement placement =
+  const MereaderTuiGraphicsRemotePlacement placement =
       context->remote_placements[index];
   char command[128] = {0};
   const int length = snprintf(
@@ -1662,8 +1662,8 @@ static bool graphics_delete_remote_placement(
 }
 
 static bool graphics_delete_remote_placements_for(
-    BacaGraphicsContext *context, uint32_t image_id,
-    BacaGraphicsWriter writer, void *user_data, BacaError *error) {
+    MereaderTuiGraphicsContext *context, uint32_t image_id,
+    MereaderTuiGraphicsWriter writer, void *user_data, MereaderTuiError *error) {
   size_t index = 0U;
   while (index < context->remote_placement_count) {
     if (context->remote_placements[index].image_id != image_id) {
@@ -1678,10 +1678,10 @@ static bool graphics_delete_remote_placements_for(
   return true;
 }
 
-static bool graphics_delete_remote_image(BacaGraphicsContext *context,
+static bool graphics_delete_remote_image(MereaderTuiGraphicsContext *context,
                                          uint32_t image_id,
-                                         BacaGraphicsWriter writer,
-                                         void *user_data, BacaError *error) {
+                                         MereaderTuiGraphicsWriter writer,
+                                         void *user_data, MereaderTuiError *error) {
   if (!graphics_delete_remote_placements_for(context, image_id, writer,
                                               user_data, error)) {
     return false;
@@ -1689,7 +1689,7 @@ static bool graphics_delete_remote_image(BacaGraphicsContext *context,
   const size_t image_index = graphics_remote_image_index(context, image_id);
   if (image_index != SIZE_MAX) {
     if (writer == NULL) {
-      baca_error_set(error, BACA_ERROR_ARGUMENT,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                      "Kitty image deletion requires a writer");
       return false;
     }
@@ -1703,16 +1703,16 @@ static bool graphics_delete_remote_image(BacaGraphicsContext *context,
     }
     graphics_remote_remove_image(context, image_index);
   }
-  BacaGraphicsCacheEntry *entry = graphics_find_image(context, image_id);
+  MereaderTuiGraphicsCacheEntry *entry = graphics_find_image(context, image_id);
   if (entry != NULL) {
     entry->transmitted = false;
   }
   return true;
 }
 
-static bool graphics_delete_all_remote(BacaGraphicsContext *context,
-                                       BacaGraphicsWriter writer,
-                                       void *user_data, BacaError *error) {
+static bool graphics_delete_all_remote(MereaderTuiGraphicsContext *context,
+                                       MereaderTuiGraphicsWriter writer,
+                                       void *user_data, MereaderTuiError *error) {
   while (context->remote_placement_count > 0U) {
     if (!graphics_delete_remote_placement(context, 0U, writer, user_data,
                                           error)) {
@@ -1729,13 +1729,13 @@ static bool graphics_delete_all_remote(BacaGraphicsContext *context,
   return true;
 }
 
-bool baca_graphics_kitty_transmit(BacaGraphicsContext *context,
+bool mereader_tui_graphics_kitty_transmit(MereaderTuiGraphicsContext *context,
                                   uint32_t image_id, const unsigned char *png,
-                                  size_t png_length, BacaGraphicsWriter writer,
-                                  void *user_data, BacaError *error) {
+                                  size_t png_length, MereaderTuiGraphicsWriter writer,
+                                  void *user_data, MereaderTuiError *error) {
   if (context == NULL || image_id == 0U || png == NULL || png_length == 0U ||
-      png_length > BACA_GRAPHICS_MAX_TRANSMIT_BYTES || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+      png_length > MEREADER_TUI_GRAPHICS_MAX_TRANSMIT_BYTES || writer == NULL) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid Kitty image transmission request");
     return false;
   }
@@ -1750,9 +1750,9 @@ bool baca_graphics_kitty_transmit(BacaGraphicsContext *context,
     return false;
   }
   const size_t raw_chunk =
-      context->multiplexer == BACA_GRAPHICS_MULTIPLEXER_SCREEN
-          ? BACA_GRAPHICS_SCREEN_PNG_RAW_CHUNK
-          : BACA_GRAPHICS_PNG_RAW_CHUNK;
+      context->multiplexer == MEREADER_TUI_GRAPHICS_MULTIPLEXER_SCREEN
+          ? MEREADER_TUI_GRAPHICS_SCREEN_PNG_RAW_CHUNK
+          : MEREADER_TUI_GRAPHICS_PNG_RAW_CHUNK;
   size_t offset = 0U;
   bool first = true;
   while (offset < png_length) {
@@ -1766,13 +1766,13 @@ bool baca_graphics_kitty_transmit(BacaGraphicsContext *context,
     if (encoded == NULL) {
       return false;
     }
-    if (encoded_length > BACA_GRAPHICS_KITTY_CHUNK_BYTES) {
+    if (encoded_length > MEREADER_TUI_GRAPHICS_KITTY_CHUNK_BYTES) {
       free(encoded);
-      baca_error_set(error, BACA_ERROR_INTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                      "Kitty base64 chunk exceeds protocol limit");
       return false;
     }
-    BacaString command = {0};
+    MereaderTuiString command = {0};
     char control[128] = {0};
     const int control_length =
         first
@@ -1781,38 +1781,38 @@ bool baca_graphics_kitty_transmit(BacaGraphicsContext *context,
             : snprintf(control, sizeof(control), "\033_Gm=%d;", more ? 1 : 0);
     const bool built =
         control_length > 0 && (size_t)control_length < sizeof(control) &&
-        baca_string_append_n(&command, control, (size_t)control_length,
+        mereader_tui_string_append_n(&command, control, (size_t)control_length,
                              error) &&
-        baca_string_append_n(&command, encoded, encoded_length, error) &&
-        baca_string_append(&command, "\033\\", error);
+        mereader_tui_string_append_n(&command, encoded, encoded_length, error) &&
+        mereader_tui_string_append(&command, "\033\\", error);
     free(encoded);
     if (!built || !graphics_write_kitty(context, writer, user_data,
                                         command.data, command.length, error)) {
-      baca_string_free(&command);
+      mereader_tui_string_free(&command);
       return false;
     }
-    baca_string_free(&command);
+    mereader_tui_string_free(&command);
     offset += raw_length;
     first = false;
   }
   return true;
 }
 
-static bool graphics_rect_add(BacaGraphicsRect **rects, size_t *count,
-                              size_t *capacity, BacaGraphicsRect rect,
-                              BacaError *error) {
+static bool graphics_rect_add(MereaderTuiGraphicsRect **rects, size_t *count,
+                              size_t *capacity, MereaderTuiGraphicsRect rect,
+                              MereaderTuiError *error) {
   if (rect.rows <= 0 || rect.columns <= 0) {
     return true;
   }
-  if (*count >= BACA_GRAPHICS_MAX_VISIBLE_RECTS) {
-    baca_error_set(error, BACA_ERROR_CORRUPT,
+  if (*count >= MEREADER_TUI_GRAPHICS_MAX_VISIBLE_RECTS) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                    "image occlusions produce too many visible regions");
     return false;
   }
-  BacaError reserve_error = {0};
-  BacaGraphicsRect *resized = baca_array_reserve(
+  MereaderTuiError reserve_error = {0};
+  MereaderTuiGraphicsRect *resized = mereader_tui_array_reserve(
       *rects, capacity, sizeof(**rects), *count + 1U, &reserve_error);
-  if (baca_error_is_set(&reserve_error)) {
+  if (mereader_tui_error_is_set(&reserve_error)) {
     if (error != NULL) {
       *error = reserve_error;
     }
@@ -1823,23 +1823,23 @@ static bool graphics_rect_add(BacaGraphicsRect **rects, size_t *count,
   return true;
 }
 
-static bool graphics_visible_rects(const BacaGraphicsSurface *surface,
-                                   const BacaGraphicsPlacement *placement,
-                                   BacaGraphicsRect **rects, size_t *rect_count,
-                                   BacaError *error) {
+static bool graphics_visible_rects(const MereaderTuiGraphicsSurface *surface,
+                                   const MereaderTuiGraphicsPlacement *placement,
+                                   MereaderTuiGraphicsRect **rects, size_t *rect_count,
+                                   MereaderTuiError *error) {
   size_t capacity = 0U;
-  BacaGraphicsRect bounds = graphics_visible_bounds(surface, placement);
+  MereaderTuiGraphicsRect bounds = graphics_visible_bounds(surface, placement);
   if (!graphics_rect_add(rects, rect_count, &capacity, bounds, error)) {
     return false;
   }
   for (size_t occlusion_index = 0U;
        occlusion_index < placement->occlusion_count; ++occlusion_index) {
-    BacaGraphicsRect *next = NULL;
+    MereaderTuiGraphicsRect *next = NULL;
     size_t next_count = 0U;
     size_t next_capacity = 0U;
-    const BacaGraphicsRect cover = placement->occlusions[occlusion_index];
+    const MereaderTuiGraphicsRect cover = placement->occlusions[occlusion_index];
     for (size_t index = 0U; index < *rect_count; ++index) {
-      const BacaGraphicsRect rect = (*rects)[index];
+      const MereaderTuiGraphicsRect rect = (*rects)[index];
       const int64_t top = rect.row > cover.row ? rect.row : cover.row;
       const int64_t left = rect.column > cover.column ? rect.column : cover.column;
       const int64_t rect_bottom = (int64_t)rect.row + rect.rows;
@@ -1860,7 +1860,7 @@ static bool graphics_visible_rects(const BacaGraphicsSurface *surface,
         }
         continue;
       }
-      const BacaGraphicsRect pieces[] = {
+      const MereaderTuiGraphicsRect pieces[] = {
           {.row = rect.row,
            .column = rect.column,
            .rows = (int)(top - rect.row),
@@ -1878,7 +1878,7 @@ static bool graphics_visible_rects(const BacaGraphicsSurface *surface,
            .rows = (int)(bottom - top),
            .columns = (int)(rect_right - right)},
       };
-      for (size_t piece = 0U; piece < BACA_ARRAY_LEN(pieces); ++piece) {
+      for (size_t piece = 0U; piece < MEREADER_TUI_ARRAY_LEN(pieces); ++piece) {
         if (!graphics_rect_add(&next, &next_count, &next_capacity,
                                pieces[piece], error)) {
           free(next);
@@ -1897,28 +1897,28 @@ static bool graphics_visible_rects(const BacaGraphicsSurface *surface,
   return true;
 }
 
-bool baca_graphics_kitty_place(BacaGraphicsContext *context,
-                               const BacaGraphicsSurface *surface,
-                               const BacaGraphicsPlacement *placement,
-                               BacaGraphicsWriter writer, void *user_data,
-                               BacaError *error) {
+bool mereader_tui_graphics_kitty_place(MereaderTuiGraphicsContext *context,
+                               const MereaderTuiGraphicsSurface *surface,
+                               const MereaderTuiGraphicsPlacement *placement,
+                               MereaderTuiGraphicsWriter writer, void *user_data,
+                               MereaderTuiError *error) {
   if (context == NULL || !graphics_valid_surface(surface) ||
       !graphics_valid_placement(placement) || surface->image_id == 0U ||
       writer == NULL ||
       graphics_remote_image_index(context, surface->image_id) == SIZE_MAX) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid Kitty image placement request");
     return false;
   }
   context->writer = writer;
   context->writer_data = user_data;
-  BacaGraphicsRect *rects = NULL;
+  MereaderTuiGraphicsRect *rects = NULL;
   size_t rect_count = 0U;
   if (!graphics_visible_rects(surface, placement, &rects, &rect_count, error)) {
     return false;
   }
   for (size_t index = 0U; index < rect_count; ++index) {
-    const BacaGraphicsRect rect = rects[index];
+    const MereaderTuiGraphicsRect rect = rects[index];
     const int display_x =
         (int)((int64_t)rect.column - (int64_t)placement->column);
     const int display_y =
@@ -1962,21 +1962,21 @@ bool baca_graphics_kitty_place(BacaGraphicsContext *context,
   return true;
 }
 
-bool baca_graphics_kitty_draw(BacaGraphicsContext *context,
-                              const BacaGraphicsSurface *surface,
-                              const BacaGraphicsPlacement *placement,
-                              BacaGraphicsWriter writer, void *user_data,
-                              BacaError *error) {
+bool mereader_tui_graphics_kitty_draw(MereaderTuiGraphicsContext *context,
+                              const MereaderTuiGraphicsSurface *surface,
+                              const MereaderTuiGraphicsPlacement *placement,
+                              MereaderTuiGraphicsWriter writer, void *user_data,
+                              MereaderTuiError *error) {
   if (context == NULL || !graphics_valid_surface(surface) || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "invalid Kitty image draw request");
     return false;
   }
-  BacaGraphicsCacheEntry *entry =
+  MereaderTuiGraphicsCacheEntry *entry =
       graphics_find_image(context, surface->image_id);
   if (entry == NULL || surface->backing != entry->pixbuf ||
       surface->pixels != gdk_pixbuf_read_pixels(entry->pixbuf)) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
                    "Kitty surface is stale for this graphics context");
     return false;
   }
@@ -1990,14 +1990,14 @@ bool baca_graphics_kitty_draw(BacaGraphicsContext *context,
         gdk_pixbuf_save_to_buffer(entry->pixbuf, &png, &png_length, "png",
                                   &gerror, NULL) != FALSE;
     if (!encoded) {
-      baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot encode Kitty PNG: %s",
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "cannot encode Kitty PNG: %s",
                      gerror == NULL ? "PNG encoder unavailable"
                                     : gerror->message);
       g_clear_error(&gerror);
       g_free(png);
       return false;
     }
-    const bool transmitted = baca_graphics_kitty_transmit(
+    const bool transmitted = mereader_tui_graphics_kitty_transmit(
         context, surface->image_id, (const unsigned char *)png,
         (size_t)png_length, writer, user_data, error);
     g_free(png);
@@ -2007,15 +2007,15 @@ bool baca_graphics_kitty_draw(BacaGraphicsContext *context,
     }
     entry->transmitted = true;
   }
-  return baca_graphics_kitty_place(context, surface, placement, writer,
+  return mereader_tui_graphics_kitty_place(context, surface, placement, writer,
                                    user_data, error);
 }
 
-bool baca_graphics_kitty_delete_placements(BacaGraphicsContext *context,
-                                            BacaGraphicsWriter writer,
-                                            void *user_data, BacaError *error) {
+bool mereader_tui_graphics_kitty_delete_placements(MereaderTuiGraphicsContext *context,
+                                            MereaderTuiGraphicsWriter writer,
+                                            void *user_data, MereaderTuiError *error) {
   if (context == NULL || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid Kitty delete request");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid Kitty delete request");
     return false;
   }
   context->writer = writer;
@@ -2029,11 +2029,11 @@ bool baca_graphics_kitty_delete_placements(BacaGraphicsContext *context,
   return true;
 }
 
-bool baca_graphics_kitty_delete_all(BacaGraphicsContext *context,
-                                     BacaGraphicsWriter writer, void *user_data,
-                                     BacaError *error) {
+bool mereader_tui_graphics_kitty_delete_all(MereaderTuiGraphicsContext *context,
+                                     MereaderTuiGraphicsWriter writer, void *user_data,
+                                     MereaderTuiError *error) {
   if (context == NULL || writer == NULL) {
-    baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid Kitty delete request");
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid Kitty delete request");
     return false;
   }
   context->writer = writer;

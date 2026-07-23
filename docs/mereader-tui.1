@@ -160,30 +160,6 @@ change the config base directory. the default is
 .B XDG_CACHE_HOME
 change the cache base directory. the default is
 .IR ~/.cache .
-.SH upgrade from baca
-on its first start, version 0.1.1 imports legacy state once. it copies the
-former config file, imports the former
-.I baca.db
-database, and copies cached downloads. existing files in the new
-mereader-tui directories always win. current mereader-tui state directories
-are kept in owner-only mode when migration state is checked.
-.PP
-the import does not change or remove the legacy files. after a successful
-import, mereader-tui writes
-.I .mereader-tui-legacy-state-import-v1.complete
-under the xdg config base.
-.I .mereader-tui-legacy-state-import-v1.lock
-remains under the xdg cache base to coordinate concurrent starts.
-.PP
-only the
-.B mereader-tui
-command is installed. there is no
-.B baca
-command alias. the install targets remove files installed by the previous name
-under the same prefix.
-.B BACA_LIBRARY_PATH
-is ignored and must be replaced with
-.BR MEREADER_TUI_LIBRARY_PATH .
 .SH dependencies
 mobi and azw-family files need
 .B mobitool

@@ -9,64 +9,64 @@
 #include <time.h>
 #include <unistd.h>
 
-static const int BACA_EXIT_SIGNALS[] = {SIGINT, SIGTERM, SIGHUP};
-static volatile sig_atomic_t baca_exit_signal = 0;
+static const int MEREADER_TUI_EXIT_SIGNALS[] = {SIGINT, SIGTERM, SIGHUP};
+static volatile sig_atomic_t mereader_tui_exit_signal = 0;
 
-typedef struct BacaTerminalRuntime {
+typedef struct MereaderTuiTerminalRuntime {
   sigset_t previous_signal_mask;
-  struct sigaction previous_handlers[BACA_ARRAY_LEN(BACA_EXIT_SIGNALS)];
+  struct sigaction previous_handlers[MEREADER_TUI_ARRAY_LEN(MEREADER_TUI_EXIT_SIGNALS)];
   size_t installed_handlers;
   bool started;
   bool signals_blocked;
-} BacaTerminalRuntime;
+} MereaderTuiTerminalRuntime;
 
-static BacaTerminalRuntime baca_terminal_runtime;
+static MereaderTuiTerminalRuntime mereader_tui_terminal_runtime;
 
 static void request_exit(int signal_number) {
-  if (baca_exit_signal == 0) {
-    baca_exit_signal = signal_number;
+  if (mereader_tui_exit_signal == 0) {
+    mereader_tui_exit_signal = signal_number;
   }
 }
 
-static bool block_exit_signals(sigset_t *previous, BacaError *error) {
+static bool block_exit_signals(sigset_t *previous, MereaderTuiError *error) {
   sigset_t signals;
   if (sigemptyset(&signals) != 0) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL,
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                    "cannot create exit signal mask: %s", strerror(errno));
     return false;
   }
-  for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_EXIT_SIGNALS); ++index) {
-    if (sigaddset(&signals, BACA_EXIT_SIGNALS[index]) != 0) {
-      baca_error_set(error, BACA_ERROR_EXTERNAL,
+  for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(MEREADER_TUI_EXIT_SIGNALS); ++index) {
+    if (sigaddset(&signals, MEREADER_TUI_EXIT_SIGNALS[index]) != 0) {
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                      "cannot create exit signal mask: %s", strerror(errno));
       return false;
     }
   }
   const int status = pthread_sigmask(SIG_BLOCK, &signals, previous);
   if (status != 0) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot block exit signals: %s",
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "cannot block exit signals: %s",
                    strerror(status));
     return false;
   }
   return true;
 }
 
-static bool restore_signal_mask(const sigset_t *previous, BacaError *error) {
+static bool restore_signal_mask(const sigset_t *previous, MereaderTuiError *error) {
   const int status = pthread_sigmask(SIG_SETMASK, previous, NULL);
   if (status != 0) {
-    baca_error_set(error, BACA_ERROR_EXTERNAL, "cannot restore signal mask: %s",
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "cannot restore signal mask: %s",
                    strerror(status));
     return false;
   }
   return true;
 }
 
-static bool capture_signal_handlers(BacaError *error) {
-  for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_EXIT_SIGNALS); ++index) {
-    if (sigaction(BACA_EXIT_SIGNALS[index], NULL,
-                  &baca_terminal_runtime.previous_handlers[index]) != 0) {
+static bool capture_signal_handlers(MereaderTuiError *error) {
+  for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(MEREADER_TUI_EXIT_SIGNALS); ++index) {
+    if (sigaction(MEREADER_TUI_EXIT_SIGNALS[index], NULL,
+                  &mereader_tui_terminal_runtime.previous_handlers[index]) != 0) {
       const int saved_errno = errno;
-      baca_error_set(error, BACA_ERROR_EXTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                      "cannot inspect signal handler: %s",
                      strerror(saved_errno));
       return false;
@@ -76,83 +76,83 @@ static bool capture_signal_handlers(BacaError *error) {
 }
 
 static void restore_signal_handlers(void) {
-  while (baca_terminal_runtime.installed_handlers > 0U) {
-    --baca_terminal_runtime.installed_handlers;
+  while (mereader_tui_terminal_runtime.installed_handlers > 0U) {
+    --mereader_tui_terminal_runtime.installed_handlers;
     (void)sigaction(
-        BACA_EXIT_SIGNALS[baca_terminal_runtime.installed_handlers],
-        &baca_terminal_runtime
-             .previous_handlers[baca_terminal_runtime.installed_handlers],
+        MEREADER_TUI_EXIT_SIGNALS[mereader_tui_terminal_runtime.installed_handlers],
+        &mereader_tui_terminal_runtime
+             .previous_handlers[mereader_tui_terminal_runtime.installed_handlers],
         NULL);
   }
 }
 
-static bool install_signal_handlers(BacaError *error) {
+static bool install_signal_handlers(MereaderTuiError *error) {
   struct sigaction action = {0};
   action.sa_handler = request_exit;
   (void)sigemptyset(&action.sa_mask);
-  for (size_t index = 0U; index < BACA_ARRAY_LEN(BACA_EXIT_SIGNALS); ++index) {
-    if (sigaction(BACA_EXIT_SIGNALS[index], &action, NULL) != 0) {
+  for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(MEREADER_TUI_EXIT_SIGNALS); ++index) {
+    if (sigaction(MEREADER_TUI_EXIT_SIGNALS[index], &action, NULL) != 0) {
       const int saved_errno = errno;
       restore_signal_handlers();
-      baca_error_set(error, BACA_ERROR_EXTERNAL,
+      mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL,
                      "cannot install signal handler: %s",
                      strerror(saved_errno));
       return false;
     }
-    baca_terminal_runtime.installed_handlers = index + 1U;
+    mereader_tui_terminal_runtime.installed_handlers = index + 1U;
   }
   return true;
 }
 
-bool baca_terminal_runtime_begin(BacaError *error) {
-  if (baca_terminal_runtime.started) {
-    baca_error_set(error, BACA_ERROR_INTERNAL,
+bool mereader_tui_terminal_runtime_begin(MereaderTuiError *error) {
+  if (mereader_tui_terminal_runtime.started) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                    "terminal runtime is already active");
     return false;
   }
-  if (!block_exit_signals(&baca_terminal_runtime.previous_signal_mask, error)) {
+  if (!block_exit_signals(&mereader_tui_terminal_runtime.previous_signal_mask, error)) {
     return false;
   }
-  baca_terminal_runtime.signals_blocked = true;
-  baca_exit_signal = 0;
+  mereader_tui_terminal_runtime.signals_blocked = true;
+  mereader_tui_exit_signal = 0;
   if (!capture_signal_handlers(error)) {
-    (void)restore_signal_mask(&baca_terminal_runtime.previous_signal_mask,
+    (void)restore_signal_mask(&mereader_tui_terminal_runtime.previous_signal_mask,
                               NULL);
-    baca_terminal_runtime = (BacaTerminalRuntime){0};
+    mereader_tui_terminal_runtime = (MereaderTuiTerminalRuntime){0};
     return false;
   }
-  baca_terminal_runtime.started = true;
+  mereader_tui_terminal_runtime.started = true;
   return true;
 }
 
-bool baca_terminal_runtime_activate(BacaError *error) {
-  if (!baca_terminal_runtime.started) {
-    baca_error_set(error, BACA_ERROR_INTERNAL,
+bool mereader_tui_terminal_runtime_activate(MereaderTuiError *error) {
+  if (!mereader_tui_terminal_runtime.started) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
                    "terminal runtime is not initialized");
     return false;
   }
   if (!install_signal_handlers(error)) {
     return false;
   }
-  if (!restore_signal_mask(&baca_terminal_runtime.previous_signal_mask,
+  if (!restore_signal_mask(&mereader_tui_terminal_runtime.previous_signal_mask,
                            error)) {
     return false;
   }
-  baca_terminal_runtime.signals_blocked = false;
+  mereader_tui_terminal_runtime.signals_blocked = false;
   return true;
 }
 
-bool baca_terminal_runtime_interrupted(void) { return baca_exit_signal != 0; }
+bool mereader_tui_terminal_runtime_interrupted(void) { return mereader_tui_exit_signal != 0; }
 
-int baca_terminal_runtime_finish(int result, BacaError *error) {
-  if (!baca_terminal_runtime.started) {
+int mereader_tui_terminal_runtime_finish(int result, MereaderTuiError *error) {
+  if (!mereader_tui_terminal_runtime.started) {
     return result;
   }
-  if (!baca_terminal_runtime.signals_blocked) {
-    BacaError mask_error = {0};
-    if (block_exit_signals(&baca_terminal_runtime.previous_signal_mask,
+  if (!mereader_tui_terminal_runtime.signals_blocked) {
+    MereaderTuiError mask_error = {0};
+    if (block_exit_signals(&mereader_tui_terminal_runtime.previous_signal_mask,
                            &mask_error)) {
-      baca_terminal_runtime.signals_blocked = true;
+      mereader_tui_terminal_runtime.signals_blocked = true;
     } else if (result == EXIT_SUCCESS) {
       if (error != NULL) {
         *error = mask_error;
@@ -160,11 +160,11 @@ int baca_terminal_runtime_finish(int result, BacaError *error) {
       result = EXIT_FAILURE;
     }
   }
-  const int signal_number = (int)baca_exit_signal;
+  const int signal_number = (int)mereader_tui_exit_signal;
   restore_signal_handlers();
-  if (baca_terminal_runtime.signals_blocked) {
-    BacaError mask_error = {0};
-    if (!restore_signal_mask(&baca_terminal_runtime.previous_signal_mask,
+  if (mereader_tui_terminal_runtime.signals_blocked) {
+    MereaderTuiError mask_error = {0};
+    if (!restore_signal_mask(&mereader_tui_terminal_runtime.previous_signal_mask,
                              &mask_error) &&
         result == EXIT_SUCCESS) {
       if (error != NULL) {
@@ -173,15 +173,15 @@ int baca_terminal_runtime_finish(int result, BacaError *error) {
       result = EXIT_FAILURE;
     }
   }
-  baca_terminal_runtime = (BacaTerminalRuntime){0};
-  baca_exit_signal = 0;
+  mereader_tui_terminal_runtime = (MereaderTuiTerminalRuntime){0};
+  mereader_tui_exit_signal = 0;
   if (result == EXIT_SUCCESS && signal_number != 0) {
     result = 128 + signal_number;
   }
   return result;
 }
 
-double baca_terminal_monotonic_seconds(void) {
+double mereader_tui_terminal_monotonic_seconds(void) {
   struct timespec now = {0};
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
     return 0.0;
@@ -189,7 +189,7 @@ double baca_terminal_monotonic_seconds(void) {
   return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
 }
 
-bool baca_terminal_graphics_write(void *user_data, const void *data,
+bool mereader_tui_terminal_graphics_write(void *user_data, const void *data,
                                   size_t length) {
   (void)user_data;
   const unsigned char *cursor = data;
@@ -208,7 +208,7 @@ bool baca_terminal_graphics_write(void *user_data, const void *data,
   return true;
 }
 
-void baca_terminal_probe_cell_pixels(bool pixel_mode, int *width, int *height) {
+void mereader_tui_terminal_probe_cell_pixels(bool pixel_mode, int *width, int *height) {
   *width = pixel_mode ? 8 : 1;
   *height = pixel_mode ? 16 : 2;
   if (!pixel_mode) {

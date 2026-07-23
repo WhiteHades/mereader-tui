@@ -1,4 +1,4 @@
-#include "baca/search.h"
+#include "mereader-tui/search.h"
 
 #include "fff.h"
 
@@ -6,13 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool search_result_error(FffResult *result, const char *operation, BacaError *error) {
+static bool search_result_error(FffResult *result, const char *operation, MereaderTuiError *error) {
     if (result == NULL) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "%s: fff returned no result", operation);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "%s: fff returned no result", operation);
         return true;
     }
     if (!result->success) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "%s: %s", operation,
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "%s: %s", operation,
                        result->error == NULL ? "fff failed" : result->error);
         fff_free_result(result);
         return true;
@@ -20,17 +20,17 @@ static bool search_result_error(FffResult *result, const char *operation, BacaEr
     return false;
 }
 
-bool baca_search_index_open(BacaSearchIndex *index, const char *root, bool watch, BacaError *error) {
+bool mereader_tui_search_index_open(MereaderTuiSearchIndex *index, const char *root, bool watch, MereaderTuiError *error) {
     if (index == NULL || root == NULL || root[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid search index root");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid search index root");
         return false;
     }
     if (index->handle != NULL || index->root != NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "search index output is not empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "search index output is not empty");
         return false;
     }
 
-    char *stored_root = baca_realpath(root, error);
+    char *stored_root = mereader_tui_realpath(root, error);
     if (stored_root == NULL) {
         return false;
     }
@@ -61,7 +61,7 @@ bool baca_search_index_open(BacaSearchIndex *index, const char *root, bool watch
     fff_free_result(created);
     if (handle == NULL) {
         free(stored_root);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not create library index: fff returned no handle");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not create library index: fff returned no handle");
         return false;
     }
 
@@ -76,26 +76,26 @@ bool baca_search_index_open(BacaSearchIndex *index, const char *root, bool watch
     if (!complete) {
         fff_destroy(handle);
         free(stored_root);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not scan library: fff timed out after 30 seconds");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not scan library: fff timed out after 30 seconds");
         return false;
     }
 
-    *index = (BacaSearchIndex){.handle = handle, .root = stored_root};
+    *index = (MereaderTuiSearchIndex){.handle = handle, .root = stored_root};
     return true;
 }
 
-void baca_search_index_close(BacaSearchIndex *index) {
+void mereader_tui_search_index_close(MereaderTuiSearchIndex *index) {
     if (index == NULL) {
         return;
     }
     fff_destroy(index->handle);
     free(index->root);
-    *index = (BacaSearchIndex){0};
+    *index = (MereaderTuiSearchIndex){0};
 }
 
-bool baca_search_index_refresh(BacaSearchIndex *index, BacaError *error) {
+bool mereader_tui_search_index_refresh(MereaderTuiSearchIndex *index, MereaderTuiError *error) {
     if (index == NULL || index->handle == NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "search index is not open");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "search index is not open");
         return false;
     }
     FffResult *scanned = fff_scan_files(index->handle);
@@ -111,12 +111,12 @@ bool baca_search_index_refresh(BacaSearchIndex *index, BacaError *error) {
     const bool complete = waited->int_value != 0;
     fff_free_result(waited);
     if (!complete) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not refresh library index: fff timed out after 30 seconds");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not refresh library index: fff timed out after 30 seconds");
     }
     return complete;
 }
 
-void baca_search_files_free(BacaSearchFiles *files) {
+void mereader_tui_search_files_free(MereaderTuiSearchFiles *files) {
     if (files == NULL) {
         return;
     }
@@ -124,21 +124,21 @@ void baca_search_files_free(BacaSearchFiles *files) {
         free(files->items[index].relative_path);
     }
     free(files->items);
-    *files = (BacaSearchFiles){0};
+    *files = (MereaderTuiSearchFiles){0};
 }
 
-bool baca_search_files(BacaSearchIndex *index, const char *query, size_t offset, size_t limit,
-                       BacaSearchFiles *files, BacaError *error) {
+bool mereader_tui_search_files(MereaderTuiSearchIndex *index, const char *query, size_t offset, size_t limit,
+                       MereaderTuiSearchFiles *files, MereaderTuiError *error) {
     if (index == NULL || index->handle == NULL || query == NULL || files == NULL) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid search request");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid search request");
         return false;
     }
     if (files->items != NULL || files->length != 0U || files->total != 0U) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "search output is not empty");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "search output is not empty");
         return false;
     }
     if (offset > UINT32_MAX || limit == 0U || limit > UINT32_MAX) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "search page is out of range");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "search page is out of range");
         return false;
     }
 
@@ -149,12 +149,12 @@ bool baca_search_files(BacaSearchIndex *index, const char *query, size_t offset,
     FffSearchResult *payload = searched->handle;
     fff_free_result(searched);
     if (payload == NULL) {
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not search library: fff returned no payload");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not search library: fff returned no payload");
         return false;
     }
 
     const size_t count = payload->count;
-    BacaSearchFile *items = count == 0U ? NULL : baca_reallocarray(NULL, count, sizeof(*items), error);
+    MereaderTuiSearchFile *items = count == 0U ? NULL : mereader_tui_reallocarray(NULL, count, sizeof(*items), error);
     if (count > 0U && items == NULL) {
         fff_free_search_result(payload);
         return false;
@@ -167,10 +167,10 @@ bool baca_search_files(BacaSearchIndex *index, const char *query, size_t offset,
         const FffFileItem *item = fff_search_result_get_item(payload, (uint32_t)copied);
         const FffScore *score = fff_search_result_get_score(payload, (uint32_t)copied);
         if (item == NULL || item->relative_path == NULL) {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "could not search library: fff returned an invalid item");
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not search library: fff returned an invalid item");
             break;
         }
-        items[copied].relative_path = baca_strdup(item->relative_path, error);
+        items[copied].relative_path = mereader_tui_strdup(item->relative_path, error);
         items[copied].score = score == NULL ? 0 : score->total;
         if (items[copied].relative_path == NULL) {
             break;
@@ -179,11 +179,11 @@ bool baca_search_files(BacaSearchIndex *index, const char *query, size_t offset,
     const size_t total = payload->total_matched;
     fff_free_search_result(payload);
     if (copied != count) {
-        BacaSearchFiles partial = {.items = items, .length = copied};
-        baca_search_files_free(&partial);
+        MereaderTuiSearchFiles partial = {.items = items, .length = copied};
+        mereader_tui_search_files_free(&partial);
         return false;
     }
 
-    *files = (BacaSearchFiles){.items = items, .length = count, .total = total};
+    *files = (MereaderTuiSearchFiles){.items = items, .length = count, .total = total};
     return true;
 }

@@ -180,14 +180,6 @@ Accent = #8839ef
 
 the shipped palette is based on catppuccin mocha and latte. see `resources/config.ini` for every key mapping.
 
-## upgrading from baca
-
-version 0.1.1 imports legacy state once. it copies `config.ini` from the former config directory, imports `baca.db`, and copies cached downloads from the former cache directory. existing files in the new `mereader-tui` directories always win. current mereader-tui state directories are kept in owner-only mode when migration state is checked.
-
-the import does not change or delete legacy state. it writes `.mereader-tui-legacy-state-import-v1.complete` under the xdg config base after a successful import. a persistent `.mereader-tui-legacy-state-import-v1.lock` file under the xdg cache base coordinates concurrent starts. the old files can be kept for recovery or removed by hand after the new state is checked.
-
-the command is now only `mereader-tui`. no `baca` command alias is installed. `make install` and `make user-install` remove files installed by the previous name under the same prefix. replace `BACA_LIBRARY_PATH` with `MEREADER_TUI_LIBRARY_PATH`; the old variable is ignored.
-
 ## native fff integration
 
 mereader-tui is written in c23. fff remains rust and is compiled from the pinned submodule into `libfff_c.so`. mereader-tui calls the fff c abi in the same process. it does not launch an fff command or need neovim.

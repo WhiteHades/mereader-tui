@@ -1,6 +1,6 @@
 #include "test_support.h"
 
-#include "baca/document.h"
+#include "mereader-tui/document.h"
 
 #include <stdlib.h>
 
@@ -27,10 +27,10 @@ static const char fb2_fixture[] =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     "</binary></FictionBook>";
 
-static const BacaBlock *find_text_block(const BacaDocument *document, const char *needle) {
+static const MereaderTuiBlock *find_text_block(const MereaderTuiDocument *document, const char *needle) {
     for (size_t index = 0U; index < document->block_count; ++index) {
-        const BacaBlock *block = &document->blocks[index];
-        if (block->kind == BACA_BLOCK_TEXT && block->value.text.text != NULL &&
+        const MereaderTuiBlock *block = &document->blocks[index];
+        if (block->kind == MEREADER_TUI_BLOCK_TEXT && block->value.text.text != NULL &&
             strstr(block->value.text.text, needle) != NULL) {
             return block;
         }
@@ -38,14 +38,14 @@ static const BacaBlock *find_text_block(const BacaDocument *document, const char
     return NULL;
 }
 
-static BacaTestResult test_metadata_toc_styles_links_bodies_and_image(void) {
-    TEST_ASSERT(baca_test_write_text("fb2/native.fb2", fb2_fixture));
-    char *path = baca_test_path("fb2/native.fb2");
+static MereaderTuiTestResult test_metadata_toc_styles_links_bodies_and_image(void) {
+    TEST_ASSERT(mereader_tui_test_write_text("fb2/native.fb2", fb2_fixture));
+    char *path = mereader_tui_test_path("fb2/native.fb2");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_FB2);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_FB2);
     TEST_ASSERT_STR(document.metadata.title, "Native FB2");
     TEST_ASSERT_STR(document.metadata.author, "Ada Lovelace, Analyst");
     TEST_ASSERT_STR(document.metadata.creator, "Editor One");
@@ -66,58 +66,58 @@ static BacaTestResult test_metadata_toc_styles_links_bodies_and_image(void) {
     TEST_ASSERT_SIZE(document.toc[1].depth, 1U);
     TEST_ASSERT_STR(document.toc[2].label, "Note One");
 
-    const BacaBlock *paragraph = find_text_block(&document, "Bold and italic note.");
+    const MereaderTuiBlock *paragraph = find_text_block(&document, "Bold and italic note.");
     TEST_ASSERT(paragraph != NULL);
     TEST_ASSERT_SIZE(paragraph->value.text.span_count, 3U);
-    TEST_ASSERT_INT(paragraph->value.text.spans[0].style, BACA_STYLE_BOLD);
-    TEST_ASSERT_INT(paragraph->value.text.spans[1].style, BACA_STYLE_ITALIC);
+    TEST_ASSERT_INT(paragraph->value.text.spans[0].style, MEREADER_TUI_STYLE_BOLD);
+    TEST_ASSERT_INT(paragraph->value.text.spans[1].style, MEREADER_TUI_STYLE_ITALIC);
     TEST_ASSERT_STR(paragraph->value.text.spans[2].link, "fb2/document#note-1");
     TEST_ASSERT(find_text_block(&document, "Footnote text.") != NULL);
 
-    const BacaBlock *image = NULL;
+    const MereaderTuiBlock *image = NULL;
     for (size_t index = 0U; index < document.block_count; ++index) {
-        if (document.blocks[index].kind == BACA_BLOCK_IMAGE) {
+        if (document.blocks[index].kind == MEREADER_TUI_BLOCK_IMAGE) {
             image = &document.blocks[index];
             break;
         }
     }
     TEST_ASSERT(image != NULL);
     TEST_ASSERT_STR(image->value.image.uri, "fb2://binary/0.png");
-    BacaResource resource = {0};
-    TEST_ASSERT_MSG(baca_document_load_resource(&document, image->value.image.uri, &resource, &error), "%s",
+    MereaderTuiResource resource = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_load_resource(&document, image->value.image.uri, &resource, &error), "%s",
                     error.message);
     TEST_ASSERT_SIZE(resource.length, 68U);
     TEST_ASSERT_INT(resource.data[0], 0x89);
     TEST_ASSERT_STR(resource.mime_type, "image/png");
-    baca_resource_free(&resource);
-    baca_document_probe_images(&document, true);
+    mereader_tui_resource_free(&resource);
+    mereader_tui_document_probe_images(&document, true);
     TEST_ASSERT(!image->value.image.broken);
     TEST_ASSERT_INT(image->value.image.intrinsic_width, 1);
     TEST_ASSERT_INT(image->value.image.intrinsic_height, 1);
 
-    char *held = baca_test_path("fb2/native-held.fb2");
+    char *held = mereader_tui_test_path("fb2/native-held.fb2");
     TEST_ASSERT(held != NULL);
     TEST_ASSERT(rename(path, held) == 0);
-    TEST_ASSERT(baca_test_write_text("fb2/native.fb2", "replacement"));
-    TEST_ASSERT(baca_document_load_resource(&document, image->value.image.uri, &resource, &error));
+    TEST_ASSERT(mereader_tui_test_write_text("fb2/native.fb2", "replacement"));
+    TEST_ASSERT(mereader_tui_document_load_resource(&document, image->value.image.uri, &resource, &error));
     TEST_ASSERT_INT(resource.data[0], 0x89);
-    baca_resource_free(&resource);
+    mereader_tui_resource_free(&resource);
 
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(held);
     free(path);
 
-    TEST_ASSERT(baca_test_write_text("fb2/by-magic.data", fb2_fixture));
-    path = baca_test_path("fb2/by-magic.data");
+    TEST_ASSERT(mereader_tui_test_write_text("fb2/by-magic.data", fb2_fixture));
+    path = mereader_tui_test_path("fb2/by-magic.data");
     TEST_ASSERT(path != NULL);
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_FB2);
-    baca_document_close(&document);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_FB2);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_malformed_dtd_and_binary_errors(void) {
+static MereaderTuiTestResult test_malformed_dtd_and_binary_errors(void) {
     static const char *const fixtures[] = {
         "<not-fiction-book/>",
         "<!DOCTYPE FictionBook [<!ENTITY x 'unsafe'>]><FictionBook><body><p>&x;</p></body></FictionBook>",
@@ -126,64 +126,64 @@ static BacaTestResult test_malformed_dtd_and_binary_errors(void) {
         "<FictionBook><description/><body/><binary id='x.png' content-type='image/png'>AA==</binary>"
         "<binary id='x.png' content-type='image/png'>AA==</binary></FictionBook>",
     };
-    for (size_t index = 0U; index < BACA_ARRAY_LEN(fixtures); ++index) {
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(fixtures); ++index) {
         char relative[64] = {0};
         TEST_ASSERT(snprintf(relative, sizeof(relative), "fb2/invalid-%zu.fb2", index) > 0);
-        TEST_ASSERT(baca_test_write_text(relative, fixtures[index]));
-        char *path = baca_test_path(relative);
+        TEST_ASSERT(mereader_tui_test_write_text(relative, fixtures[index]));
+        char *path = mereader_tui_test_path(relative);
         TEST_ASSERT(path != NULL);
-        BacaDocument document = {0};
-        BacaError error = {0};
-        TEST_ASSERT(!baca_document_open(&document, path, &error));
-        TEST_ASSERT_ERROR(error, BACA_ERROR_CORRUPT);
+        MereaderTuiDocument document = {0};
+        MereaderTuiError error = {0};
+        TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+        TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_CORRUPT);
         free(path);
     }
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_minimal_book_without_images(void) {
+static MereaderTuiTestResult test_minimal_book_without_images(void) {
     static const char minimal[] = "<FictionBook><body><section><title><p>Only Chapter</p></title>"
                                   "<p>Text only.</p></section></body></FictionBook>";
-    TEST_ASSERT(baca_test_write_text("fb2/minimal.fb2", minimal));
-    char *path = baca_test_path("fb2/minimal.fb2");
+    TEST_ASSERT(mereader_tui_test_write_text("fb2/minimal.fb2", minimal));
+    char *path = mereader_tui_test_path("fb2/minimal.fb2");
     TEST_ASSERT(path != NULL);
-    BacaDocument document = {0};
-    BacaError error = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
     TEST_ASSERT_STR(document.metadata.title, "minimal.fb2");
     TEST_ASSERT_SIZE(document.toc_count, 1U);
     TEST_ASSERT(find_text_block(&document, "Text only.") != NULL);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-static BacaTestResult test_optional_real_fb2(void) {
+static MereaderTuiTestResult test_optional_real_fb2(void) {
     const char *configured = getenv("MEREADER_TUI_TEST_FB2_SAMPLE");
     if (configured == NULL || configured[0] == '\0') {
-        return baca_test_skip("set MEREADER_TUI_TEST_FB2_SAMPLE for real FictionBook parsing");
+        return mereader_tui_test_skip("set MEREADER_TUI_TEST_FB2_SAMPLE for real FictionBook parsing");
     }
-    BacaError error = {0};
-    char *path = baca_realpath(configured, &error);
+    MereaderTuiError error = {0};
+    char *path = mereader_tui_realpath(configured, &error);
     TEST_ASSERT_MSG(path != NULL, "%s", error.message);
-    BacaDocument document = {0};
-    TEST_ASSERT_MSG(baca_document_open(&document, path, &error), "%s", error.message);
-    TEST_ASSERT_INT(document.format, BACA_FORMAT_FB2);
+    MereaderTuiDocument document = {0};
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_INT(document.format, MEREADER_TUI_FORMAT_FB2);
     TEST_ASSERT(document.metadata.title != NULL);
     TEST_ASSERT(document.block_count > 0U);
-    baca_document_close(&document);
+    mereader_tui_document_close(&document);
     free(path);
-    return BACA_TEST_PASS;
+    return MEREADER_TUI_TEST_PASS;
 }
 
-const BacaTestCase *baca_fb2_test_cases(size_t *count) {
-    static const BacaTestCase cases[] = {
+const MereaderTuiTestCase *mereader_tui_fb2_test_cases(size_t *count) {
+    static const MereaderTuiTestCase cases[] = {
         {.name = "metadata_toc_styles_links_bodies_and_image",
          .function = test_metadata_toc_styles_links_bodies_and_image},
         {.name = "malformed_dtd_and_binary_errors", .function = test_malformed_dtd_and_binary_errors},
         {.name = "minimal_book_without_images", .function = test_minimal_book_without_images},
         {.name = "optional_real_fb2", .function = test_optional_real_fb2},
     };
-    *count = BACA_ARRAY_LEN(cases);
+    *count = MEREADER_TUI_ARRAY_LEN(cases);
     return cases;
 }

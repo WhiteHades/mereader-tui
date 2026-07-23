@@ -1,4 +1,4 @@
-#include "baca/document_backend.h"
+#include "mereader-tui/document_backend.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -8,26 +8,26 @@
 #include <libxml/HTMLparser.h>
 #include <libxml/tree.h>
 
-#define BACA_HTML_MAX (64U * 1024U * 1024U)
+#define MEREADER_TUI_HTML_MAX (64U * 1024U * 1024U)
 
 typedef struct HtmlContext {
-    BacaDocument *document;
+    MereaderTuiDocument *document;
     const char *section_id;
-    BacaString text;
-    BacaTextSpan *spans;
+    MereaderTuiString text;
+    MereaderTuiTextSpan *spans;
     size_t span_count;
     size_t span_capacity;
-    BacaAnchor *anchors;
+    MereaderTuiAnchor *anchors;
     size_t anchor_count;
     size_t anchor_capacity;
     unsigned heading_level;
     unsigned list_depth;
     bool preformatted;
     bool pending_space;
-    BacaError *error;
+    MereaderTuiError *error;
 } HtmlContext;
 
-static bool walk_node(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link,
+static bool walk_node(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link,
                       bool suppress_blocks);
 
 static bool node_is(const xmlNode *node, const char *name) {
@@ -35,7 +35,7 @@ static bool node_is(const xmlNode *node, const char *name) {
 }
 
 static void context_text_free(HtmlContext *context) {
-    baca_string_free(&context->text);
+    mereader_tui_string_free(&context->text);
     for (size_t index = 0; index < context->span_count; index++) {
         free(context->spans[index].link);
     }
@@ -60,33 +60,33 @@ static bool links_equal(const char *left, const char *right) {
     return strcmp(left, right) == 0;
 }
 
-static bool add_span(HtmlContext *context, size_t start, size_t end, BacaTextStyle style, const char *link) {
-    if (start == end || (style == BACA_STYLE_NONE && link == NULL)) {
+static bool add_span(HtmlContext *context, size_t start, size_t end, MereaderTuiTextStyle style, const char *link) {
+    if (start == end || (style == MEREADER_TUI_STYLE_NONE && link == NULL)) {
         return true;
     }
     if (context->span_count > 0) {
-        BacaTextSpan *last = &context->spans[context->span_count - 1];
+        MereaderTuiTextSpan *last = &context->spans[context->span_count - 1];
         if (last->end == start && last->style == style && links_equal(last->link, link)) {
             last->end = end;
             return true;
         }
     }
-    if (context->span_count >= BACA_DOCUMENT_MAX_SPANS_PER_BLOCK) {
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "HTML text block contains too many spans");
+    if (context->span_count >= MEREADER_TUI_DOCUMENT_MAX_SPANS_PER_BLOCK) {
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "HTML text block contains too many spans");
         return false;
     }
 
     char *owned_link = NULL;
     if (link != NULL) {
-        owned_link = baca_strdup(link, context->error);
+        owned_link = mereader_tui_strdup(link, context->error);
         if (owned_link == NULL) {
             return false;
         }
     }
-    BacaError reserve_error = {0};
-    BacaTextSpan *spans = baca_array_reserve(context->spans, &context->span_capacity, sizeof(*context->spans),
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiTextSpan *spans = mereader_tui_array_reserve(context->spans, &context->span_capacity, sizeof(*context->spans),
                                              context->span_count + 1, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (context->error != NULL) {
             *context->error = reserve_error;
         }
@@ -94,7 +94,7 @@ static bool add_span(HtmlContext *context, size_t start, size_t end, BacaTextSty
         return false;
     }
     context->spans = spans;
-    context->spans[context->span_count++] = (BacaTextSpan) {
+    context->spans[context->span_count++] = (MereaderTuiTextSpan) {
         .start = start,
         .end = end,
         .style = style,
@@ -103,18 +103,18 @@ static bool add_span(HtmlContext *context, size_t start, size_t end, BacaTextSty
     return true;
 }
 
-static bool append_chunk(HtmlContext *context, const char *value, size_t length, BacaTextStyle style,
+static bool append_chunk(HtmlContext *context, const char *value, size_t length, MereaderTuiTextStyle style,
                           const char *link) {
     if (length == 0) {
         return true;
     }
-    if (context->text.length > BACA_DOCUMENT_MAX_RETAINED_BYTES ||
-        length > BACA_DOCUMENT_MAX_RETAINED_BYTES - context->text.length) {
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "HTML text block exceeds the supported size limit");
+    if (context->text.length > MEREADER_TUI_DOCUMENT_MAX_RETAINED_BYTES ||
+        length > MEREADER_TUI_DOCUMENT_MAX_RETAINED_BYTES - context->text.length) {
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "HTML text block exceeds the supported size limit");
         return false;
     }
     size_t start = context->text.length;
-    if (!baca_string_append_n(&context->text, value, length, context->error)) {
+    if (!mereader_tui_string_append_n(&context->text, value, length, context->error)) {
         return false;
     }
     return add_span(context, start, context->text.length, style, link);
@@ -124,10 +124,10 @@ static bool is_html_space(unsigned char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f';
 }
 
-static bool append_text(HtmlContext *context, const char *value, size_t length, BacaTextStyle style,
+static bool append_text(HtmlContext *context, const char *value, size_t length, MereaderTuiTextStyle style,
                          const char *link) {
     if (context->heading_level > 0) {
-        style = (BacaTextStyle) (style | BACA_STYLE_HEADING);
+        style = (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_HEADING);
     }
     if (context->preformatted) {
         context->pending_space = false;
@@ -180,7 +180,7 @@ static bool append_text(HtmlContext *context, const char *value, size_t length, 
     return true;
 }
 
-static bool append_break(HtmlContext *context, BacaTextStyle style, const char *link) {
+static bool append_break(HtmlContext *context, MereaderTuiTextStyle style, const char *link) {
     context->pending_space = false;
     while (!context->preformatted && context->text.length > 0 &&
            context->text.data[context->text.length - 1] == ' ') {
@@ -190,7 +190,7 @@ static bool append_break(HtmlContext *context, BacaTextStyle style, const char *
 }
 
 static char *anchor_target(const HtmlContext *context, const char *value) {
-    return baca_document_fragment_target(context->section_id, value, context->error);
+    return mereader_tui_document_fragment_target(context->section_id, value, context->error);
 }
 
 static bool add_anchor(HtmlContext *context, const char *value) {
@@ -206,16 +206,16 @@ static bool add_anchor(HtmlContext *context, const char *value) {
         free(target);
         return true;
     }
-    if (context->anchor_count >= BACA_DOCUMENT_MAX_ANCHORS_PER_BLOCK) {
+    if (context->anchor_count >= MEREADER_TUI_DOCUMENT_MAX_ANCHORS_PER_BLOCK) {
         free(target);
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "HTML text block contains too many anchors");
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "HTML text block contains too many anchors");
         return false;
     }
-    BacaError reserve_error = {0};
-    BacaAnchor *anchors = baca_array_reserve(context->anchors, &context->anchor_capacity,
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiAnchor *anchors = mereader_tui_array_reserve(context->anchors, &context->anchor_capacity,
                                              sizeof(*context->anchors), context->anchor_count + 1,
                                              &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (context->error != NULL) {
             *context->error = reserve_error;
         }
@@ -223,7 +223,7 @@ static bool add_anchor(HtmlContext *context, const char *value) {
         return false;
     }
     context->anchors = anchors;
-    context->anchors[context->anchor_count++] = (BacaAnchor) {
+    context->anchors[context->anchor_count++] = (MereaderTuiAnchor) {
         .target = target,
         .offset = context->text.length,
     };
@@ -298,21 +298,21 @@ static bool flush_text(HtmlContext *context) {
         return true;
     }
 
-    char *text = baca_string_take(&context->text);
+    char *text = mereader_tui_string_take(&context->text);
     if (text == NULL) {
-        text = baca_strdup("", context->error);
+        text = mereader_tui_strdup("", context->error);
         if (text == NULL) {
             return false;
         }
     }
-    char *section_id = baca_strdup(context->section_id, context->error);
+    char *section_id = mereader_tui_strdup(context->section_id, context->error);
     if (section_id == NULL) {
         free(text);
         return false;
     }
 
-    BacaBlock block = {
-        .kind = BACA_BLOCK_TEXT,
+    MereaderTuiBlock block = {
+        .kind = MEREADER_TUI_BLOCK_TEXT,
         .section_id = section_id,
         .value.text = {
             .text = text,
@@ -327,15 +327,15 @@ static bool flush_text(HtmlContext *context) {
         },
     };
     reset_text_context(context);
-    if (!baca_document_add_text_block(context->document, &block, context->error)) {
-        baca_document_block_free(&block);
+    if (!mereader_tui_document_add_text_block(context->document, &block, context->error)) {
+        mereader_tui_document_block_free(&block);
         return false;
     }
     return true;
 }
 
 static char *resolve_uri(HtmlContext *context, const char *uri) {
-    return baca_document_resolve_uri(context->section_id, uri, true, context->error);
+    return mereader_tui_document_resolve_uri(context->section_id, uri, true, context->error);
 }
 
 static bool srcset_space(char value) {
@@ -428,7 +428,7 @@ static char *srcset_first(HtmlContext *context, const xmlChar *srcset) {
             continue;
         }
         if (ended_by_comma) {
-            return baca_strndup(url_start, (size_t) (url_end - url_start), context->error);
+            return mereader_tui_strndup(url_start, (size_t) (url_end - url_start), context->error);
         }
 
         while (srcset_space(*cursor)) {
@@ -451,7 +451,7 @@ static char *srcset_first(HtmlContext *context, const xmlChar *srcset) {
             descriptor_end--;
         }
         if (parentheses == 0 && valid_srcset_descriptors(descriptors, descriptor_end)) {
-            return baca_strndup(url_start, (size_t) (url_end - url_start), context->error);
+            return mereader_tui_strndup(url_start, (size_t) (url_end - url_start), context->error);
         }
         if (*cursor == ',') {
             cursor++;
@@ -482,7 +482,7 @@ static char *candidate_image_source(HtmlContext *context, xmlNode *candidate) {
     }
     char *value = NULL;
     if (source != NULL) {
-        value = baca_strdup((const char *) source, context->error);
+        value = mereader_tui_strdup((const char *) source, context->error);
     } else {
         xmlChar *srcset = node_attribute(candidate, "srcset");
         if (srcset != NULL) {
@@ -525,7 +525,7 @@ static bool add_descendant_image_anchors(HtmlContext *context, xmlNode *node, co
         xmlChar *id = node_attribute(child, "id");
         xmlChar *name = node_is(child, "a") ? node_attribute(child, "name") : NULL;
         xmlChar *values[] = {id, name};
-        for (size_t index = 0; index < BACA_ARRAY_LEN(values); index++) {
+        for (size_t index = 0; index < MEREADER_TUI_ARRAY_LEN(values); index++) {
             if (values[index] != NULL && values[index][0] != '\0' &&
                 (primary == NULL || xmlStrcmp(values[index], primary) != 0)) {
                 if (!add_anchor(context, (const char *) values[index])) {
@@ -550,7 +550,7 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
     char *source = image_source(context, node, &source_node);
     if (source == NULL || source[0] == '\0') {
         free(source);
-        if (baca_error_is_set(context->error)) {
+        if (mereader_tui_error_is_set(context->error)) {
             return false;
         }
         return record_node_anchors(context, node);
@@ -579,7 +579,7 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
         }
     }
     bool had_alt_value = alt_value != NULL;
-    char *alt = alt_value == NULL ? NULL : baca_strdup((const char *) alt_value, context->error);
+    char *alt = alt_value == NULL ? NULL : mereader_tui_strdup((const char *) alt_value, context->error);
     xmlFree(alt_value);
     if (had_alt_value && alt == NULL) {
         free(resolved);
@@ -592,7 +592,7 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
     xmlChar *source_name = source_node == node ? NULL : node_attribute(source_node, "name");
     xmlChar *anchor_values[] = {node_id, node_name, source_id, source_name};
     const xmlChar *primary = NULL;
-    for (size_t index = 0; index < BACA_ARRAY_LEN(anchor_values); index++) {
+    for (size_t index = 0; index < MEREADER_TUI_ARRAY_LEN(anchor_values); index++) {
         if (anchor_values[index] != NULL && anchor_values[index][0] != '\0') {
             primary = anchor_values[index];
             break;
@@ -612,7 +612,7 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
         }
     }
     bool added_secondary = false;
-    for (size_t index = 0; index < BACA_ARRAY_LEN(anchor_values); index++) {
+    for (size_t index = 0; index < MEREADER_TUI_ARRAY_LEN(anchor_values); index++) {
         if (anchor_values[index] != NULL && anchor_values[index][0] != '\0' &&
             (primary == NULL || xmlStrcmp(anchor_values[index], primary) != 0)) {
             if (!add_anchor(context, (const char *) anchor_values[index])) {
@@ -653,14 +653,14 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
     xmlFree(source_id);
     xmlFree(source_name);
 
-    char *owned_link = link == NULL ? NULL : baca_strdup(link, context->error);
+    char *owned_link = link == NULL ? NULL : mereader_tui_strdup(link, context->error);
     if (link != NULL && owned_link == NULL) {
         free(resolved);
         free(alt);
         free(anchor);
         return false;
     }
-    char *section_id = baca_strdup(context->section_id, context->error);
+    char *section_id = mereader_tui_strdup(context->section_id, context->error);
     if (section_id == NULL) {
         free(resolved);
         free(alt);
@@ -668,8 +668,8 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
         free(owned_link);
         return false;
     }
-    BacaBlock block = {
-        .kind = BACA_BLOCK_IMAGE,
+    MereaderTuiBlock block = {
+        .kind = MEREADER_TUI_BLOCK_IMAGE,
         .section_id = section_id,
         .value.image = {
             .uri = resolved,
@@ -679,14 +679,14 @@ static bool emit_image(HtmlContext *context, xmlNode *node, const char *link) {
             .page_index = -1,
         },
     };
-    if (!baca_document_add_image_block(context->document, &block, context->error)) {
-        baca_document_block_free(&block);
+    if (!mereader_tui_document_add_image_block(context->document, &block, context->error)) {
+        mereader_tui_document_block_free(&block);
         return false;
     }
     return true;
 }
 
-static bool walk_children(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link,
+static bool walk_children(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link,
                           bool suppress_blocks) {
     for (xmlNode *child = node->children; child != NULL; child = child->next) {
         if (!walk_node(context, child, style, link, suppress_blocks)) {
@@ -710,7 +710,7 @@ static bool is_boundary_element(const xmlNode *node) {
         "nav",     "address", "blockquote", "figure", "figcaption", "details", "summary", "dt",
         "dd",
     };
-    for (size_t index = 0; index < BACA_ARRAY_LEN(names); index++) {
+    for (size_t index = 0; index < MEREADER_TUI_ARRAY_LEN(names); index++) {
         if (node_is(node, names[index])) {
             return true;
         }
@@ -718,24 +718,24 @@ static bool is_boundary_element(const xmlNode *node) {
     return false;
 }
 
-static BacaTextStyle element_style(const xmlNode *node, BacaTextStyle style) {
+static MereaderTuiTextStyle element_style(const xmlNode *node, MereaderTuiTextStyle style) {
     if (node_is(node, "strong") || node_is(node, "b")) {
-        style = (BacaTextStyle) (style | BACA_STYLE_BOLD);
+        style = (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_BOLD);
     }
     if (node_is(node, "em") || node_is(node, "i") || node_is(node, "cite") || node_is(node, "dfn")) {
-        style = (BacaTextStyle) (style | BACA_STYLE_ITALIC);
+        style = (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_ITALIC);
     }
     if (node_is(node, "u") || node_is(node, "ins")) {
-        style = (BacaTextStyle) (style | BACA_STYLE_UNDERLINE);
+        style = (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_UNDERLINE);
     }
     if (node_is(node, "code") || node_is(node, "samp") || node_is(node, "kbd") || node_is(node, "tt") ||
         node_is(node, "pre")) {
-        style = (BacaTextStyle) (style | BACA_STYLE_CODE);
+        style = (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_CODE);
     }
     return style;
 }
 
-static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link) {
+static bool walk_list(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link) {
     if (!flush_text(context) || !record_node_anchors(context, node)) {
         return false;
     }
@@ -749,7 +749,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
         long parsed = strtol((const char *) start, &end, 10);
         if (errno == ERANGE) {
             xmlFree(start);
-            baca_error_set(context->error, BACA_ERROR_CORRUPT, "ordered-list start is out of range");
+            mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "ordered-list start is out of range");
             return false;
         }
         if (end != (char *) start && *end == '\0') {
@@ -759,7 +759,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
     xmlFree(start);
 
     if (context->list_depth == 256U) {
-        baca_error_set(context->error, BACA_ERROR_CORRUPT, "HTML lists are nested too deeply");
+        mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "HTML lists are nested too deeply");
         return false;
     }
     context->list_depth++;
@@ -769,7 +769,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
         }
         if (ordered && ordinal_exhausted) {
             context->list_depth--;
-            baca_error_set(context->error, BACA_ERROR_CORRUPT, "ordered-list ordinal exceeds LONG_MAX");
+            mereader_tui_error_set(context->error, MEREADER_TUI_ERROR_CORRUPT, "ordered-list ordinal exceeds LONG_MAX");
             return false;
         }
         if (!flush_text(context) || !record_node_anchors(context, item)) {
@@ -777,7 +777,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
             return false;
         }
         for (unsigned depth = 1; depth < context->list_depth; depth++) {
-            if (!append_chunk(context, "  ", 2, BACA_STYLE_NONE, NULL)) {
+            if (!append_chunk(context, "  ", 2, MEREADER_TUI_STYLE_NONE, NULL)) {
                 context->list_depth--;
                 return false;
             }
@@ -793,7 +793,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
             }
         }
         if (marker_length < 0 || (size_t) marker_length >= sizeof(marker) ||
-            !append_chunk(context, marker, (size_t) marker_length, BACA_STYLE_NONE, NULL)) {
+            !append_chunk(context, marker, (size_t) marker_length, MEREADER_TUI_STYLE_NONE, NULL)) {
             context->list_depth--;
             return false;
         }
@@ -817,7 +817,7 @@ static bool walk_list(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
     return true;
 }
 
-static bool walk_table_rows(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link) {
+static bool walk_table_rows(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link) {
     for (xmlNode *row = node->children; row != NULL; row = row->next) {
         if (node_is(row, "tr")) {
             if (!flush_text(context) || !record_node_anchors(context, row)) {
@@ -828,15 +828,15 @@ static bool walk_table_rows(HtmlContext *context, xmlNode *node, BacaTextStyle s
                 if (!node_is(cell, "td") && !node_is(cell, "th")) {
                     continue;
                 }
-                if (!first_cell && !append_chunk(context, " | ", 3, BACA_STYLE_NONE, NULL)) {
+                if (!first_cell && !append_chunk(context, " | ", 3, MEREADER_TUI_STYLE_NONE, NULL)) {
                     return false;
                 }
                 first_cell = false;
                 if (!record_node_anchors(context, cell)) {
                     return false;
                 }
-                BacaTextStyle cell_style = node_is(cell, "th") ?
-                                               (BacaTextStyle) (style | BACA_STYLE_BOLD) :
+                MereaderTuiTextStyle cell_style = node_is(cell, "th") ?
+                                               (MereaderTuiTextStyle) (style | MEREADER_TUI_STYLE_BOLD) :
                                                style;
                 if (!walk_children(context, cell, cell_style, link, true)) {
                     return false;
@@ -852,7 +852,7 @@ static bool walk_table_rows(HtmlContext *context, xmlNode *node, BacaTextStyle s
     return true;
 }
 
-static bool walk_table(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link) {
+static bool walk_table(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link) {
     if (!flush_text(context) || !record_node_anchors(context, node)) {
         return false;
     }
@@ -866,7 +866,7 @@ static bool walk_table(HtmlContext *context, xmlNode *node, BacaTextStyle style,
     return walk_table_rows(context, node, style, link) && flush_text(context);
 }
 
-static bool walk_node(HtmlContext *context, xmlNode *node, BacaTextStyle style, const char *link,
+static bool walk_node(HtmlContext *context, xmlNode *node, MereaderTuiTextStyle style, const char *link,
                       bool suppress_blocks) {
     if (node->type == XML_TEXT_NODE || node->type == XML_CDATA_SECTION_NODE) {
         const char *content = (const char *) node->content;
@@ -909,7 +909,7 @@ static bool walk_node(HtmlContext *context, xmlNode *node, BacaTextStyle style, 
         return false;
     }
 
-    BacaTextStyle child_style = element_style(node, style);
+    MereaderTuiTextStyle child_style = element_style(node, style);
     char *resolved_link = NULL;
     const char *child_link = link;
     if (node_is(node, "a")) {
@@ -958,17 +958,17 @@ static xmlNode *find_body(xmlNode *node) {
     return NULL;
 }
 
-bool baca_html_append_section(BacaDocument *document, const char *html, size_t length, const char *section_id,
-                               BacaError *error) {
+bool mereader_tui_html_append_section(MereaderTuiDocument *document, const char *html, size_t length, const char *section_id,
+                               MereaderTuiError *error) {
     if (error != NULL) {
-        baca_error_clear(error);
+        mereader_tui_error_clear(error);
     }
     if (document == NULL || html == NULL || section_id == NULL || section_id[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "document, HTML, and section id are required");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "document, HTML, and section id are required");
         return false;
     }
-    if (length > BACA_HTML_MAX || length > (size_t) INT_MAX) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "HTML section exceeds the supported size limit");
+    if (length > MEREADER_TUI_HTML_MAX || length > (size_t) INT_MAX) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "HTML section exceeds the supported size limit");
         return false;
     }
 
@@ -991,7 +991,7 @@ bool baca_html_append_section(BacaDocument *document, const char *html, size_t l
 #endif
         parsed = htmlReadMemory(html, (int) length, section_id, NULL, options);
         if (parsed == NULL) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "could not parse HTML section %s", section_id);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not parse HTML section %s", section_id);
             success = false;
         } else {
             xmlNode *root = xmlDocGetRootElement(parsed);
@@ -999,21 +999,21 @@ bool baca_html_append_section(BacaDocument *document, const char *html, size_t l
             xmlNode *content = body != NULL ? body : root;
             if (content != NULL) {
                 success = record_node_anchors(&context, content) &&
-                          walk_children(&context, content, BACA_STYLE_NONE, NULL, false) && flush_text(&context);
+                          walk_children(&context, content, MEREADER_TUI_STYLE_NONE, NULL, false) && flush_text(&context);
             }
         }
     }
 
     if (success) {
-        BacaSection section = {
-            .id = baca_strdup(section_id, error),
+        MereaderTuiSection section = {
+            .id = mereader_tui_strdup(section_id, error),
             .first_block = first_block,
             .block_count = document->block_count - first_block,
             .search_offset = 0,
             .source_size = length,
             .linear = true,
         };
-        if (section.id == NULL || !baca_document_add_section(document, &section, error)) {
+        if (section.id == NULL || !mereader_tui_document_add_section(document, &section, error)) {
             free(section.id);
             success = false;
         }
@@ -1022,7 +1022,7 @@ bool baca_html_append_section(BacaDocument *document, const char *html, size_t l
     xmlFreeDoc(parsed);
     context_text_free(&context);
     if (!success) {
-        baca_document_rollback_blocks(document, first_block);
+        mereader_tui_document_rollback_blocks(document, first_block);
     }
     return success;
 }

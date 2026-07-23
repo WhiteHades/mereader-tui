@@ -1,6 +1,6 @@
 #include "text_input.h"
 
-#include "baca/common.h"
+#include "mereader-tui/common.h"
 
 #include <ctype.h>
 #include <curses.h>
@@ -25,11 +25,11 @@ static size_t next_utf8_boundary(const char *value, size_t length,
     return length;
   }
   int columns = 0;
-  const size_t next = baca_utf8_next(value, length, offset, &columns);
+  const size_t next = mereader_tui_utf8_next(value, length, offset, &columns);
   return next > offset ? next : offset + 1U;
 }
 
-static bool delete_range(BacaTextInput *input, size_t start, size_t end) {
+static bool delete_range(MereaderTuiTextInput *input, size_t start, size_t end) {
   if (start >= end || end > input->length) {
     return false;
   }
@@ -39,7 +39,7 @@ static bool delete_range(BacaTextInput *input, size_t start, size_t end) {
   return true;
 }
 
-static bool insert_character(BacaTextInput *input, wchar_t character) {
+static bool insert_character(MereaderTuiTextInput *input, wchar_t character) {
   char encoded[MB_LEN_MAX] = {0};
   mbstate_t conversion = {0};
   const size_t length = wcrtomb(encoded, character, &conversion);
@@ -54,7 +54,7 @@ static bool insert_character(BacaTextInput *input, wchar_t character) {
   return true;
 }
 
-bool baca_text_input_apply(BacaTextInput *input, bool key_code, int code,
+bool mereader_tui_text_input_apply(MereaderTuiTextInput *input, bool key_code, int code,
                            wchar_t character) {
   if ((key_code && code == KEY_BACKSPACE) ||
       (!key_code && (character == 8 || character == 127))) {

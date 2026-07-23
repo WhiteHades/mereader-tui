@@ -1,5 +1,5 @@
-#include "baca/layout.h"
-#include "baca/graphics.h"
+#include "mereader-tui/layout.h"
+#include "mereader-tui/graphics.h"
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -20,19 +20,19 @@
 #include <string.h>
 
 enum {
-    BACA_SEARCH_MATCH_LIMIT = 10000,
-    BACA_SEARCH_ATTEMPT_LIMIT = 1000000,
-    BACA_SEARCH_PCRE_MATCH_LIMIT = 1000000,
-    BACA_SEARCH_PCRE_DEPTH_LIMIT = 1000,
+    MEREADER_TUI_SEARCH_MATCH_LIMIT = 10000,
+    MEREADER_TUI_SEARCH_ATTEMPT_LIMIT = 1000000,
+    MEREADER_TUI_SEARCH_PCRE_MATCH_LIMIT = 1000000,
+    MEREADER_TUI_SEARCH_PCRE_DEPTH_LIMIT = 1000,
 };
 
-static void layout_set_error(BacaError *error, BacaErrorCode code, const char *message) {
+static void layout_set_error(MereaderTuiError *error, MereaderTuiErrorCode code, const char *message) {
     if (error != NULL) {
-        baca_error_set(error, code, "%s", message);
+        mereader_tui_error_set(error, code, "%s", message);
     }
 }
 
-static bool layout_cancelled(const BacaLayout *layout) {
+static bool layout_cancelled(const MereaderTuiLayout *layout) {
     return layout->cancel != NULL && atomic_load_explicit(layout->cancel, memory_order_relaxed);
 }
 
@@ -48,7 +48,7 @@ static size_t layout_utf8_next(const char *text, size_t length, size_t offset, i
     }
 
     int cell_width = 0;
-    size_t next = baca_utf8_next(text, length, offset, &cell_width);
+    size_t next = mereader_tui_utf8_next(text, length, offset, &cell_width);
 
     if (next <= offset || next > length) {
         next = offset + 1U;
@@ -61,8 +61,8 @@ static size_t layout_utf8_next(const char *text, size_t length, size_t offset, i
     return next;
 }
 
-static bool layout_slice_width(const BacaLayout *layout, const char *text, size_t start, size_t end,
-                               size_t *width, BacaError *error) {
+static bool layout_slice_width(const MereaderTuiLayout *layout, const char *text, size_t start, size_t end,
+                               size_t *width, MereaderTuiError *error) {
     size_t offset = start;
     size_t columns = 0U;
 
@@ -75,7 +75,7 @@ static bool layout_slice_width(const BacaLayout *layout, const char *text, size_
         size_t added = (size_t)cell_width;
 
         if (added > SIZE_MAX - columns) {
-            layout_set_error(error, BACA_ERROR_MEMORY, "text width overflow");
+            layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "text width overflow");
             return false;
         }
         columns += added;
@@ -86,21 +86,21 @@ static bool layout_slice_width(const BacaLayout *layout, const char *text, size_
     return true;
 }
 
-static bool layout_add_line(BacaLayout *layout, BacaLayoutLine line, BacaError *error) {
+static bool layout_add_line(MereaderTuiLayout *layout, MereaderTuiLayoutLine line, MereaderTuiError *error) {
     if (layout_cancelled(layout)) {
         return false;
     }
-    if (layout->line_count >= BACA_LAYOUT_MAX_LINES) {
-        layout_set_error(error, BACA_ERROR_CORRUPT,
+    if (layout->line_count >= MEREADER_TUI_LAYOUT_MAX_LINES) {
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT,
                          "layout exceeds the supported line limit of 262144");
         return false;
     }
 
     size_t needed = layout->line_count + 1U;
-    BacaError reserve_error = {0};
-    BacaLayoutLine *lines =
-        baca_array_reserve(layout->lines, &layout->line_capacity, sizeof(*layout->lines), needed, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiLayoutLine *lines =
+        mereader_tui_array_reserve(layout->lines, &layout->line_capacity, sizeof(*layout->lines), needed, &reserve_error);
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != NULL) {
             *error = reserve_error;
         }
@@ -113,19 +113,19 @@ static bool layout_add_line(BacaLayout *layout, BacaLayoutLine line, BacaError *
     return true;
 }
 
-static bool layout_advance(BacaLayout *layout, size_t amount, BacaError *error) {
+static bool layout_advance(MereaderTuiLayout *layout, size_t amount, MereaderTuiError *error) {
     if (amount > SIZE_MAX - layout->logical_length) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "layout logical length overflow");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "layout logical length overflow");
         return false;
     }
     layout->logical_length += amount;
     return true;
 }
 
-static bool layout_add_blank(BacaLayout *layout, size_t block_index, size_t byte_offset, size_t logical_offset,
-                             BacaError *error) {
-    BacaLayoutLine line = {
-        .kind = BACA_LAYOUT_BLANK,
+static bool layout_add_blank(MereaderTuiLayout *layout, size_t block_index, size_t byte_offset, size_t logical_offset,
+                             MereaderTuiError *error) {
+    MereaderTuiLayoutLine line = {
+        .kind = MEREADER_TUI_LAYOUT_BLANK,
         .block_index = block_index,
         .byte_start = byte_offset,
         .byte_end = byte_offset,
@@ -138,10 +138,10 @@ static bool layout_add_blank(BacaLayout *layout, size_t block_index, size_t byte
     return layout_add_line(layout, line, error);
 }
 
-static bool layout_add_text_line(BacaLayout *layout, size_t block_index, const char *text, size_t start,
-                                 size_t end, size_t logical_base, bool paragraph_end, BacaError *error) {
+static bool layout_add_text_line(MereaderTuiLayout *layout, size_t block_index, const char *text, size_t start,
+                                 size_t end, size_t logical_base, bool paragraph_end, MereaderTuiError *error) {
     if (start > SIZE_MAX - logical_base) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "layout logical offset overflow");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "layout logical offset overflow");
         return false;
     }
 
@@ -150,27 +150,27 @@ static bool layout_add_text_line(BacaLayout *layout, size_t block_index, const c
         return false;
     }
 
-    BacaJustification alignment = layout->justification;
-    const BacaBlock *block = &layout->document->blocks[block_index];
+    MereaderTuiJustification alignment = layout->justification;
+    const MereaderTuiBlock *block = &layout->document->blocks[block_index];
     if (block->value.text.heading_level == 1U) {
-        alignment = BACA_JUSTIFY_CENTER;
+        alignment = MEREADER_TUI_JUSTIFY_CENTER;
     } else if (block->value.text.heading_level > 1U) {
-        alignment = BACA_JUSTIFY_LEFT;
+        alignment = MEREADER_TUI_JUSTIFY_LEFT;
     }
 
     int indent = 0;
     size_t available = (size_t)layout->width;
     if (columns < available) {
         size_t remaining = available - columns;
-        if (alignment == BACA_JUSTIFY_CENTER) {
+        if (alignment == MEREADER_TUI_JUSTIFY_CENTER) {
             indent = (int)(remaining / 2U);
-        } else if (alignment == BACA_JUSTIFY_RIGHT) {
+        } else if (alignment == MEREADER_TUI_JUSTIFY_RIGHT) {
             indent = (int)remaining;
         }
     }
 
-    BacaLayoutLine line = {
-        .kind = BACA_LAYOUT_TEXT,
+    MereaderTuiLayoutLine line = {
+        .kind = MEREADER_TUI_LAYOUT_TEXT,
         .block_index = block_index,
         .byte_start = start,
         .byte_end = end,
@@ -187,7 +187,7 @@ static bool layout_is_horizontal_space(char value) {
     return value == ' ' || layout_is_control_byte(value);
 }
 
-static size_t layout_skip_horizontal_space(const BacaLayout *layout, const char *text, size_t offset,
+static size_t layout_skip_horizontal_space(const MereaderTuiLayout *layout, const char *text, size_t offset,
                                            size_t end) {
     while (offset < end && layout_is_horizontal_space(text[offset])) {
         if (layout_cancelled(layout)) {
@@ -198,8 +198,8 @@ static size_t layout_skip_horizontal_space(const BacaLayout *layout, const char 
     return offset;
 }
 
-static bool layout_wrap_preformatted(BacaLayout *layout, size_t block_index, const char *text, size_t start,
-                                     size_t end, size_t logical_base, bool heading, BacaError *error) {
+static bool layout_wrap_preformatted(MereaderTuiLayout *layout, size_t block_index, const char *text, size_t start,
+                                     size_t end, size_t logical_base, bool heading, MereaderTuiError *error) {
     if (start == end) {
         return layout_add_blank(layout, block_index, start, logical_base + start, error);
     }
@@ -226,7 +226,7 @@ static bool layout_wrap_preformatted(BacaLayout *layout, size_t block_index, con
                 break;
             }
             if (added > SIZE_MAX - columns) {
-                layout_set_error(error, BACA_ERROR_MEMORY, "text width overflow");
+                layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "text width overflow");
                 return false;
             }
             columns += added;
@@ -245,8 +245,8 @@ static bool layout_wrap_preformatted(BacaLayout *layout, size_t block_index, con
     return true;
 }
 
-static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const char *text, size_t start, size_t end,
-                               size_t logical_base, bool heading, BacaError *error) {
+static bool layout_wrap_normal(MereaderTuiLayout *layout, size_t block_index, const char *text, size_t start, size_t end,
+                               size_t logical_base, bool heading, MereaderTuiError *error) {
     size_t cursor = start;
     size_t target_width = (size_t)layout->width;
     bool emitted = false;
@@ -307,7 +307,7 @@ static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const cha
             }
 
             if (added > SIZE_MAX - columns) {
-                layout_set_error(error, BACA_ERROR_MEMORY, "text width overflow");
+                layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "text width overflow");
                 return false;
             }
             columns += added;
@@ -344,14 +344,14 @@ static bool layout_wrap_normal(BacaLayout *layout, size_t block_index, const cha
     return true;
 }
 
-static bool layout_add_text_block(BacaLayout *layout, size_t block_index, const BacaTextBlock *block,
-                                  BacaError *error) {
+static bool layout_add_text_block(MereaderTuiLayout *layout, size_t block_index, const MereaderTuiTextBlock *block,
+                                  MereaderTuiError *error) {
     const char *text = block->text == NULL ? "" : block->text;
     size_t length = strlen(text);
     size_t logical_base = layout->logical_length;
 
     if (length == SIZE_MAX || length + 1U > SIZE_MAX - logical_base) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "layout logical length overflow");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "layout logical length overflow");
         return false;
     }
 
@@ -390,8 +390,8 @@ static bool layout_add_text_block(BacaLayout *layout, size_t block_index, const 
     return true;
 }
 
-static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const BacaImageBlock *image,
-                                    BacaError *error) {
+static bool layout_add_image_block(MereaderTuiLayout *layout, size_t block_index, const MereaderTuiImageBlock *image,
+                                    MereaderTuiError *error) {
     int image_rows = 1;
     int indent = 0;
     bool image_placeholder =
@@ -401,9 +401,9 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
                                        (long double)layout->cell_pixel_width /
                                        ((long double)image->intrinsic_width *
                                          (long double)layout->cell_pixel_height));
-        if (!isfinite(rows) || rows > (long double)BACA_LAYOUT_MAX_IMAGE_ROWS) {
-            if (layout->document->format == BACA_FORMAT_PDF) {
-                layout_set_error(error, BACA_ERROR_CORRUPT,
+        if (!isfinite(rows) || rows > (long double)MEREADER_TUI_LAYOUT_MAX_IMAGE_ROWS) {
+            if (layout->document->format == MEREADER_TUI_FORMAT_PDF) {
+                layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT,
                                  "image aspect ratio exceeds the supported per-image row limit of 1024");
                 return false;
             }
@@ -418,9 +418,9 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
     }
 
     size_t extra_rows = (size_t)(image_rows - 1);
-    if (layout->image_extra_rows > BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS ||
-        extra_rows > BACA_LAYOUT_MAX_IMAGE_EXTRA_ROWS - layout->image_extra_rows) {
-        layout_set_error(error, BACA_ERROR_CORRUPT,
+    if (layout->image_extra_rows > MEREADER_TUI_LAYOUT_MAX_IMAGE_EXTRA_ROWS ||
+        extra_rows > MEREADER_TUI_LAYOUT_MAX_IMAGE_EXTRA_ROWS - layout->image_extra_rows) {
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT,
                          "aggregate image layout exceeds the supported extra-row limit of 65536");
         return false;
     }
@@ -430,8 +430,8 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
         if (layout_cancelled(layout)) {
             return false;
         }
-        BacaLayoutLine line = {
-            .kind = BACA_LAYOUT_IMAGE,
+        MereaderTuiLayoutLine line = {
+            .kind = MEREADER_TUI_LAYOUT_IMAGE,
             .block_index = block_index,
             .byte_start = 0U,
             .byte_end = 0U,
@@ -449,14 +449,14 @@ static bool layout_add_image_block(BacaLayout *layout, size_t block_index, const
     return layout_advance(layout, 1U, error);
 }
 
-static size_t layout_block_end_offset(const BacaBlock *block) {
-    if (block->kind == BACA_BLOCK_TEXT && block->value.text.text != NULL) {
+static size_t layout_block_end_offset(const MereaderTuiBlock *block) {
+    if (block->kind == MEREADER_TUI_BLOCK_TEXT && block->value.text.text != NULL) {
         return strlen(block->value.text.text);
     }
     return 0U;
 }
 
-void baca_layout_free(BacaLayout *layout) {
+void mereader_tui_layout_free(MereaderTuiLayout *layout) {
     if (layout == NULL) {
         return;
     }
@@ -465,26 +465,26 @@ void baca_layout_free(BacaLayout *layout) {
     free(layout->block_first_line);
     free(layout->section_first_line);
     free(layout->block_section);
-    *layout = (BacaLayout){0};
+    *layout = (MereaderTuiLayout){0};
 }
 
-static bool layout_block_visible(const BacaBlock *block, BacaPresentation presentation) {
-    return block->presentation == BACA_PRESENTATION_DEFAULT || presentation == BACA_PRESENTATION_DEFAULT ||
+static bool layout_block_visible(const MereaderTuiBlock *block, MereaderTuiPresentation presentation) {
+    return block->presentation == MEREADER_TUI_PRESENTATION_DEFAULT || presentation == MEREADER_TUI_PRESENTATION_DEFAULT ||
            block->presentation == presentation;
 }
 
-static bool layout_build_section_indexes(BacaLayout *layout, BacaError *error) {
-    const BacaDocument *document = layout->document;
+static bool layout_build_section_indexes(MereaderTuiLayout *layout, MereaderTuiError *error) {
+    const MereaderTuiDocument *document = layout->document;
     size_t previous_end = 0U;
     for (size_t section_index = 0U; section_index < document->section_count; ++section_index) {
         if (layout_cancelled(layout)) {
             return false;
         }
-        const BacaSection *section = &document->sections[section_index];
+        const MereaderTuiSection *section = &document->sections[section_index];
         if (section->first_block > document->block_count ||
             section->block_count > document->block_count - section->first_block ||
             section->first_block < previous_end) {
-            layout_set_error(error, BACA_ERROR_CORRUPT,
+            layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT,
                              "document sections are overlapping or out of range");
             return false;
         }
@@ -508,36 +508,36 @@ static bool layout_build_section_indexes(BacaLayout *layout, BacaError *error) {
     return true;
 }
 
-bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *document, int width,
-                                    BacaJustification justification, BacaPresentation presentation,
+bool mereader_tui_layout_build_presentation(MereaderTuiLayout *layout, const MereaderTuiDocument *document, int width,
+                                    MereaderTuiJustification justification, MereaderTuiPresentation presentation,
                                     int cell_pixel_width, int cell_pixel_height,
-                                    const atomic_bool *cancel, BacaError *error) {
+                                    const atomic_bool *cancel, MereaderTuiError *error) {
     if (layout == NULL || document == NULL) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "layout and document are required");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "layout and document are required");
         return false;
     }
     if (width <= 0) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "layout width must be positive");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "layout width must be positive");
         return false;
     }
-    if (justification > BACA_JUSTIFY_RIGHT) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "invalid text justification");
+    if (justification > MEREADER_TUI_JUSTIFY_RIGHT) {
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid text justification");
         return false;
     }
-    if (presentation > BACA_PRESENTATION_REFLOW || cell_pixel_width <= 0 || cell_pixel_height <= 0 ||
-        cell_pixel_width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-        cell_pixel_height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "invalid layout presentation or cell pixel dimensions");
+    if (presentation > MEREADER_TUI_PRESENTATION_REFLOW || cell_pixel_width <= 0 || cell_pixel_height <= 0 ||
+        cell_pixel_width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        cell_pixel_height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION) {
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid layout presentation or cell pixel dimensions");
         return false;
     }
     if (document->block_count > 0U && document->blocks == NULL) {
-        layout_set_error(error, BACA_ERROR_CORRUPT, "document block array is missing");
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "document block array is missing");
         return false;
     }
 
-    BacaLayout built = {
+    MereaderTuiLayout built = {
         .document = document,
-        .width = width > BACA_LAYOUT_MAX_WIDTH ? BACA_LAYOUT_MAX_WIDTH : width,
+        .width = width > MEREADER_TUI_LAYOUT_MAX_WIDTH ? MEREADER_TUI_LAYOUT_MAX_WIDTH : width,
         .cell_pixel_width = cell_pixel_width,
         .cell_pixel_height = cell_pixel_height,
         .justification = justification,
@@ -551,11 +551,11 @@ bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *docu
 
     if (document->block_count > 0U) {
         built.block_first_line =
-            baca_reallocarray(NULL, document->block_count, sizeof(*built.block_first_line), error);
-        built.block_section = baca_reallocarray(NULL, document->block_count,
+            mereader_tui_reallocarray(NULL, document->block_count, sizeof(*built.block_first_line), error);
+        built.block_section = mereader_tui_reallocarray(NULL, document->block_count,
                                                 sizeof(*built.block_section), error);
         if (built.block_first_line == NULL || built.block_section == NULL) {
-            baca_layout_free(&built);
+            mereader_tui_layout_free(&built);
             return false;
         }
         for (size_t block_index = 0U; block_index < document->block_count; ++block_index) {
@@ -564,14 +564,14 @@ bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *docu
     }
     if (document->section_count > 0U) {
         if (document->sections == NULL) {
-            baca_layout_free(&built);
-            layout_set_error(error, BACA_ERROR_CORRUPT, "document section array is missing");
+            mereader_tui_layout_free(&built);
+            layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "document section array is missing");
             return false;
         }
-        built.section_first_line = baca_reallocarray(
+        built.section_first_line = mereader_tui_reallocarray(
             NULL, document->section_count, sizeof(*built.section_first_line), error);
         if (built.section_first_line == NULL) {
-            baca_layout_free(&built);
+            mereader_tui_layout_free(&built);
             return false;
         }
     }
@@ -579,23 +579,23 @@ bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *docu
     size_t previous_visible = SIZE_MAX;
     for (size_t block_index = 0U; block_index < document->block_count; block_index++) {
         if (layout_cancelled(&built)) {
-            baca_layout_free(&built);
+            mereader_tui_layout_free(&built);
             return false;
         }
-        const BacaBlock *block = &document->blocks[block_index];
+        const MereaderTuiBlock *block = &document->blocks[block_index];
         built.block_first_line[block_index] = built.line_count;
         if (!layout_block_visible(block, presentation)) {
             continue;
         }
 
         if (previous_visible != SIZE_MAX && built.line_count > 0U &&
-            built.lines[built.line_count - 1U].kind != BACA_LAYOUT_BLANK &&
-            block->kind != BACA_BLOCK_PAGE_BREAK) {
-            const BacaBlock *previous = &document->blocks[previous_visible];
+            built.lines[built.line_count - 1U].kind != MEREADER_TUI_LAYOUT_BLANK &&
+            block->kind != MEREADER_TUI_BLOCK_PAGE_BREAK) {
+            const MereaderTuiBlock *previous = &document->blocks[previous_visible];
             const size_t byte_offset = layout_block_end_offset(previous);
             if (!layout_add_blank(&built, previous_visible, byte_offset, built.logical_length, error) ||
                 !layout_advance(&built, 1U, error)) {
-                baca_layout_free(&built);
+                mereader_tui_layout_free(&built);
                 return false;
             }
             built.block_first_line[block_index] = built.line_count;
@@ -603,55 +603,55 @@ bool baca_layout_build_presentation(BacaLayout *layout, const BacaDocument *docu
 
         bool ok = false;
         switch (block->kind) {
-        case BACA_BLOCK_TEXT:
+        case MEREADER_TUI_BLOCK_TEXT:
             ok = layout_add_text_block(&built, block_index, &block->value.text, error);
             break;
-        case BACA_BLOCK_IMAGE:
+        case MEREADER_TUI_BLOCK_IMAGE:
             ok = layout_add_image_block(&built, block_index, &block->value.image, error);
             break;
-        case BACA_BLOCK_PAGE_BREAK:
+        case MEREADER_TUI_BLOCK_PAGE_BREAK:
             ok = layout_add_blank(&built, block_index, 0U, built.logical_length, error) &&
                  layout_advance(&built, 1U, error);
             break;
         default:
-            layout_set_error(error, BACA_ERROR_CORRUPT, "document contains an invalid block kind");
+            layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "document contains an invalid block kind");
             ok = false;
             break;
         }
 
         if (!ok) {
-            baca_layout_free(&built);
+            mereader_tui_layout_free(&built);
             return false;
         }
         previous_visible = block_index;
     }
 
     if (!layout_build_section_indexes(&built, error)) {
-        baca_layout_free(&built);
+        mereader_tui_layout_free(&built);
         return false;
     }
 
     built.cancel = NULL;
-    baca_layout_free(layout);
+    mereader_tui_layout_free(layout);
     *layout = built;
     return true;
 }
 
-bool baca_layout_build(BacaLayout *layout, const BacaDocument *document, int width, BacaJustification justification,
-                       BacaError *error) {
-    const BacaPresentation presentation =
-        document == NULL ? BACA_PRESENTATION_DEFAULT : document->default_presentation;
-    return baca_layout_build_presentation(layout, document, width, justification, presentation, 1, 2,
+bool mereader_tui_layout_build(MereaderTuiLayout *layout, const MereaderTuiDocument *document, int width, MereaderTuiJustification justification,
+                       MereaderTuiError *error) {
+    const MereaderTuiPresentation presentation =
+        document == NULL ? MEREADER_TUI_PRESENTATION_DEFAULT : document->default_presentation;
+    return mereader_tui_layout_build_presentation(layout, document, width, justification, presentation, 1, 2,
                                           NULL, error);
 }
 
-static char *layout_allocate_text(size_t length, BacaError *error) {
+static char *layout_allocate_text(size_t length, MereaderTuiError *error) {
     if (length == SIZE_MAX) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "line text length overflow");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "line text length overflow");
         return NULL;
     }
 
-    char *text = baca_reallocarray(NULL, length + 1U, sizeof(*text), error);
+    char *text = mereader_tui_reallocarray(NULL, length + 1U, sizeof(*text), error);
     if (text != NULL) {
         text[length] = '\0';
     }
@@ -684,29 +684,29 @@ static size_t layout_count_gaps(const char *text, size_t length) {
     return gaps;
 }
 
-char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool justify, BacaError *error) {
+char *mereader_tui_layout_line_text(const MereaderTuiLayout *layout, size_t line_index, bool justify, MereaderTuiError *error) {
     if (layout == NULL || line_index >= layout->line_count || layout->lines == NULL) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "layout line is out of range");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "layout line is out of range");
         return NULL;
     }
 
-    const BacaLayoutLine *line = &layout->lines[line_index];
+    const MereaderTuiLayoutLine *line = &layout->lines[line_index];
     if (line->indent < 0) {
-        layout_set_error(error, BACA_ERROR_CORRUPT, "layout line has a negative indent");
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "layout line has a negative indent");
         return NULL;
     }
     size_t indent = (size_t)line->indent;
 
-    if (line->kind == BACA_LAYOUT_BLANK) {
+    if (line->kind == MEREADER_TUI_LAYOUT_BLANK) {
         return layout_allocate_text(0U, error);
     }
-    if (line->kind == BACA_LAYOUT_IMAGE) {
+    if (line->kind == MEREADER_TUI_LAYOUT_IMAGE) {
         if (line->image_rows > 1 && line->image_row != line->image_rows / 2) {
             return layout_allocate_text(0U, error);
         }
         static const char placeholder[] = "IMAGE";
         if (indent > SIZE_MAX - (sizeof(placeholder) - 1U)) {
-            layout_set_error(error, BACA_ERROR_MEMORY, "line text length overflow");
+            layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "line text length overflow");
             return NULL;
         }
         size_t length = indent + sizeof(placeholder) - 1U;
@@ -718,22 +718,22 @@ char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool ju
         memcpy(result + indent, placeholder, sizeof(placeholder) - 1U);
         return result;
     }
-    if (line->kind != BACA_LAYOUT_TEXT || layout->document == NULL ||
+    if (line->kind != MEREADER_TUI_LAYOUT_TEXT || layout->document == NULL ||
         line->block_index >= layout->document->block_count || layout->document->blocks == NULL) {
-        layout_set_error(error, BACA_ERROR_CORRUPT, "layout text line has no source block");
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "layout text line has no source block");
         return NULL;
     }
 
-    const BacaBlock *block = &layout->document->blocks[line->block_index];
-    if (block->kind != BACA_BLOCK_TEXT) {
-        layout_set_error(error, BACA_ERROR_CORRUPT, "layout text line refers to a non-text block");
+    const MereaderTuiBlock *block = &layout->document->blocks[line->block_index];
+    if (block->kind != MEREADER_TUI_BLOCK_TEXT) {
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "layout text line refers to a non-text block");
         return NULL;
     }
 
     const char *block_text = block->value.text.text == NULL ? "" : block->value.text.text;
     size_t block_length = strlen(block_text);
     if (line->byte_start > line->byte_end || line->byte_end > block_length) {
-        layout_set_error(error, BACA_ERROR_CORRUPT, "layout text line has an invalid byte range");
+        layout_set_error(error, MEREADER_TUI_ERROR_CORRUPT, "layout text line has an invalid byte range");
         return NULL;
     }
 
@@ -742,7 +742,7 @@ char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool ju
     size_t extra_spaces = 0U;
     size_t gaps = 0U;
 
-    if (justify && layout->justification == BACA_JUSTIFY_FULL && !line->paragraph_end &&
+    if (justify && layout->justification == MEREADER_TUI_JUSTIFY_FULL && !line->paragraph_end &&
         !block->value.text.preformatted && block->value.text.heading_level == 0U && layout->width > 0) {
         size_t columns = 0U;
         if (!layout_slice_width(layout, source, 0U, source_length, &columns, error)) {
@@ -756,7 +756,7 @@ char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool ju
     }
 
     if (source_length > SIZE_MAX - indent || extra_spaces > SIZE_MAX - indent - source_length) {
-        layout_set_error(error, BACA_ERROR_MEMORY, "line text length overflow");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "line text length overflow");
         return NULL;
     }
     size_t result_length = indent + source_length + extra_spaces;
@@ -798,24 +798,24 @@ char *baca_layout_line_text(const BacaLayout *layout, size_t line_index, bool ju
     return result;
 }
 
-static size_t layout_clamp_line(const BacaLayout *layout, size_t line) {
+static size_t layout_clamp_line(const MereaderTuiLayout *layout, size_t line) {
     if (layout->line_count == 0U) {
         return 0U;
     }
     return line < layout->line_count ? line : layout->line_count - 1U;
 }
 
-static size_t layout_line_for_block_offset(const BacaLayout *layout, size_t block_index, size_t offset) {
+static size_t layout_line_for_block_offset(const MereaderTuiLayout *layout, size_t block_index, size_t offset) {
     size_t first = layout_clamp_line(layout, layout->block_first_line[block_index]);
     size_t candidate = first;
     bool saw_text = false;
 
     for (size_t line_index = first; line_index < layout->line_count; line_index++) {
-        const BacaLayoutLine *line = &layout->lines[line_index];
+        const MereaderTuiLayoutLine *line = &layout->lines[line_index];
         if (line->block_index != block_index) {
             break;
         }
-        if (line->kind != BACA_LAYOUT_TEXT) {
+        if (line->kind != MEREADER_TUI_LAYOUT_TEXT) {
             continue;
         }
         if (!saw_text) {
@@ -834,12 +834,12 @@ static bool layout_exact_string(const char *value, const char *target, size_t ta
     return value != NULL && strlen(value) == target_length && memcmp(value, target, target_length) == 0;
 }
 
-static bool layout_find_section(const BacaLayout *layout, const char *target, size_t target_length, size_t *line) {
-    const BacaDocument *document = layout->document;
+static bool layout_find_section(const MereaderTuiLayout *layout, const char *target, size_t target_length, size_t *line) {
+    const MereaderTuiDocument *document = layout->document;
 
     if (document->sections != NULL) {
         for (size_t index = 0U; index < document->section_count; index++) {
-            const BacaSection *section = &document->sections[index];
+            const MereaderTuiSection *section = &document->sections[index];
             if (!layout_exact_string(section->id, target, target_length)) {
                 continue;
             }
@@ -860,10 +860,10 @@ static bool layout_find_section(const BacaLayout *layout, const char *target, si
     return false;
 }
 
-static size_t layout_image_fraction_line(const BacaLayout *layout, size_t first, double fraction) {
+static size_t layout_image_fraction_line(const MereaderTuiLayout *layout, size_t first, double fraction) {
     first = layout_clamp_line(layout, first);
-    const BacaLayoutLine *line = &layout->lines[first];
-    if (line->kind != BACA_LAYOUT_IMAGE || line->image_rows <= 1 || !isfinite(fraction)) {
+    const MereaderTuiLayoutLine *line = &layout->lines[first];
+    if (line->kind != MEREADER_TUI_LAYOUT_IMAGE || line->image_rows <= 1 || !isfinite(fraction)) {
         return first;
     }
     if (fraction < 0.0) {
@@ -877,8 +877,8 @@ static size_t layout_image_fraction_line(const BacaLayout *layout, size_t first,
     return layout_clamp_line(layout, bounded > SIZE_MAX - first ? SIZE_MAX : first + bounded);
 }
 
-static bool layout_pdf_target_y(const BacaLayout *layout, const char *target, size_t section_length, double *y) {
-    if (layout->document->format != BACA_FORMAT_PDF || layout->presentation != BACA_PRESENTATION_FIXED ||
+static bool layout_pdf_target_y(const MereaderTuiLayout *layout, const char *target, size_t section_length, double *y) {
+    if (layout->document->format != MEREADER_TUI_FORMAT_PDF || layout->presentation != MEREADER_TUI_PRESENTATION_FIXED ||
         strncmp(target + section_length, "#y=", 3U) != 0) {
         return false;
     }
@@ -891,10 +891,10 @@ static bool layout_pdf_target_y(const BacaLayout *layout, const char *target, si
     return true;
 }
 
-static bool layout_pdf_page_target(const BacaLayout *layout, const char *target, size_t *page,
+static bool layout_pdf_page_target(const MereaderTuiLayout *layout, const char *target, size_t *page,
                                    size_t *section_length) {
     static const char prefix[] = "pdf://page/";
-    if (layout->document->format != BACA_FORMAT_PDF ||
+    if (layout->document->format != MEREADER_TUI_FORMAT_PDF ||
         strncmp(target, prefix, sizeof(prefix) - 1U) != 0) {
         return false;
     }
@@ -917,7 +917,7 @@ static bool layout_pdf_page_target(const BacaLayout *layout, const char *target,
     return true;
 }
 
-size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
+size_t mereader_tui_layout_target_line(const MereaderTuiLayout *layout, const char *target) {
     if (layout == NULL || layout->document == NULL || target == NULL || target[0] == '\0' ||
         layout->line_count == 0U ||
         layout->lines == NULL ||
@@ -926,7 +926,7 @@ size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
         return SIZE_MAX;
     }
 
-    const BacaDocument *document = layout->document;
+    const MereaderTuiDocument *document = layout->document;
     size_t pdf_page = 0U;
     size_t pdf_section_length = 0U;
     if (layout_pdf_page_target(layout, target, &pdf_page, &pdf_section_length)) {
@@ -940,15 +940,15 @@ size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
                    : line;
     }
     for (size_t block_index = 0U; block_index < document->block_count; block_index++) {
-        const BacaBlock *block = &document->blocks[block_index];
-        if (block->kind == BACA_BLOCK_TEXT && block->value.text.anchors != NULL) {
+        const MereaderTuiBlock *block = &document->blocks[block_index];
+        if (block->kind == MEREADER_TUI_BLOCK_TEXT && block->value.text.anchors != NULL) {
             for (size_t anchor_index = 0U; anchor_index < block->value.text.anchor_count; anchor_index++) {
-                const BacaAnchor *anchor = &block->value.text.anchors[anchor_index];
+                const MereaderTuiAnchor *anchor = &block->value.text.anchors[anchor_index];
                 if (anchor->target != NULL && strcmp(anchor->target, target) == 0) {
                     return layout_line_for_block_offset(layout, block_index, anchor->offset);
                 }
             }
-        } else if (block->kind == BACA_BLOCK_IMAGE && block->value.image.anchor != NULL &&
+        } else if (block->kind == MEREADER_TUI_BLOCK_IMAGE && block->value.image.anchor != NULL &&
                    strcmp(block->value.image.anchor, target) == 0) {
             return layout_clamp_line(layout, layout->block_first_line[block_index]);
         }
@@ -972,7 +972,7 @@ size_t baca_layout_target_line(const BacaLayout *layout, const char *target) {
     return SIZE_MAX;
 }
 
-size_t baca_layout_section_for_line(const BacaLayout *layout, size_t line, size_t *comparison_count) {
+size_t mereader_tui_layout_section_for_line(const MereaderTuiLayout *layout, size_t line, size_t *comparison_count) {
     if (comparison_count != NULL) {
         *comparison_count = 0U;
     }
@@ -998,7 +998,7 @@ size_t baca_layout_section_for_line(const BacaLayout *layout, size_t line, size_
     return low == 0U ? SIZE_MAX : low - 1U;
 }
 
-double baca_layout_progress(size_t scroll_line, size_t maximum_scroll) {
+double mereader_tui_layout_progress(size_t scroll_line, size_t maximum_scroll) {
     if (maximum_scroll == 0U) {
         return 0.0;
     }
@@ -1008,7 +1008,7 @@ double baca_layout_progress(size_t scroll_line, size_t maximum_scroll) {
     return (double)scroll_line / (double)maximum_scroll;
 }
 
-size_t baca_layout_restore_progress(double progress, size_t maximum_scroll) {
+size_t mereader_tui_layout_restore_progress(double progress, size_t maximum_scroll) {
     if (maximum_scroll == 0U || !isfinite(progress) || !(progress > 0.0)) {
         return 0U;
     }
@@ -1021,7 +1021,7 @@ size_t baca_layout_restore_progress(double progress, size_t maximum_scroll) {
     return restored > maximum_scroll ? maximum_scroll : restored;
 }
 
-static void layout_set_pcre_error(BacaError *error, BacaErrorCode code, const char *context, int pcre_error,
+static void layout_set_pcre_error(MereaderTuiError *error, MereaderTuiErrorCode code, const char *context, int pcre_error,
                                   size_t offset) {
     if (error == NULL) {
         return;
@@ -1030,24 +1030,24 @@ static void layout_set_pcre_error(BacaError *error, BacaErrorCode code, const ch
     PCRE2_UCHAR message[256];
     int length = pcre2_get_error_message(pcre_error, message, sizeof(message));
     if (length >= 0) {
-        baca_error_set(error, code, "%s at byte %zu: %s", context, offset, (const char *)message);
+        mereader_tui_error_set(error, code, "%s at byte %zu: %s", context, offset, (const char *)message);
     } else {
-        baca_error_set(error, code, "%s at byte %zu (PCRE2 error %d)", context, offset, pcre_error);
+        mereader_tui_error_set(error, code, "%s at byte %zu (PCRE2 error %d)", context, offset, pcre_error);
     }
 }
 
-static bool layout_add_match(BacaSearchMatch **matches, size_t *count, size_t *capacity, size_t line,
+static bool layout_add_match(MereaderTuiSearchMatch **matches, size_t *count, size_t *capacity, size_t line,
                              size_t start, size_t end, size_t block_index, size_t block_offset,
-                             BacaError *error) {
-    if (*count >= BACA_SEARCH_MATCH_LIMIT) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "search produced too many matches (limit 10000)");
+                             MereaderTuiError *error) {
+    if (*count >= MEREADER_TUI_SEARCH_MATCH_LIMIT) {
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "search produced too many matches (limit 10000)");
         return false;
     }
 
     size_t needed = *count + 1U;
-    BacaError reserve_error = {0};
-    BacaSearchMatch *resized = baca_array_reserve(*matches, capacity, sizeof(**matches), needed, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiSearchMatch *resized = mereader_tui_array_reserve(*matches, capacity, sizeof(**matches), needed, &reserve_error);
+    if (mereader_tui_error_is_set(&reserve_error)) {
         if (error != NULL) {
             *error = reserve_error;
         }
@@ -1055,7 +1055,7 @@ static bool layout_add_match(BacaSearchMatch **matches, size_t *count, size_t *c
     }
     *matches = resized;
 
-    (*matches)[*count] = (BacaSearchMatch){
+    (*matches)[*count] = (MereaderTuiSearchMatch){
         .line = line,
         .byte_start = start,
         .byte_end = end,
@@ -1070,13 +1070,13 @@ static bool layout_search_subject(pcre2_code *regex, pcre2_match_data *match_dat
                                   pcre2_match_context *match_context, const char *subject,
                                   size_t subject_length, size_t line, size_t display_prefix,
                                   size_t block_index, size_t block_base, size_t *attempt_count,
-                                  BacaSearchMatch **matches, size_t *match_count, size_t *match_capacity,
-                                  BacaError *error) {
+                                  MereaderTuiSearchMatch **matches, size_t *match_count, size_t *match_capacity,
+                                  MereaderTuiError *error) {
     PCRE2_SIZE start_offset = 0U;
     uint32_t options = 0U;
     for (;;) {
-        if (*attempt_count >= BACA_SEARCH_ATTEMPT_LIMIT) {
-            layout_set_error(error, BACA_ERROR_ARGUMENT, "search work limit exceeded");
+        if (*attempt_count >= MEREADER_TUI_SEARCH_ATTEMPT_LIMIT) {
+            layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "search work limit exceeded");
             return false;
         }
         ++*attempt_count;
@@ -1096,11 +1096,11 @@ static bool layout_search_subject(pcre2_code *regex, pcre2_match_data *match_dat
             return true;
         }
         if (result < 0) {
-            BacaErrorCode code = BACA_ERROR_CORRUPT;
+            MereaderTuiErrorCode code = MEREADER_TUI_ERROR_CORRUPT;
             if (result == PCRE2_ERROR_NOMEMORY) {
-                code = BACA_ERROR_MEMORY;
+                code = MEREADER_TUI_ERROR_MEMORY;
             } else if (result == PCRE2_ERROR_MATCHLIMIT || result == PCRE2_ERROR_DEPTHLIMIT) {
-                code = BACA_ERROR_ARGUMENT;
+                code = MEREADER_TUI_ERROR_ARGUMENT;
             }
             layout_set_pcre_error(error, code, "regex matching failed", result, (size_t)start_offset);
             return false;
@@ -1118,9 +1118,9 @@ static bool layout_search_subject(pcre2_code *regex, pcre2_match_data *match_dat
     }
 }
 
-static size_t layout_section_line_for_block_offset(const BacaLayout *layout, size_t block_index,
+static size_t layout_section_line_for_block_offset(const MereaderTuiLayout *layout, size_t block_index,
                                                     size_t block_offset, size_t block_length) {
-    const BacaDocument *document = layout->document;
+    const MereaderTuiDocument *document = layout->document;
     if (block_index < document->block_count && layout->block_section != NULL &&
         layout->section_first_line != NULL) {
         const size_t section_index = layout->block_section[block_index];
@@ -1136,21 +1136,21 @@ static size_t layout_section_line_for_block_offset(const BacaLayout *layout, siz
     return layout_clamp_line(layout, layout->block_first_line[block_index]);
 }
 
-bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearchMatch **matches,
-                        size_t *match_count, BacaError *error) {
+bool mereader_tui_layout_search(const MereaderTuiLayout *layout, const char *pattern, MereaderTuiSearchMatch **matches,
+                        size_t *match_count, MereaderTuiError *error) {
     if (matches == NULL || match_count == NULL) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "search output pointers are required");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "search output pointers are required");
         return false;
     }
     *matches = NULL;
     *match_count = 0U;
 
     if (layout == NULL || pattern == NULL || (layout->line_count > 0U && layout->lines == NULL)) {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "layout and search pattern are required");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "layout and search pattern are required");
         return false;
     }
     if (pattern[0] == '\0') {
-        layout_set_error(error, BACA_ERROR_ARGUMENT, "search pattern is empty");
+        layout_set_error(error, MEREADER_TUI_ERROR_ARGUMENT, "search pattern is empty");
         return false;
     }
 
@@ -1160,7 +1160,7 @@ bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearc
                                       PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP, &compile_error, &compile_offset,
                                       NULL);
     if (regex == NULL) {
-        BacaErrorCode code = compile_error == PCRE2_ERROR_NOMEMORY ? BACA_ERROR_MEMORY : BACA_ERROR_ARGUMENT;
+        MereaderTuiErrorCode code = compile_error == PCRE2_ERROR_NOMEMORY ? MEREADER_TUI_ERROR_MEMORY : MEREADER_TUI_ERROR_ARGUMENT;
         layout_set_pcre_error(error, code, "invalid search pattern", compile_error, (size_t)compile_offset);
         return false;
     }
@@ -1168,32 +1168,32 @@ bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearc
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(regex, NULL);
     if (match_data == NULL) {
         pcre2_code_free(regex);
-        layout_set_error(error, BACA_ERROR_MEMORY, "could not allocate regex match data");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate regex match data");
         return false;
     }
     pcre2_match_context *match_context = pcre2_match_context_create(NULL);
     if (match_context == NULL) {
         pcre2_match_data_free(match_data);
         pcre2_code_free(regex);
-        layout_set_error(error, BACA_ERROR_MEMORY, "could not allocate regex match context");
+        layout_set_error(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate regex match context");
         return false;
     }
-    (void)pcre2_set_match_limit(match_context, (uint32_t)BACA_SEARCH_PCRE_MATCH_LIMIT);
-    (void)pcre2_set_depth_limit(match_context, (uint32_t)BACA_SEARCH_PCRE_DEPTH_LIMIT);
+    (void)pcre2_set_match_limit(match_context, (uint32_t)MEREADER_TUI_SEARCH_PCRE_MATCH_LIMIT);
+    (void)pcre2_set_depth_limit(match_context, (uint32_t)MEREADER_TUI_SEARCH_PCRE_DEPTH_LIMIT);
 
-    BacaSearchMatch *found = NULL;
+    MereaderTuiSearchMatch *found = NULL;
     size_t found_count = 0U;
     size_t found_capacity = 0U;
     size_t attempt_count = 0U;
     char *line_text = NULL;
 
     for (size_t line_index = 0U; line_index < layout->line_count; line_index++) {
-        const BacaLayoutLine *line = &layout->lines[line_index];
-        if (layout->document != NULL && layout->document->format == BACA_FORMAT_PDF &&
-            line->kind != BACA_LAYOUT_TEXT) {
+        const MereaderTuiLayoutLine *line = &layout->lines[line_index];
+        if (layout->document != NULL && layout->document->format == MEREADER_TUI_FORMAT_PDF &&
+            line->kind != MEREADER_TUI_LAYOUT_TEXT) {
             continue;
         }
-        line_text = baca_layout_line_text(layout, line_index, false, error);
+        line_text = mereader_tui_layout_line_text(layout, line_index, false, error);
         if (line_text == NULL) {
             goto fail;
         }
@@ -1215,11 +1215,11 @@ bool baca_layout_search(const BacaLayout *layout, const char *pattern, BacaSearc
         line_text = NULL;
     }
 
-    if (layout->document != NULL && layout->document->format == BACA_FORMAT_PDF &&
-        layout->presentation == BACA_PRESENTATION_FIXED) {
+    if (layout->document != NULL && layout->document->format == MEREADER_TUI_FORMAT_PDF &&
+        layout->presentation == MEREADER_TUI_PRESENTATION_FIXED) {
         for (size_t block_index = 0U; block_index < layout->document->block_count; ++block_index) {
-            const BacaBlock *block = &layout->document->blocks[block_index];
-            if (block->kind != BACA_BLOCK_TEXT || layout_block_visible(block, layout->presentation)) {
+            const MereaderTuiBlock *block = &layout->document->blocks[block_index];
+            if (block->kind != MEREADER_TUI_BLOCK_TEXT || layout_block_visible(block, layout->presentation)) {
                 continue;
             }
             const char *subject = block->value.text.text == NULL ? "" : block->value.text.text;

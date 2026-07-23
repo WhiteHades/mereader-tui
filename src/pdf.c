@@ -1,5 +1,5 @@
-#include "baca/document_backend.h"
-#include "baca/graphics.h"
+#include "mereader-tui/document_backend.h"
+#include "mereader-tui/graphics.h"
 
 #include <cairo.h>
 #include <limits.h>
@@ -17,66 +17,66 @@
 #include <string.h>
 
 enum {
-    BACA_PDF_MAX_PAGES = 10000,
-    BACA_PDF_MAX_TEXT_PER_PAGE = 1024 * 1024,
-    BACA_PDF_MAX_TOTAL_TEXT = 16 * 1024 * 1024,
-    BACA_PDF_MAX_TOTAL_LINKS = 100000,
-    BACA_PDF_MAX_TOTAL_LINK_TARGET_BYTES = 8 * 1024 * 1024,
-    BACA_PDF_MAX_OUTLINE_DEPTH = 64,
-    BACA_PDF_MAX_OUTLINE_NODES = 10000,
-    BACA_PDF_MAX_METADATA_BYTES = 1024 * 1024,
-    BACA_PDF_ID_LENGTH = 32,
+    MEREADER_TUI_PDF_MAX_PAGES = 10000,
+    MEREADER_TUI_PDF_MAX_TEXT_PER_PAGE = 1024 * 1024,
+    MEREADER_TUI_PDF_MAX_TOTAL_TEXT = 16 * 1024 * 1024,
+    MEREADER_TUI_PDF_MAX_TOTAL_LINKS = 100000,
+    MEREADER_TUI_PDF_MAX_TOTAL_LINK_TARGET_BYTES = 8 * 1024 * 1024,
+    MEREADER_TUI_PDF_MAX_OUTLINE_DEPTH = 64,
+    MEREADER_TUI_PDF_MAX_OUTLINE_NODES = 10000,
+    MEREADER_TUI_PDF_MAX_METADATA_BYTES = 1024 * 1024,
+    MEREADER_TUI_PDF_ID_LENGTH = 32,
 };
 
-typedef struct BacaPdfBackend {
+typedef struct MereaderTuiPdfBackend {
     PopplerDocument *document;
     size_t page_count;
     size_t text_bytes;
     size_t link_count;
     size_t link_target_bytes;
-} BacaPdfBackend;
+} MereaderTuiPdfBackend;
 
-typedef struct BacaPdfPngBuffer {
-    BacaString data;
-    BacaError error;
-} BacaPdfPngBuffer;
+typedef struct MereaderTuiPdfPngBuffer {
+    MereaderTuiString data;
+    MereaderTuiError error;
+} MereaderTuiPdfPngBuffer;
 
 static double pdf_clamp_unit(double value);
 
-static char *pdf_page_target(size_t page_index, BacaError *error) {
+static char *pdf_page_target(size_t page_index, MereaderTuiError *error) {
     char target[64] = {0};
     const int length = snprintf(target, sizeof(target), "pdf://page/%zu", page_index);
     if (length <= 0 || (size_t)length >= sizeof(target)) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "could not format PDF page target");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format PDF page target");
         return NULL;
     }
-    return baca_strdup(target, error);
+    return mereader_tui_strdup(target, error);
 }
 
-static char *pdf_copy_link_target(BacaPdfBackend *backend, const char *target, BacaError *error) {
-    const size_t length = strnlen(target, BACA_PDF_MAX_METADATA_BYTES + 1U);
-    if (length > BACA_PDF_MAX_METADATA_BYTES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF link target exceeds the supported size limit");
+static char *pdf_copy_link_target(MereaderTuiPdfBackend *backend, const char *target, MereaderTuiError *error) {
+    const size_t length = strnlen(target, MEREADER_TUI_PDF_MAX_METADATA_BYTES + 1U);
+    if (length > MEREADER_TUI_PDF_MAX_METADATA_BYTES) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF link target exceeds the supported size limit");
         return NULL;
     }
     const size_t retained = length + 1U;
-    if (backend->link_target_bytes > BACA_PDF_MAX_TOTAL_LINK_TARGET_BYTES ||
-        retained > BACA_PDF_MAX_TOTAL_LINK_TARGET_BYTES - backend->link_target_bytes) {
-        baca_error_set(error, BACA_ERROR_CORRUPT,
+    if (backend->link_target_bytes > MEREADER_TUI_PDF_MAX_TOTAL_LINK_TARGET_BYTES ||
+        retained > MEREADER_TUI_PDF_MAX_TOTAL_LINK_TARGET_BYTES - backend->link_target_bytes) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
                        "PDF retained link target data exceeds the supported size limit");
         return NULL;
     }
-    char *copy = baca_strndup(target, length, error);
+    char *copy = mereader_tui_strndup(target, length, error);
     if (copy != NULL) {
         backend->link_target_bytes += retained;
     }
     return copy;
 }
 
-static char *pdf_copy_uri_target(BacaPdfBackend *backend, const char *target, BacaError *error) {
-    const size_t length = strnlen(target, BACA_PDF_MAX_METADATA_BYTES + 1U);
-    if (length > BACA_PDF_MAX_METADATA_BYTES) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF link target exceeds the supported size limit");
+static char *pdf_copy_uri_target(MereaderTuiPdfBackend *backend, const char *target, MereaderTuiError *error) {
+    const size_t length = strnlen(target, MEREADER_TUI_PDF_MAX_METADATA_BYTES + 1U);
+    if (length > MEREADER_TUI_PDF_MAX_METADATA_BYTES) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF link target exceeds the supported size limit");
         return NULL;
     }
     if (g_utf8_validate(target, (gssize)length, NULL)) {
@@ -84,7 +84,7 @@ static char *pdf_copy_uri_target(BacaPdfBackend *backend, const char *target, Ba
     }
     gchar *valid = g_utf8_make_valid(target, (gssize)length);
     if (valid == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not normalize PDF URI target");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not normalize PDF URI target");
         return NULL;
     }
     char *copy = pdf_copy_link_target(backend, valid, error);
@@ -92,7 +92,7 @@ static char *pdf_copy_uri_target(BacaPdfBackend *backend, const char *target, Ba
     return copy;
 }
 
-static char *pdf_copy_glib_string(gchar *value, BacaError *error) {
+static char *pdf_copy_glib_string(gchar *value, MereaderTuiError *error) {
     if (value == NULL) {
         return NULL;
     }
@@ -101,18 +101,18 @@ static char *pdf_copy_glib_string(gchar *value, BacaError *error) {
         g_free(value);
         return NULL;
     }
-    if (length > BACA_PDF_MAX_METADATA_BYTES) {
+    if (length > MEREADER_TUI_PDF_MAX_METADATA_BYTES) {
         g_free(value);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF metadata exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF metadata exceeds the supported size limit");
         return NULL;
     }
     gchar *valid = g_utf8_validate(value, (gssize)length, NULL) ? value : g_utf8_make_valid(value, (gssize)length);
     if (valid == NULL) {
         g_free(value);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not normalize PDF metadata");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not normalize PDF metadata");
         return NULL;
     }
-    char *copy = baca_strdup(valid, error);
+    char *copy = mereader_tui_strdup(valid, error);
     if (valid != value) {
         g_free(valid);
     }
@@ -120,13 +120,13 @@ static char *pdf_copy_glib_string(gchar *value, BacaError *error) {
     return copy;
 }
 
-static char *pdf_copy_glib_identifier(gchar *value, BacaError *error) {
+static char *pdf_copy_glib_identifier(gchar *value, MereaderTuiError *error) {
     if (value == NULL) {
         return NULL;
     }
-    char *copy = baca_reallocarray(NULL, BACA_PDF_ID_LENGTH + 1U, sizeof(*copy), error);
+    char *copy = mereader_tui_reallocarray(NULL, MEREADER_TUI_PDF_ID_LENGTH + 1U, sizeof(*copy), error);
     if (copy != NULL) {
-        for (size_t index = 0U; index < BACA_PDF_ID_LENGTH; ++index) {
+        for (size_t index = 0U; index < MEREADER_TUI_PDF_ID_LENGTH; ++index) {
             const unsigned char character = (unsigned char)value[index];
             if (character >= (unsigned char)'0' && character <= (unsigned char)'9') {
                 copy[index] = (char)character;
@@ -137,65 +137,65 @@ static char *pdf_copy_glib_identifier(gchar *value, BacaError *error) {
             } else {
                 free(copy);
                 copy = NULL;
-                baca_error_set(error, BACA_ERROR_CORRUPT, "PDF identifier is not hexadecimal");
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF identifier is not hexadecimal");
                 break;
             }
         }
         if (copy != NULL) {
-            copy[BACA_PDF_ID_LENGTH] = '\0';
+            copy[MEREADER_TUI_PDF_ID_LENGTH] = '\0';
         }
     }
     g_free(value);
     return copy;
 }
 
-static char *pdf_datetime(GDateTime *datetime, BacaError *error) {
+static char *pdf_datetime(GDateTime *datetime, MereaderTuiError *error) {
     if (datetime == NULL) {
         return NULL;
     }
     gchar *formatted = g_date_time_format_iso8601(datetime);
     g_date_time_unref(datetime);
     if (formatted == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not format PDF date");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not format PDF date");
         return NULL;
     }
     return pdf_copy_glib_string(formatted, error);
 }
 
-static bool pdf_load_metadata(BacaDocument *document, PopplerDocument *pdf, BacaError *error) {
-    BacaMetadata metadata = {0};
+static bool pdf_load_metadata(MereaderTuiDocument *document, PopplerDocument *pdf, MereaderTuiError *error) {
+    MereaderTuiMetadata metadata = {0};
     metadata.title = pdf_copy_glib_string(poppler_document_get_title(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.author = pdf_copy_glib_string(poppler_document_get_author(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.description = pdf_copy_glib_string(poppler_document_get_subject(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.creator = pdf_copy_glib_string(poppler_document_get_creator(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.producer = pdf_copy_glib_string(poppler_document_get_producer(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.creation_date = pdf_datetime(poppler_document_get_creation_date_time(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     metadata.modification_date = pdf_datetime(poppler_document_get_modification_date_time(pdf), error);
-    if (baca_error_is_set(error)) {
+    if (mereader_tui_error_is_set(error)) {
         goto fail;
     }
     const char *generic_date = metadata.creation_date != NULL ? metadata.creation_date : metadata.modification_date;
-    metadata.date = generic_date == NULL ? NULL : baca_strdup(generic_date, error);
-    metadata.format = baca_strdup("PDF", error);
-    if (baca_error_is_set(error) || metadata.format == NULL) {
+    metadata.date = generic_date == NULL ? NULL : mereader_tui_strdup(generic_date, error);
+    metadata.format = mereader_tui_strdup("PDF", error);
+    if (mereader_tui_error_is_set(error) || metadata.format == NULL) {
         goto fail;
     }
     gchar *permanent_id = NULL;
@@ -203,12 +203,12 @@ static bool pdf_load_metadata(BacaDocument *document, PopplerDocument *pdf, Baca
     if (poppler_document_get_id(pdf, &permanent_id, &update_id) != FALSE) {
         metadata.identifier = pdf_copy_glib_identifier(permanent_id, error);
         g_free(update_id);
-        if (baca_error_is_set(error)) {
+        if (mereader_tui_error_is_set(error)) {
             goto fail;
         }
     }
     document->metadata = metadata;
-    return baca_document_account_metadata(document, error);
+    return mereader_tui_document_account_metadata(document, error);
 
 fail:
     free(metadata.title);
@@ -227,19 +227,19 @@ fail:
     return false;
 }
 
-typedef struct BacaPdfDestination {
+typedef struct MereaderTuiPdfDestination {
     int page;
     double y;
     bool has_y;
-} BacaPdfDestination;
+} MereaderTuiPdfDestination;
 
 static bool pdf_dimension_equal(double left, double right) {
     const double scale = fmax(fmax(fabs(left), fabs(right)), 1.0);
     return fabs(left - right) <= scale * 1e-9;
 }
 
-static bool pdf_destination(BacaPdfBackend *backend, const PopplerDest *destination,
-                            BacaPdfDestination *result) {
+static bool pdf_destination(MereaderTuiPdfBackend *backend, const PopplerDest *destination,
+                            MereaderTuiPdfDestination *result) {
     if (destination == NULL) {
         return false;
     }
@@ -259,7 +259,7 @@ static bool pdf_destination(BacaPdfBackend *backend, const PopplerDest *destinat
         }
         return false;
     }
-    *result = (BacaPdfDestination){.page = page};
+    *result = (MereaderTuiPdfDestination){.page = page};
     const bool supports_top = destination->type == POPPLER_DEST_XYZ ||
                               destination->type == POPPLER_DEST_FITH ||
                               destination->type == POPPLER_DEST_FITBH ||
@@ -298,8 +298,8 @@ static bool pdf_destination(BacaPdfBackend *backend, const PopplerDest *destinat
     return true;
 }
 
-static bool pdf_format_destination_target(const BacaPdfDestination *destination, char target[128],
-                                          BacaError *error) {
+static bool pdf_format_destination_target(const MereaderTuiPdfDestination *destination, char target[128],
+                                          MereaderTuiError *error) {
     int length = 0;
     if (destination->has_y) {
         char y[G_ASCII_DTOSTR_BUF_SIZE] = {0};
@@ -309,7 +309,7 @@ static bool pdf_format_destination_target(const BacaPdfDestination *destination,
         length = snprintf(target, 128U, "pdf://page/%d", destination->page);
     }
     if (length <= 0 || length >= 128) {
-        baca_error_set(error, BACA_ERROR_INTERNAL, "could not format PDF destination target");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format PDF destination target");
         return false;
     }
     return true;
@@ -334,12 +334,12 @@ static int pdf_named_action_page(const char *name, int current_page, size_t page
     return -1;
 }
 
-static char *pdf_action_target(BacaPdfBackend *backend, const PopplerAction *action, int current_page,
-                               BacaError *error) {
+static char *pdf_action_target(MereaderTuiPdfBackend *backend, const PopplerAction *action, int current_page,
+                               MereaderTuiError *error) {
     if (action == NULL) {
         return NULL;
     }
-    BacaPdfDestination destination = {.page = -1};
+    MereaderTuiPdfDestination destination = {.page = -1};
     if (action->type == POPPLER_ACTION_GOTO_DEST) {
         if (!pdf_destination(backend, action->goto_dest.dest, &destination)) {
             return NULL;
@@ -369,11 +369,11 @@ static double pdf_clamp_unit(double value) {
     return value;
 }
 
-static bool pdf_add_link(BacaPdfBackend *backend, BacaImageBlock *image, const PopplerLinkMapping *mapping,
-                          double page_width, double page_height, int page_index, BacaError *error) {
-    if (image->link_count >= BACA_DOCUMENT_MAX_LINKS_PER_IMAGE ||
-        backend->link_count >= BACA_PDF_MAX_TOTAL_LINKS) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF contains too many links");
+static bool pdf_add_link(MereaderTuiPdfBackend *backend, MereaderTuiImageBlock *image, const PopplerLinkMapping *mapping,
+                          double page_width, double page_height, int page_index, MereaderTuiError *error) {
+    if (image->link_count >= MEREADER_TUI_DOCUMENT_MAX_LINKS_PER_IMAGE ||
+        backend->link_count >= MEREADER_TUI_PDF_MAX_TOTAL_LINKS) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF contains too many links");
         return false;
     }
 
@@ -394,13 +394,13 @@ static bool pdf_add_link(BacaPdfBackend *backend, BacaImageBlock *image, const P
 
     char *target = pdf_action_target(backend, mapping->action, page_index, error);
     if (target == NULL) {
-        return !baca_error_is_set(error);
+        return !mereader_tui_error_is_set(error);
     }
 
-    BacaError reserve_error = {0};
-    BacaImageLink *links = baca_array_reserve(image->links, &image->link_capacity, sizeof(*image->links),
+    MereaderTuiError reserve_error = {0};
+    MereaderTuiImageLink *links = mereader_tui_array_reserve(image->links, &image->link_capacity, sizeof(*image->links),
                                               image->link_count + 1U, &reserve_error);
-    if (baca_error_is_set(&reserve_error)) {
+    if (mereader_tui_error_is_set(&reserve_error)) {
         free(target);
         if (error != NULL) {
             *error = reserve_error;
@@ -408,7 +408,7 @@ static bool pdf_add_link(BacaPdfBackend *backend, BacaImageBlock *image, const P
         return false;
     }
     image->links = links;
-    image->links[image->link_count++] = (BacaImageLink){
+    image->links[image->link_count++] = (MereaderTuiImageLink){
         .x = x1,
         .y = y1,
         .width = x2 - x1,
@@ -419,8 +419,8 @@ static bool pdf_add_link(BacaPdfBackend *backend, BacaImageBlock *image, const P
     return true;
 }
 
-static bool pdf_extract_links(BacaPdfBackend *backend, PopplerPage *page, BacaImageBlock *image,
-                              double page_width, double page_height, int page_index, BacaError *error) {
+static bool pdf_extract_links(MereaderTuiPdfBackend *backend, PopplerPage *page, MereaderTuiImageBlock *image,
+                              double page_width, double page_height, int page_index, MereaderTuiError *error) {
     GList *mappings = poppler_page_get_link_mapping(page);
     bool success = true;
     for (GList *item = mappings; item != NULL; item = item->next) {
@@ -435,15 +435,15 @@ static bool pdf_extract_links(BacaPdfBackend *backend, PopplerPage *page, BacaIm
 }
 
 static bool pdf_intrinsic_size(double width, double height, int *intrinsic_width, int *intrinsic_height,
-                               BacaError *error) {
+                               MereaderTuiError *error) {
     if (!isfinite(width) || !isfinite(height) || !(width > 0.0) || !(height > 0.0) ||
         width > 1000000.0 || height > 1000000.0) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF page has invalid or unsupported dimensions");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF page has invalid or unsupported dimensions");
         return false;
     }
     const double longest = fmax(width, height);
-    const double scale = longest > (double)BACA_GRAPHICS_MAX_SOURCE_DIMENSION
-                             ? (double)BACA_GRAPHICS_MAX_SOURCE_DIMENSION / longest
+    const double scale = longest > (double)MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION
+                             ? (double)MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION / longest
                              : 1.0;
     const double scaled_width = fmax(1.0, round(width * scale));
     const double scaled_height = fmax(1.0, round(height * scale));
@@ -452,36 +452,36 @@ static bool pdf_intrinsic_size(double width, double height, int *intrinsic_width
     return true;
 }
 
-static char *pdf_extract_text(BacaPdfBackend *backend, PopplerPage *page, BacaError *error) {
+static char *pdf_extract_text(MereaderTuiPdfBackend *backend, PopplerPage *page, MereaderTuiError *error) {
     gchar *raw = poppler_page_get_text(page);
     if (raw == NULL || raw[0] == '\0') {
         g_free(raw);
-        return baca_strdup("", error);
+        return mereader_tui_strdup("", error);
     }
     const size_t raw_length = strlen(raw);
-    if (raw_length > BACA_PDF_MAX_TEXT_PER_PAGE ||
-        raw_length > BACA_PDF_MAX_TOTAL_TEXT - backend->text_bytes) {
+    if (raw_length > MEREADER_TUI_PDF_MAX_TEXT_PER_PAGE ||
+        raw_length > MEREADER_TUI_PDF_MAX_TOTAL_TEXT - backend->text_bytes) {
         g_free(raw);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF extracted text exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF extracted text exceeds the supported size limit");
         return NULL;
     }
     gchar *valid = g_utf8_validate(raw, (gssize)raw_length, NULL) ? raw : g_utf8_make_valid(raw, (gssize)raw_length);
     if (valid == NULL) {
         g_free(raw);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not normalize PDF text");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not normalize PDF text");
         return NULL;
     }
     const size_t valid_length = strlen(valid);
-    if (valid_length > BACA_PDF_MAX_TEXT_PER_PAGE ||
-        valid_length > BACA_PDF_MAX_TOTAL_TEXT - backend->text_bytes) {
+    if (valid_length > MEREADER_TUI_PDF_MAX_TEXT_PER_PAGE ||
+        valid_length > MEREADER_TUI_PDF_MAX_TOTAL_TEXT - backend->text_bytes) {
         if (valid != raw) {
             g_free(valid);
         }
         g_free(raw);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF extracted text exceeds the supported size limit");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF extracted text exceeds the supported size limit");
         return NULL;
     }
-    char *text = baca_strdup(valid, error);
+    char *text = mereader_tui_strdup(valid, error);
     if (valid != raw) {
         g_free(valid);
     }
@@ -492,20 +492,20 @@ static char *pdf_extract_text(BacaPdfBackend *backend, PopplerPage *page, BacaEr
     return text;
 }
 
-static bool pdf_append_link_line(BacaDocument *document, const char *section_id, const BacaImageBlock *image,
-                                 BacaError *error) {
+static bool pdf_append_link_line(MereaderTuiDocument *document, const char *section_id, const MereaderTuiImageBlock *image,
+                                 MereaderTuiError *error) {
     if (image->link_count == 0U) {
         return true;
     }
-    BacaString text = {0};
-    BacaTextSpan *spans = calloc(image->link_count, sizeof(*spans));
+    MereaderTuiString text = {0};
+    MereaderTuiTextSpan *spans = calloc(image->link_count, sizeof(*spans));
     if (spans == NULL) {
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate PDF text links");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate PDF text links");
         return false;
     }
     size_t span_count = 0U;
     for (size_t index = 0U; index < image->link_count; ++index) {
-        const BacaImageLink *link = &image->links[index];
+        const MereaderTuiImageLink *link = &image->links[index];
         char prefix[48] = {0};
         const int prefix_length = snprintf(prefix, sizeof(prefix), "[%zu] ", index + 1U);
         const char *label = link->target;
@@ -519,44 +519,44 @@ static bool pdf_append_link_line(BacaDocument *document, const char *section_id,
             }
         }
         if (prefix_length <= 0 || (size_t)prefix_length >= sizeof(prefix) ||
-            (index > 0U && !baca_string_append_char(&text, '\n', error)) ||
-            !baca_string_append_n(&text, prefix, (size_t)prefix_length, error)) {
+            (index > 0U && !mereader_tui_string_append_char(&text, '\n', error)) ||
+            !mereader_tui_string_append_n(&text, prefix, (size_t)prefix_length, error)) {
             goto fail;
         }
         const size_t start = text.length;
-        if (!baca_string_append(&text, label, error)) {
+        if (!mereader_tui_string_append(&text, label, error)) {
             goto fail;
         }
         spans[span_count].start = start;
         spans[span_count].end = text.length;
-        spans[span_count].style = BACA_STYLE_UNDERLINE;
-        spans[span_count].link = baca_strdup(link->target, error);
+        spans[span_count].style = MEREADER_TUI_STYLE_UNDERLINE;
+        spans[span_count].link = mereader_tui_strdup(link->target, error);
         if (spans[span_count].link == NULL) {
             goto fail;
         }
         ++span_count;
     }
 
-    BacaBlock block = {
-        .kind = BACA_BLOCK_TEXT,
-        .presentation = BACA_PRESENTATION_REFLOW,
-        .section_id = baca_strdup(section_id, error),
+    MereaderTuiBlock block = {
+        .kind = MEREADER_TUI_BLOCK_TEXT,
+        .presentation = MEREADER_TUI_PRESENTATION_REFLOW,
+        .section_id = mereader_tui_strdup(section_id, error),
         .value.text = {
-            .text = baca_string_take(&text),
+            .text = mereader_tui_string_take(&text),
             .spans = spans,
             .span_count = span_count,
             .span_capacity = image->link_count,
         },
     };
     if (block.section_id == NULL || block.value.text.text == NULL ||
-        !baca_document_add_text_block(document, &block, error)) {
-        baca_document_block_free(&block);
+        !mereader_tui_document_add_text_block(document, &block, error)) {
+        mereader_tui_document_block_free(&block);
         return false;
     }
     return true;
 
 fail:
-    baca_string_free(&text);
+    mereader_tui_string_free(&text);
     for (size_t index = 0U; index < span_count; ++index) {
         free(spans[index].link);
     }
@@ -564,11 +564,11 @@ fail:
     return false;
 }
 
-static bool pdf_append_page(BacaDocument *document, BacaPdfBackend *backend, size_t page_index,
-                            size_t *search_offset, BacaError *error) {
+static bool pdf_append_page(MereaderTuiDocument *document, MereaderTuiPdfBackend *backend, size_t page_index,
+                            size_t *search_offset, MereaderTuiError *error) {
     PopplerPage *page = poppler_document_get_page(backend->document, (int)page_index);
     if (page == NULL) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF page %zu could not be loaded", page_index + 1U);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF page %zu could not be loaded", page_index + 1U);
         return false;
     }
     double page_width = 0.0;
@@ -584,14 +584,14 @@ static bool pdf_append_page(BacaDocument *document, BacaPdfBackend *backend, siz
     char *target = pdf_page_target(page_index, error);
     char label[64] = {0};
     const int label_length = snprintf(label, sizeof(label), "Page %zu", page_index + 1U);
-    BacaBlock image_block = {
-        .kind = BACA_BLOCK_IMAGE,
-        .presentation = BACA_PRESENTATION_FIXED,
-        .section_id = target == NULL ? NULL : baca_strdup(target, error),
+    MereaderTuiBlock image_block = {
+        .kind = MEREADER_TUI_BLOCK_IMAGE,
+        .presentation = MEREADER_TUI_PRESENTATION_FIXED,
+        .section_id = target == NULL ? NULL : mereader_tui_strdup(target, error),
         .value.image = {
-            .uri = target == NULL ? NULL : baca_strdup(target, error),
-            .alt = label_length <= 0 || (size_t)label_length >= sizeof(label) ? NULL : baca_strdup(label, error),
-            .anchor = target == NULL ? NULL : baca_strdup(target, error),
+            .uri = target == NULL ? NULL : mereader_tui_strdup(target, error),
+            .alt = label_length <= 0 || (size_t)label_length >= sizeof(label) ? NULL : mereader_tui_strdup(label, error),
+            .anchor = target == NULL ? NULL : mereader_tui_strdup(target, error),
             .page_index = (int)page_index,
             .intrinsic_width = intrinsic_width,
             .intrinsic_height = intrinsic_height,
@@ -602,7 +602,7 @@ static bool pdf_append_page(BacaDocument *document, BacaPdfBackend *backend, siz
         !pdf_extract_links(backend, page, &image_block.value.image, page_width, page_height, (int)page_index,
                            error)) {
         free(target);
-        baca_document_block_free(&image_block);
+        mereader_tui_document_block_free(&image_block);
         g_object_unref(page);
         return false;
     }
@@ -611,36 +611,36 @@ static bool pdf_append_page(BacaDocument *document, BacaPdfBackend *backend, siz
     g_object_unref(page);
     if (text == NULL) {
         free(target);
-        baca_document_block_free(&image_block);
+        mereader_tui_document_block_free(&image_block);
         return false;
     }
     const size_t text_length = strlen(text);
     const size_t first_block = document->block_count;
-    if (!baca_document_add_image_block(document, &image_block, error)) {
+    if (!mereader_tui_document_add_image_block(document, &image_block, error)) {
         free(text);
         free(target);
-        baca_document_block_free(&image_block);
+        mereader_tui_document_block_free(&image_block);
         return false;
     }
-    BacaBlock text_block = {
-        .kind = BACA_BLOCK_TEXT,
-        .presentation = BACA_PRESENTATION_REFLOW,
-        .section_id = baca_strdup(target, error),
+    MereaderTuiBlock text_block = {
+        .kind = MEREADER_TUI_BLOCK_TEXT,
+        .presentation = MEREADER_TUI_PRESENTATION_REFLOW,
+        .section_id = mereader_tui_strdup(target, error),
         .value.text = {
             .text = text,
         },
     };
-    if (text_block.section_id == NULL || !baca_document_add_text_block(document, &text_block, error)) {
-        baca_document_block_free(&text_block);
+    if (text_block.section_id == NULL || !mereader_tui_document_add_text_block(document, &text_block, error)) {
+        mereader_tui_document_block_free(&text_block);
         free(target);
         return false;
     }
-    const BacaImageBlock *stored_image = &document->blocks[first_block].value.image;
+    const MereaderTuiImageBlock *stored_image = &document->blocks[first_block].value.image;
     if (!pdf_append_link_line(document, target, stored_image, error)) {
         free(target);
         return false;
     }
-    BacaSection section = {
+    MereaderTuiSection section = {
         .id = target,
         .first_block = first_block,
         .block_count = document->block_count - first_block,
@@ -648,27 +648,27 @@ static bool pdf_append_page(BacaDocument *document, BacaPdfBackend *backend, siz
         .source_size = text_length,
         .linear = true,
     };
-    if (!baca_document_add_section(document, &section, error)) {
+    if (!mereader_tui_document_add_section(document, &section, error)) {
         free(section.id);
         return false;
     }
     if (text_length > SIZE_MAX - *search_offset - 1U) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF search offsets overflow");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF search offsets overflow");
         return false;
     }
     *search_offset += text_length + 1U;
     return true;
 }
 
-static bool pdf_load_outline_iter(BacaDocument *document, BacaPdfBackend *backend, PopplerIndexIter *iterator,
-                                  unsigned depth, size_t *node_count, BacaError *error) {
-    if (depth >= BACA_PDF_MAX_OUTLINE_DEPTH) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF outline exceeds the supported depth limit");
+static bool pdf_load_outline_iter(MereaderTuiDocument *document, MereaderTuiPdfBackend *backend, PopplerIndexIter *iterator,
+                                  unsigned depth, size_t *node_count, MereaderTuiError *error) {
+    if (depth >= MEREADER_TUI_PDF_MAX_OUTLINE_DEPTH) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF outline exceeds the supported depth limit");
         return false;
     }
     do {
-        if (*node_count >= BACA_PDF_MAX_OUTLINE_NODES) {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "PDF outline exceeds the supported total node limit");
+        if (*node_count >= MEREADER_TUI_PDF_MAX_OUTLINE_NODES) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF outline exceeds the supported total node limit");
             return false;
         }
         ++*node_count;
@@ -678,7 +678,7 @@ static bool pdf_load_outline_iter(BacaDocument *document, BacaPdfBackend *backen
                                ? pdf_action_target(backend, action, -1, error)
                                : NULL;
             if (target != NULL) {
-                if (!baca_document_add_toc(document, action->any.title, target, depth, error)) {
+                if (!mereader_tui_document_add_toc(document, action->any.title, target, depth, error)) {
                     free(target);
                     poppler_action_free(action);
                     return false;
@@ -686,7 +686,7 @@ static bool pdf_load_outline_iter(BacaDocument *document, BacaPdfBackend *backen
             }
             free(target);
             poppler_action_free(action);
-            if (baca_error_is_set(error)) {
+            if (mereader_tui_error_is_set(error)) {
                 return false;
             }
         }
@@ -702,7 +702,7 @@ static bool pdf_load_outline_iter(BacaDocument *document, BacaPdfBackend *backen
     return true;
 }
 
-static bool pdf_load_outline(BacaDocument *document, BacaPdfBackend *backend, BacaError *error) {
+static bool pdf_load_outline(MereaderTuiDocument *document, MereaderTuiPdfBackend *backend, MereaderTuiError *error) {
     PopplerIndexIter *iterator = poppler_index_iter_new(backend->document);
     if (iterator == NULL) {
         return true;
@@ -710,37 +710,37 @@ static bool pdf_load_outline(BacaDocument *document, BacaPdfBackend *backend, Ba
     size_t node_count = 0U;
     const bool loaded = pdf_load_outline_iter(document, backend, iterator, 0U, &node_count, error);
     poppler_index_iter_free(iterator);
-    return loaded && baca_document_index_toc_sections(document, error);
+    return loaded && mereader_tui_document_index_toc_sections(document, error);
 }
 
 static cairo_status_t pdf_write_png(void *closure, const unsigned char *data, unsigned int length) {
-    BacaPdfPngBuffer *buffer = closure;
-    if ((size_t)length > BACA_GRAPHICS_MAX_INPUT_BYTES -
-                             (buffer->data.length < BACA_GRAPHICS_MAX_INPUT_BYTES
+    MereaderTuiPdfPngBuffer *buffer = closure;
+    if ((size_t)length > MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES -
+                             (buffer->data.length < MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES
                                   ? buffer->data.length
-                                  : BACA_GRAPHICS_MAX_INPUT_BYTES)) {
-        baca_error_set(&buffer->error, BACA_ERROR_MEMORY, "rendered PDF page exceeds the PNG size limit");
+                                  : MEREADER_TUI_GRAPHICS_MAX_INPUT_BYTES)) {
+        mereader_tui_error_set(&buffer->error, MEREADER_TUI_ERROR_MEMORY, "rendered PDF page exceeds the PNG size limit");
         return CAIRO_STATUS_WRITE_ERROR;
     }
-    if (!baca_string_append_n(&buffer->data, (const char *)data, (size_t)length, &buffer->error)) {
+    if (!mereader_tui_string_append_n(&buffer->data, (const char *)data, (size_t)length, &buffer->error)) {
         return CAIRO_STATUS_WRITE_ERROR;
     }
     return CAIRO_STATUS_SUCCESS;
 }
 
-static bool pdf_render_page(BacaDocument *document, int page_index, int width, int height, uint32_t background,
-                             BacaResource *resource, BacaError *error) {
+static bool pdf_render_page(MereaderTuiDocument *document, int page_index, int width, int height, uint32_t background,
+                             MereaderTuiResource *resource, MereaderTuiError *error) {
     (void)background;
-    BacaPdfBackend *backend = document->backend;
+    MereaderTuiPdfBackend *backend = document->backend;
     if (backend == NULL || page_index < 0 || (size_t)page_index >= backend->page_count ||
-        width > BACA_GRAPHICS_MAX_SOURCE_DIMENSION || height > BACA_GRAPHICS_MAX_SOURCE_DIMENSION ||
-        (size_t)width > BACA_GRAPHICS_MAX_RENDER_PIXELS / (size_t)height) {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "invalid or oversized PDF render request");
+        width > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION || height > MEREADER_TUI_GRAPHICS_MAX_SOURCE_DIMENSION ||
+        (size_t)width > MEREADER_TUI_GRAPHICS_MAX_RENDER_PIXELS / (size_t)height) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid or oversized PDF render request");
         return false;
     }
     PopplerPage *page = poppler_document_get_page(backend->document, page_index);
     if (page == NULL) {
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF page %d could not be loaded", page_index + 1);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF page %d could not be loaded", page_index + 1);
         return false;
     }
     double page_width = 0.0;
@@ -748,7 +748,7 @@ static bool pdf_render_page(BacaDocument *document, int page_index, int width, i
     poppler_page_get_size(page, &page_width, &page_height);
     if (!isfinite(page_width) || !isfinite(page_height) || !(page_width > 0.0) || !(page_height > 0.0)) {
         g_object_unref(page);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF page has invalid dimensions");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF page has invalid dimensions");
         return false;
     }
 
@@ -765,36 +765,36 @@ static bool pdf_render_page(BacaDocument *document, int page_index, int width, i
     if (context_status != CAIRO_STATUS_SUCCESS || surface_status != CAIRO_STATUS_SUCCESS) {
         const cairo_status_t status = context_status != CAIRO_STATUS_SUCCESS ? context_status : surface_status;
         cairo_surface_destroy(surface);
-        baca_error_set(error, BACA_ERROR_EXTERNAL, "could not render PDF page: %s", cairo_status_to_string(status));
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not render PDF page: %s", cairo_status_to_string(status));
         return false;
     }
 
-    BacaPdfPngBuffer png = {0};
+    MereaderTuiPdfPngBuffer png = {0};
     const cairo_status_t status = cairo_surface_write_to_png_stream(surface, pdf_write_png, &png);
     cairo_surface_destroy(surface);
-    if (status != CAIRO_STATUS_SUCCESS || baca_error_is_set(&png.error)) {
-        baca_string_free(&png.data);
-        if (baca_error_is_set(&png.error)) {
+    if (status != CAIRO_STATUS_SUCCESS || mereader_tui_error_is_set(&png.error)) {
+        mereader_tui_string_free(&png.data);
+        if (mereader_tui_error_is_set(&png.error)) {
             if (error != NULL) {
                 *error = png.error;
             }
         } else {
-            baca_error_set(error, BACA_ERROR_EXTERNAL, "could not encode PDF page: %s", cairo_status_to_string(status));
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_EXTERNAL, "could not encode PDF page: %s", cairo_status_to_string(status));
         }
         return false;
     }
     resource->length = png.data.length;
-    resource->data = (unsigned char *)baca_string_take(&png.data);
-    resource->mime_type = baca_strdup("image/png", error);
+    resource->data = (unsigned char *)mereader_tui_string_take(&png.data);
+    resource->mime_type = mereader_tui_strdup("image/png", error);
     if (resource->data == NULL || resource->mime_type == NULL) {
-        baca_resource_free(resource);
+        mereader_tui_resource_free(resource);
         return false;
     }
     return true;
 }
 
-static void pdf_close(BacaDocument *document) {
-    BacaPdfBackend *backend = document->backend;
+static void pdf_close(MereaderTuiDocument *document) {
+    MereaderTuiPdfBackend *backend = document->backend;
     if (backend == NULL) {
         return;
     }
@@ -805,20 +805,20 @@ static void pdf_close(BacaDocument *document) {
     document->backend = NULL;
 }
 
-static const BacaDocumentOps pdf_document_ops = {
+static const MereaderTuiDocumentOps pdf_document_ops = {
     .render_page = pdf_render_page,
     .close = pdf_close,
 };
 
-bool baca_pdf_open(BacaDocument *document, const char *path, BacaError *error) {
+bool mereader_tui_pdf_open(MereaderTuiDocument *document, const char *path, MereaderTuiError *error) {
     if (document == NULL || path == NULL || path[0] == '\0') {
-        baca_error_set(error, BACA_ERROR_ARGUMENT, "document and PDF path are required");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "document and PDF path are required");
         return false;
     }
     GError *gerror = NULL;
     gchar *uri = g_filename_to_uri(path, NULL, &gerror);
     if (uri == NULL) {
-        baca_error_set(error, BACA_ERROR_IO, "could not create PDF file URI: %s",
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO, "could not create PDF file URI: %s",
                        gerror == NULL ? "invalid path" : gerror->message);
         g_clear_error(&gerror);
         return false;
@@ -827,10 +827,10 @@ bool baca_pdf_open(BacaDocument *document, const char *path, BacaError *error) {
     g_free(uri);
     if (pdf == NULL) {
         if (gerror != NULL && gerror->domain == POPPLER_ERROR && gerror->code == POPPLER_ERROR_ENCRYPTED) {
-            baca_error_set(error, BACA_ERROR_UNSUPPORTED,
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
                            "PDF password required; password-protected PDFs are not supported");
         } else {
-            baca_error_set(error, BACA_ERROR_CORRUPT, "could not open PDF: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "could not open PDF: %s",
                            gerror == NULL ? "invalid PDF data" : gerror->message);
         }
         g_clear_error(&gerror);
@@ -841,26 +841,26 @@ bool baca_pdf_open(BacaDocument *document, const char *path, BacaError *error) {
     const int page_count = poppler_document_get_n_pages(pdf);
     if (page_count <= 0) {
         g_object_unref(pdf);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF contains no pages");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF contains no pages");
         return false;
     }
-    if (page_count > BACA_PDF_MAX_PAGES) {
+    if (page_count > MEREADER_TUI_PDF_MAX_PAGES) {
         g_object_unref(pdf);
-        baca_error_set(error, BACA_ERROR_CORRUPT, "PDF page count exceeds the supported limit of %d",
-                       BACA_PDF_MAX_PAGES);
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "PDF page count exceeds the supported limit of %d",
+                       MEREADER_TUI_PDF_MAX_PAGES);
         return false;
     }
-    BacaPdfBackend *backend = calloc(1U, sizeof(*backend));
+    MereaderTuiPdfBackend *backend = calloc(1U, sizeof(*backend));
     if (backend == NULL) {
         g_object_unref(pdf);
-        baca_error_set(error, BACA_ERROR_MEMORY, "could not allocate PDF backend");
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "could not allocate PDF backend");
         return false;
     }
     backend->document = pdf;
     backend->page_count = (size_t)page_count;
     document->backend = backend;
     document->ops = &pdf_document_ops;
-    document->default_presentation = BACA_PRESENTATION_FIXED;
+    document->default_presentation = MEREADER_TUI_PRESENTATION_FIXED;
 
     if (!pdf_load_metadata(document, pdf, error)) {
         return false;
