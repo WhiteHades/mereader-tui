@@ -103,6 +103,11 @@ verify the installed program:
 ~/.local/bin/mereader-tui --doctor
 ```
 
+to read mobi, prc, azw, or azw3 files, install `mobitool` from
+[libmobi](https://github.com/bfabiszewski/libmobi#installation) and make sure it
+is in `PATH`. `--doctor` reports `MOBI/AZW: mobitool` when it is available. other
+formats do not require `mobitool`.
+
 make sure `~/.local/bin` is in `PATH`. for a system-wide install under `/usr/local`, build without root first, then install the existing build:
 
 ```sh
