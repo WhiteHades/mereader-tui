@@ -6,6 +6,7 @@
 
 static MereaderTuiTestResult test_index_search_refresh_and_ownership(void) {
     TEST_ASSERT(mereader_tui_test_write_text("search/alpha-book.epub", "alpha"));
+    TEST_ASSERT(mereader_tui_test_write_text("search/comparison-!=.epub", "operator"));
     TEST_ASSERT(mereader_tui_test_write_text("search/nested/beta-manual.pdf", "beta"));
     char *root = mereader_tui_test_path("search");
     TEST_ASSERT(root != NULL);
@@ -20,6 +21,12 @@ static MereaderTuiTestResult test_index_search_refresh_and_ownership(void) {
     TEST_ASSERT(files.length >= 1U);
     TEST_ASSERT_STR(files.items[0].relative_path, "alpha-book.epub");
     TEST_ASSERT(files.items[0].score > 0);
+    mereader_tui_search_files_free(&files);
+
+    TEST_ASSERT_MSG(mereader_tui_search_files(&index, "comparison !=", 0U, 32U, &files, &error),
+                    "%s", error.message);
+    TEST_ASSERT_SIZE(files.length, 1U);
+    TEST_ASSERT_STR(files.items[0].relative_path, "comparison-!=.epub");
     mereader_tui_search_files_free(&files);
 
     TEST_ASSERT(mereader_tui_test_write_text("search/gamma-notes.txt", "gamma"));

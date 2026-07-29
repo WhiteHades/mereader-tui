@@ -1,16 +1,19 @@
 # dependency audit
 
-reviewed 2026-07-23. review again by 2026-10-23 or before changing the pinned fff revision.
+reviewed 2026-07-29. review again by 2026-10-29 or before changing the pinned fff revision.
 
 ## reviewed inputs
 
-- fff submodule: `05a35c6d4856455393a2dc8aadaeae4b2823ddf6`
+- fff submodule: `63b126e7b0034d3a25b1c84d1972e1b84903c169`
 - rust toolchain: `1.97.0`
 - dependency lock: `vendor/fff/Cargo.lock`
 - audit command: `cargo audit --file vendor/fff/Cargo.lock`
 - reachability command: `cargo +1.97.0 tree --manifest-path vendor/fff/Cargo.toml -p fff-c --edges normal,build`
 
-The upstream `main` branch was at the same fff revision when reviewed. No newer upstream revision was available.
+The reviewed revision fixes literal operator-like search tokens such as `!=`.
+The fff C API and `Cargo.lock` are unchanged from the previous pin. Upstream
+`main` was at `2cf871210b7c10cb1bb3e99d54b36125c6b63ed2`; its later changes only affect
+Neovim UI and documentation, Nix build flags, and a benchmark.
 
 ## findings
 

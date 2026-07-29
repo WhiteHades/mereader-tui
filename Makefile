@@ -9,8 +9,13 @@ INSTALL ?= install
 CARGO ?= cargo
 RUST_TOOLCHAIN ?= 1.97.0
 FFF_TARGET_DIR ?= $(CURDIR)/vendor/fff/target
+FFF_CC ?= cc
+FFF_CXX ?= c++
 FFF_CFLAGS ?=
 FFF_CXXFLAGS ?=
+FFF_LDFLAGS ?=
+FFF_SOURCES = vendor/fff/Cargo.lock vendor/fff/Cargo.toml \
+	$(shell find vendor/fff/crates -type f \( -name '*.rs' -o -name '*.toml' -o -name '*.h' \) -print)
 LIBDIR ?= $(PREFIX)/lib/mereader-tui
 LICENSEDIR ?= $(DATADIR)/licenses/mereader-tui
 PKGS = ncursesw sqlite3 glib-2.0 libxml-2.0 libzip libarchive libpcre2-8 gdk-pixbuf-2.0 poppler-glib cairo libcurl
@@ -93,9 +98,10 @@ doctor: check-deps
 
 fff: build/libfff_c.so
 
-build/libfff_c.so: vendor/fff/Cargo.lock
+build/libfff_c.so: $(FFF_SOURCES)
 	@mkdir -p build
-	CFLAGS="$(FFF_CFLAGS)" CXXFLAGS="$(FFF_CXXFLAGS)" CARGO_TARGET_DIR="$(FFF_TARGET_DIR)" \
+	CC="$(FFF_CC)" CXX="$(FFF_CXX)" CFLAGS="$(FFF_CFLAGS)" \
+		CXXFLAGS="$(FFF_CXXFLAGS)" LDFLAGS="$(FFF_LDFLAGS)" CARGO_TARGET_DIR="$(FFF_TARGET_DIR)" \
 		"$(CARGO)" +"$(RUST_TOOLCHAIN)" build \
 		--manifest-path vendor/fff/Cargo.toml --locked --release -p fff-c
 	cp "$(FFF_TARGET_DIR)/release/libfff_c.so" $@
