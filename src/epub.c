@@ -1219,7 +1219,20 @@ static bool epub_load_resource(MereaderTuiDocument *document, const char *uri, M
     return true;
 }
 
-static bool inspect_encrypted_data(xmlNode *node, MereaderTuiError *error) {
+static bool manifest_item_is_font(const EpubManifestItem *item) {
+    return item != NULL &&
+           (strncmp(item->media_type, "font/", 5U) == 0 ||
+            strcmp(item->media_type, "application/font-sfnt") == 0 ||
+            strcmp(item->media_type, "application/font-woff") == 0 ||
+            strcmp(item->media_type, "application/vnd.ms-opentype") == 0 ||
+            strcmp(item->media_type, "application/x-font-opentype") == 0 ||
+            strcmp(item->media_type, "application/x-font-ttf") == 0 ||
+            strcmp(item->media_type, "application/x-font-truetype") == 0 ||
+            strcmp(item->media_type, "application/x-font-woff") == 0 ||
+            strcmp(item->media_type, "application/x-font-woff2") == 0);
+}
+
+static bool inspect_encrypted_data(EpubBackend *backend, xmlNode *node, MereaderTuiError *error) {
     if (xml_node_is_ns(node, "EncryptedData", XML_ENCRYPTION_NAMESPACE)) {
         xmlNode *method = find_direct_child_ns(node, "EncryptionMethod", XML_ENCRYPTION_NAMESPACE);
         xmlNode *cipher_data = find_direct_child_ns(node, "CipherData", XML_ENCRYPTION_NAMESPACE);
@@ -1240,8 +1253,15 @@ static bool inspect_encrypted_data(xmlNode *node, MereaderTuiError *error) {
         }
         bool font_obfuscation = xmlStrcmp(algorithm, BAD_CAST "http://www.idpf.org/2008/embedding") == 0 ||
                                 xmlStrcmp(algorithm, BAD_CAST "http://ns.adobe.com/pdf/enc#RC") == 0;
+        if (font_obfuscation && manifest_item_is_font(manifest_by_path(backend, target))) {
+            free(target);
+            xmlFree(algorithm);
+            xmlFree(uri);
+            return true;
+        }
         if (font_obfuscation) {
-            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED, "EPUB font obfuscation is not supported: %s",
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
+                           "encrypted EPUB content uses a font obfuscation algorithm on a non-font resource: %s",
                            target);
         } else {
             mereader_tui_error_set(error, MEREADER_TUI_ERROR_UNSUPPORTED,
@@ -1254,7 +1274,7 @@ static bool inspect_encrypted_data(xmlNode *node, MereaderTuiError *error) {
         return false;
     }
     for (xmlNode *child = node == NULL ? NULL : node->children; child != NULL; child = child->next) {
-        if (!inspect_encrypted_data(child, error)) {
+        if (!inspect_encrypted_data(backend, child, error)) {
             return false;
         }
     }
@@ -1290,7 +1310,7 @@ static bool validate_encryption(EpubBackend *backend, MereaderTuiError *error) {
                            "EPUB encryption document contains an unexpected element");
             valid = false;
         } else {
-            valid = inspect_encrypted_data(child, error);
+            valid = inspect_encrypted_data(backend, child, error);
         }
     }
     xmlFreeDoc(parsed);
@@ -1434,8 +1454,7 @@ bool mereader_tui_epub_open(MereaderTuiDocument *document, const char *path, con
             return false;
         }
     }
-    if (!open_archive(backend, path, error) || !find_opf_path(backend, error) ||
-        !validate_encryption(backend, error)) {
+    if (!open_archive(backend, path, error) || !find_opf_path(backend, error)) {
         backend_destroy(backend);
         return false;
     }
@@ -1463,7 +1482,8 @@ bool mereader_tui_epub_open(MereaderTuiDocument *document, const char *path, con
     if (!xml_node_is_ns(package, "package", OPF_NAMESPACE) || !valid_version ||
         !package_children(package, &metadata, &manifest, &spine, error) ||
         !parse_metadata(document, metadata, error) || !mereader_tui_document_account_metadata(document, error) ||
-        !parse_manifest(backend, manifest, error) || !index_manifest(backend, error)) {
+        !parse_manifest(backend, manifest, error) || !index_manifest(backend, error) ||
+        !validate_encryption(backend, error)) {
         if (!mereader_tui_error_is_set(error)) {
             mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "EPUB OPF has an invalid package root or version");
         }

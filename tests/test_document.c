@@ -1560,6 +1560,97 @@ static MereaderTuiTestResult test_encryption_document_error(void) {
     return MEREADER_TUI_TEST_PASS;
 }
 
+static MereaderTuiTestResult test_epub_font_obfuscation(void) {
+    static const struct {
+        const char *relative;
+        const char *algorithm;
+        const char *media_type;
+    } cases[] = {
+        {
+            .relative = "document/idpf-obfuscated-font.epub",
+            .algorithm = "http://www.idpf.org/2008/embedding",
+            .media_type = "application/vnd.ms-opentype",
+        },
+        {
+            .relative = "document/adobe-obfuscated-font.epub",
+            .algorithm = "http://ns.adobe.com/pdf/enc#RC",
+            .media_type = "font/otf",
+        },
+    };
+    static const char font[] = "obfuscated font bytes are unused by the TUI";
+
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(cases); ++index) {
+        MereaderTuiError error = {0};
+        MereaderTuiString encryption = {0};
+        MereaderTuiString manifest = {0};
+        TEST_ASSERT(mereader_tui_string_append(
+            &encryption,
+            "<?xml version=\"1.0\"?>"
+            "<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
+            "<EncryptedData xmlns=\"http://www.w3.org/2001/04/xmlenc#\">"
+            "<EncryptionMethod Algorithm=\"",
+            &error));
+        TEST_ASSERT(mereader_tui_string_append(&encryption, cases[index].algorithm, &error));
+        TEST_ASSERT(mereader_tui_string_append(
+            &encryption,
+            "\"/><CipherData><CipherReference URI=\"../OEBPS/font.otf\"/>"
+            "</CipherData></EncryptedData></encryption>",
+            &error));
+        TEST_ASSERT(mereader_tui_string_append(
+            &manifest, "<item id=\"font\" href=\"font.otf\" media-type=\"", &error));
+        TEST_ASSERT(mereader_tui_string_append(&manifest, cases[index].media_type, &error));
+        TEST_ASSERT(mereader_tui_string_append(&manifest, "\"/>", &error));
+
+        const FixtureMember extra[] = {
+            {
+                .name = "META-INF/encryption.xml",
+                .data = encryption.data,
+                .length = encryption.length,
+            },
+            {
+                .name = "OEBPS/font.otf",
+                .data = font,
+                .length = sizeof(font) - 1U,
+            },
+        };
+        char *path = NULL;
+        TEST_ASSERT(build_minimal_epub(cases[index].relative, manifest.data, "", extra,
+                                       MEREADER_TUI_ARRAY_LEN(extra), &path));
+        MereaderTuiDocument document = {0};
+        TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+        TEST_ASSERT(find_text(&document, "Minimal body") != NULL);
+        mereader_tui_document_close(&document);
+        free(path);
+        mereader_tui_string_free(&manifest);
+        mereader_tui_string_free(&encryption);
+    }
+
+    static const char false_font_encryption[] =
+        "<?xml version=\"1.0\"?>"
+        "<encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
+        "<EncryptedData xmlns=\"http://www.w3.org/2001/04/xmlenc#\">"
+        "<EncryptionMethod Algorithm=\"http://www.idpf.org/2008/embedding\"/>"
+        "<CipherData><CipherReference URI=\"../OEBPS/chapter.xhtml\"/>"
+        "</CipherData></EncryptedData></encryption>";
+    const FixtureMember extra[] = {
+        {
+            .name = "META-INF/encryption.xml",
+            .data = false_font_encryption,
+            .length = sizeof(false_font_encryption) - 1U,
+        },
+    };
+    char *path = NULL;
+    TEST_ASSERT(build_minimal_epub("document/obfuscated-chapter.epub", "", "", extra,
+                                   MEREADER_TUI_ARRAY_LEN(extra), &path));
+    MereaderTuiDocument document = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_document_open(&document, path, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_UNSUPPORTED);
+    TEST_ASSERT(strstr(error.message, "encrypted EPUB content") != NULL);
+    free(path);
+    return MEREADER_TUI_TEST_PASS;
+}
+
 static MereaderTuiTestResult test_encrypted_zip_member_error(void) {
     char *path = NULL;
     static const char opf[] =
@@ -1865,6 +1956,7 @@ const MereaderTuiTestCase *mereader_tui_document_test_cases(size_t *count) {
         {.name = "traversal_errors", .function = test_traversal_errors},
         {.name = "oversized_member_error", .function = test_oversized_member_error},
         {.name = "encryption_document_error", .function = test_encryption_document_error},
+        {.name = "epub_font_obfuscation", .function = test_epub_font_obfuscation},
         {.name = "encrypted_zip_member_error", .function = test_encrypted_zip_member_error},
         {.name = "fake_mobitool_converts_all_shared_extensions",
          .function = test_fake_mobitool_converts_all_shared_extensions},
