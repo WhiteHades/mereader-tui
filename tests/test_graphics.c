@@ -1196,6 +1196,11 @@ static MereaderTuiTestResult test_palette_bounds_and_local_error_isolation(void)
   TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0x2e2e2eU, 88U), 80);
   TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0xa2a2a2U, 88U), 84);
   TEST_ASSERT_INT((int)mereader_tui_graphics_rgb_to_palette(0x8b0000U, 87U), 1);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_palette_to_rgb(183U, 256U),
+                   0xd7afffU);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_palette_to_rgb(51U, 88U),
+                   0xcd00ffU);
+  TEST_ASSERT_SIZE(mereader_tui_graphics_palette_to_rgb(16U, 16U), 0U);
 
   MereaderTuiDocument document = {0};
   MereaderTuiError error = {0};
@@ -1402,10 +1407,19 @@ static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_cli
        graphics_wait_for(master, &output, start, "Help") &&
        graphics_drain_until_idle(master, &output) &&
        fd_write_all(&master_writer, "s", 1U) &&
-       graphics_wait_for(master, &output, start, "Saved screenshot:") &&
-       graphics_screenshot_contains(screenshot_directory, "IMAGE") &&
-       graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x8c") &&
-       graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x90");
+       graphics_wait_for(master, &output, start, "Saved screenshot:");
+  const bool screenshot_image =
+      graphics_screenshot_contains(screenshot_directory, "IMAGE");
+  const bool screenshot_left =
+      graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x8c");
+  const bool screenshot_right =
+      graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x90");
+  const bool screenshot_bold = graphics_screenshot_contains(
+      screenshot_directory, "font-weight=\"bold\"");
+  const bool screenshot_accent =
+      graphics_screenshot_contains(screenshot_directory, "#d7afff");
+  ok = ok && screenshot_image && screenshot_left && screenshot_right &&
+       screenshot_bold && screenshot_accent;
   if (ok) {
     stage = 2U;
   }
@@ -1537,8 +1551,10 @@ static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_cli
   if (!ok || !completed || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
     return mereader_tui_test_fail_at(
         __FILE__, __LINE__,
-        "tall standalone PTY failed at stage %u after %zu bytes (status=%d): %s",
-        stage, output_length, status, output_excerpt);
+        "tall standalone PTY failed at stage %u after %zu bytes (status=%d, "
+        "screenshot=%d/%d/%d/%d/%d): %s",
+        stage, output_length, status, screenshot_image, screenshot_left,
+        screenshot_right, screenshot_bold, screenshot_accent, output_excerpt);
   }
   return MEREADER_TUI_TEST_PASS;
 }

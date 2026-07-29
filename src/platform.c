@@ -263,30 +263,37 @@ static bool mereader_tui_svg_append_escaped(MereaderTuiString *svg, const char *
     return true;
 }
 
-bool mereader_tui_platform_save_svg(const char *path, const char *const *lines, size_t line_count, uint32_t background,
-                            uint32_t foreground, MereaderTuiError *error) {
+bool mereader_tui_platform_save_svg(const char *path, const MereaderTuiSvgLine *lines, size_t line_count,
+                            size_t column_count, uint32_t background, uint32_t foreground,
+                            MereaderTuiError *error) {
     if (path == nullptr || path[0] == '\0' || (line_count != 0U && lines == nullptr)) {
         mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "invalid SVG screenshot arguments");
         return false;
     }
-
-    size_t max_columns = 0U;
-    for (size_t index = 0U; index < line_count; ++index) {
-        if (lines[index] == nullptr) {
-            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "SVG line %zu is null", index);
+    for (size_t row = 0U; row < line_count; ++row) {
+        if (lines[row].cell_count != 0U && lines[row].cells == nullptr) {
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT, "SVG line %zu has null cells", row);
             return false;
         }
-        size_t columns = mereader_tui_utf8_width(lines[index], strlen(lines[index]));
-        if (columns > max_columns) {
-            max_columns = columns;
+        size_t previous_end = 0U;
+        for (size_t index = 0U; index < lines[row].cell_count; ++index) {
+            const MereaderTuiSvgCell *cell = &lines[row].cells[index];
+            if (cell->text == nullptr || cell->columns == 0U || cell->column > column_count ||
+                cell->columns > column_count - cell->column ||
+                (index != 0U && cell->column < previous_end)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_ARGUMENT,
+                               "SVG cell %zu on line %zu is invalid", index, row);
+                return false;
+            }
+            previous_end = cell->column + cell->columns;
         }
     }
-    if (max_columns > (SIZE_MAX - 32U) / 8U || line_count > (SIZE_MAX - 32U) / 18U) {
+    if (column_count > (SIZE_MAX - 32U) / 8U || line_count > (SIZE_MAX - 32U) / 18U) {
         mereader_tui_error_set(error, MEREADER_TUI_ERROR_MEMORY, "SVG dimensions overflow");
         return false;
     }
 
-    size_t width = max_columns * 8U + 32U;
+    size_t width = column_count * 8U + 32U;
     size_t height = line_count * 18U + 32U;
     if (width < 320U) {
         width = 320U;
@@ -301,7 +308,7 @@ bool mereader_tui_platform_save_svg(const char *path, const char *const *lines, 
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%zu\" height=\"%zu\" viewBox=\"0 0 %zu %zu\">\n"
         "  <rect width=\"100%%\" height=\"100%%\" fill=\"#%06x\"/>\n"
-        "  <g fill=\"#%06x\" font-family=\"monospace\" font-size=\"14\">\n",
+        "  <g fill=\"#%06x\" font-family=\"monospace\" font-size=\"14\" font-variant-ligatures=\"none\">\n",
         width, height, width, height, (unsigned int)(background & 0xffffffU),
         (unsigned int)(foreground & 0xffffffU));
     if (header_length < 0 || (size_t)header_length >= sizeof(header)) {
@@ -314,20 +321,96 @@ bool mereader_tui_platform_save_svg(const char *path, const char *const *lines, 
         return false;
     }
 
-    for (size_t index = 0U; index < line_count; ++index) {
-        char line_header[96];
-        size_t y = 25U + index * 18U;
-        int line_header_length = snprintf(line_header, sizeof(line_header),
-                                          "    <text x=\"16\" y=\"%zu\" xml:space=\"preserve\">", y);
-        if (line_header_length < 0 || (size_t)line_header_length >= sizeof(line_header) ||
-            !mereader_tui_string_append_n(&svg, line_header, (size_t)line_header_length, error) ||
-            !mereader_tui_svg_append_escaped(&svg, lines[index], error) ||
-            !mereader_tui_string_append(&svg, "</text>\n", error)) {
-            if (!mereader_tui_error_is_set(error)) {
-                mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL, "could not format SVG line");
+    for (size_t row = 0U; row < line_count; ++row) {
+        for (size_t index = 0U; index < lines[row].cell_count;) {
+            const MereaderTuiSvgCell *cell = &lines[row].cells[index];
+            if (cell->background == background) {
+                ++index;
+                continue;
             }
-            mereader_tui_string_free(&svg);
-            return false;
+            size_t columns = cell->columns;
+            size_t next = index + 1U;
+            while (next < lines[row].cell_count &&
+                   lines[row].cells[next].background == cell->background &&
+                   lines[row].cells[next].column == cell->column + columns) {
+                columns += lines[row].cells[next].columns;
+                ++next;
+            }
+            char rectangle[192];
+            const size_t x = 16U + cell->column * 8U;
+            const size_t y = 16U + row * 18U;
+            const size_t width_pixels = columns * 8U;
+            const int length = snprintf(
+                rectangle, sizeof(rectangle),
+                "    <rect x=\"%zu\" y=\"%zu\" width=\"%zu\" height=\"18\" fill=\"#%06x\"/>\n",
+                x, y, width_pixels, (unsigned int)(cell->background & 0xffffffU));
+            if (length < 0 || (size_t)length >= sizeof(rectangle) ||
+                !mereader_tui_string_append_n(&svg, rectangle, (size_t)length, error)) {
+                if (!mereader_tui_error_is_set(error)) {
+                    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
+                                   "could not format SVG cell background");
+                }
+                mereader_tui_string_free(&svg);
+                return false;
+            }
+            index = next;
+        }
+    }
+
+    for (size_t row = 0U; row < line_count; ++row) {
+        for (size_t index = 0U; index < lines[row].cell_count;) {
+            const MereaderTuiSvgCell *cell = &lines[row].cells[index];
+            size_t columns = cell->columns;
+            size_t next = index + 1U;
+            while (next < lines[row].cell_count &&
+                   lines[row].cells[next].column == cell->column + columns &&
+                   lines[row].cells[next].foreground == cell->foreground &&
+                   lines[row].cells[next].background == cell->background &&
+                   lines[row].cells[next].attributes == cell->attributes) {
+                columns += lines[row].cells[next].columns;
+                ++next;
+            }
+            char text_header[320];
+            const size_t x = 16U + cell->column * 8U;
+            const size_t y = 25U + row * 18U;
+            const char *bold = (cell->attributes & MEREADER_TUI_SVG_BOLD) != 0U
+                                 ? " font-weight=\"bold\""
+                                 : "";
+            const char *dim = (cell->attributes & MEREADER_TUI_SVG_DIM) != 0U
+                                ? " opacity=\"0.6\""
+                                : "";
+            const char *underline = (cell->attributes & MEREADER_TUI_SVG_UNDERLINE) != 0U
+                                      ? " text-decoration=\"underline\""
+                                      : "";
+            const char *italic = (cell->attributes & MEREADER_TUI_SVG_ITALIC) != 0U
+                                   ? " font-style=\"italic\""
+                                   : "";
+            const int length = snprintf(
+                text_header, sizeof(text_header),
+                "    <text x=\"%zu\" y=\"%zu\" fill=\"#%06x\"%s%s%s%s xml:space=\"preserve\">",
+                x, y, (unsigned int)(cell->foreground & 0xffffffU), bold, dim,
+                underline, italic);
+            if (length < 0 || (size_t)length >= sizeof(text_header) ||
+                !mereader_tui_string_append_n(&svg, text_header, (size_t)length, error)) {
+                if (!mereader_tui_error_is_set(error)) {
+                    mereader_tui_error_set(error, MEREADER_TUI_ERROR_INTERNAL,
+                                   "could not format SVG cell text");
+                }
+                mereader_tui_string_free(&svg);
+                return false;
+            }
+            for (size_t text = index; text < next; ++text) {
+                if (!mereader_tui_svg_append_escaped(
+                        &svg, lines[row].cells[text].text, error)) {
+                    mereader_tui_string_free(&svg);
+                    return false;
+                }
+            }
+            if (!mereader_tui_string_append(&svg, "</text>\n", error)) {
+                mereader_tui_string_free(&svg);
+                return false;
+            }
+            index = next;
         }
     }
 

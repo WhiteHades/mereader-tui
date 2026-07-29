@@ -1357,6 +1357,18 @@ static uint32_t graphics_palette_88_rgb(unsigned index) {
   return (gray << 16U) | (gray << 8U) | gray;
 }
 
+uint32_t mereader_tui_graphics_palette_to_rgb(unsigned index,
+                                      unsigned colors) {
+  if (colors >= 256U && index < 256U) {
+    return graphics_palette_rgb(index);
+  }
+  if (colors >= 88U && index < 88U) {
+    return graphics_palette_88_rgb(index);
+  }
+  const unsigned limit = colors >= 16U ? 16U : colors;
+  return index < limit ? graphics_palette_rgb(index) : 0U;
+}
+
 static uint64_t graphics_color_distance(uint32_t left, uint32_t right) {
   const int red = (int)((left >> 16U) & 0xffU) - (int)((right >> 16U) & 0xffU);
   const int green = (int)((left >> 8U) & 0xffU) - (int)((right >> 8U) & 0xffU);

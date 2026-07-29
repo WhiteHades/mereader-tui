@@ -128,6 +128,8 @@ void mereader_tui_graphics_surface_release(MereaderTuiGraphicsSurface *surface);
 [[nodiscard]] unsigned mereader_tui_graphics_rgb_to_256(uint32_t rgb);
 [[nodiscard]] unsigned mereader_tui_graphics_rgb_to_palette(uint32_t rgb,
                                                     unsigned colors);
+[[nodiscard]] uint32_t mereader_tui_graphics_palette_to_rgb(unsigned index,
+                                                     unsigned colors);
 [[nodiscard]] short mereader_tui_graphics_pair(MereaderTuiGraphicsContext *context,
                                        unsigned foreground, unsigned background,
                                        short first_pair, short pair_capacity,

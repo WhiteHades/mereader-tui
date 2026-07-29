@@ -2297,21 +2297,81 @@ static wchar_t screenshot_acs_character(wchar_t character) {
   }
 }
 
-static bool capture_screenshot_row(WINDOW *capture, int row, int columns,
-                                   cchar_t *cells, wchar_t *wide,
-                                   size_t wide_capacity) {
-  memset(cells, 0, ((size_t)columns + 1U) * sizeof(*cells));
-  if (mvwin_wchnstr(capture, row, 0, cells, columns) == ERR) {
+static uint32_t screenshot_terminal_color(short color, uint32_t fallback) {
+  if (color < 0 || COLORS <= 0 || (unsigned)color >= (unsigned)COLORS) {
+    return fallback;
+  }
+  return mereader_tui_graphics_palette_to_rgb((unsigned)color,
+                                               (unsigned)COLORS);
+}
+
+static void screenshot_cell_colors(const MereaderTuiTuiState *state,
+                                   short color_pair, attr_t attributes,
+                                   uint32_t *foreground,
+                                   uint32_t *background) {
+  const MereaderTuiColorScheme *theme = state->app->dark_mode
+                                     ? &state->app->config.dark
+                                     : &state->app->config.light;
+  *foreground = theme->foreground;
+  *background = theme->background;
+  if (state->colors) {
+    short foreground_color = -1;
+    short background_color = -1;
+    if (pair_content(color_pair, &foreground_color, &background_color) != ERR) {
+      *foreground =
+          screenshot_terminal_color(foreground_color, *foreground);
+      *background =
+          screenshot_terminal_color(background_color, *background);
+    }
+  }
+  if ((attributes & A_REVERSE) != 0U) {
+    const uint32_t swapped = *foreground;
+    *foreground = *background;
+    *background = swapped;
+  }
+}
+
+static MereaderTuiSvgAttributes screenshot_cell_attributes(
+    attr_t attributes) {
+  MereaderTuiSvgAttributes result = MEREADER_TUI_SVG_NORMAL;
+  if ((attributes & A_BOLD) != 0U) {
+    result |= MEREADER_TUI_SVG_BOLD;
+  }
+  if ((attributes & A_DIM) != 0U) {
+    result |= MEREADER_TUI_SVG_DIM;
+  }
+  if ((attributes & A_UNDERLINE) != 0U) {
+    result |= MEREADER_TUI_SVG_UNDERLINE;
+  }
+#ifdef A_ITALIC
+  if ((attributes & A_ITALIC) != 0U) {
+    result |= MEREADER_TUI_SVG_ITALIC;
+  }
+#endif
+  return result;
+}
+
+static bool capture_screenshot_row(const MereaderTuiTuiState *state,
+                                   WINDOW *capture, int row, int columns,
+                                   cchar_t *curses_cells,
+                                   MereaderTuiSvgLine *line) {
+  memset(curses_cells, 0,
+         ((size_t)columns + 1U) * sizeof(*curses_cells));
+  if (mvwin_wchnstr(capture, row, 0, curses_cells, columns) == ERR) {
     return false;
   }
 
-  size_t output = 0U;
+  line->cells = calloc((size_t)columns, sizeof(*line->cells));
+  if (line->cells == NULL) {
+    return false;
+  }
+  size_t column = 0U;
   for (int index = 0; index < columns; ++index) {
     wchar_t characters[CCHARW_MAX + 1] = {0};
     attr_t attributes = 0;
     short color_pair = 0;
-    if (getcchar(&cells[index], characters, &attributes, &color_pair, NULL) ==
-        ERR) {
+    if (getcchar(&curses_cells[index], characters, &attributes, &color_pair,
+                 NULL) == ERR) {
       return false;
     }
     if (characters[0] == L'\0') {
@@ -2320,57 +2380,79 @@ static bool capture_screenshot_row(WINDOW *capture, int row, int columns,
     if ((attributes & A_ALTCHARSET) != 0U) {
       characters[0] = screenshot_acs_character(characters[0]);
     }
-    for (size_t character = 0U;
-         character < CCHARW_MAX && characters[character] != L'\0';
-         ++character) {
-      if (output + 1U >= wide_capacity) {
-        return false;
-      }
-      wide[output++] = characters[character];
+    if ((attributes & A_INVIS) != 0U) {
+      characters[0] = L' ';
+      characters[1] = L'\0';
     }
+    int display_width = wcwidth(characters[0]);
+    if (display_width < 1) {
+      display_width = 1;
+    }
+    size_t cell_columns = (size_t)display_width;
+    if (column >= (size_t)columns) {
+      break;
+    }
+    if (cell_columns > (size_t)columns - column) {
+      cell_columns = (size_t)columns - column;
+    }
+
+    char text[CCHARW_MAX * MB_LEN_MAX + 1U] = {0};
+    if (wcstombs(text, characters, sizeof(text) - 1U) == (size_t)-1) {
+      return false;
+    }
+    MereaderTuiSvgCell *cell = &line->cells[line->cell_count];
+    const size_t length = strlen(text);
+    cell->text = malloc(length + 1U);
+    if (cell->text == NULL) {
+      return false;
+    }
+    memcpy(cell->text, text, length + 1U);
+    cell->column = column;
+    cell->columns = cell_columns;
+    screenshot_cell_colors(state, color_pair, attributes, &cell->foreground,
+                           &cell->background);
+    cell->attributes = screenshot_cell_attributes(attributes);
+    ++line->cell_count;
+    column += cell_columns;
   }
-  wide[output] = L'\0';
   return true;
 }
 
+static void free_screenshot_lines(MereaderTuiSvgLine *lines, int rows) {
+  if (lines == NULL) {
+    return;
+  }
+  for (int row = 0; row < rows; ++row) {
+    for (size_t index = 0U; index < lines[row].cell_count; ++index) {
+      free(lines[row].cells[index].text);
+    }
+    free(lines[row].cells);
+  }
+  free(lines);
+}
+
 static void save_screenshot(MereaderTuiTuiState *state) {
-  char **lines = calloc((size_t)state->rows, sizeof(*lines));
-  const size_t wide_capacity =
-      (size_t)state->columns * (size_t)CCHARW_MAX + 1U;
-  wchar_t *wide = calloc(wide_capacity, sizeof(*wide));
-  cchar_t *cells =
-      calloc((size_t)state->columns + 1U, sizeof(*cells));
-  if (lines == NULL || wide == NULL || cells == NULL) {
-    free(lines);
-    free(wide);
-    free(cells);
+  MereaderTuiSvgLine *lines =
+      calloc((size_t)state->rows, sizeof(*lines));
+  cchar_t *curses_cells =
+      calloc((size_t)state->columns + 1U, sizeof(*curses_cells));
+  if (lines == NULL || curses_cells == NULL) {
+    free_screenshot_lines(lines, state->rows);
+    free(curses_cells);
     open_alert(state, "Cannot allocate screenshot buffer");
     return;
   }
 
   bool captured = true;
   for (int row = 0; row < state->rows; ++row) {
-    memset(wide, 0, wide_capacity * sizeof(*wide));
     WINDOW *capture = curscr != NULL ? curscr : stdscr;
-    if (!capture_screenshot_row(capture, row, state->columns, cells, wide,
-                                wide_capacity)) {
+    if (!capture_screenshot_row(state, capture, row, state->columns,
+                                curses_cells, &lines[row])) {
       captured = false;
       break;
-    }
-    const size_t capacity = wide_capacity * (size_t)MB_CUR_MAX + 1U;
-    lines[row] = calloc(capacity, 1U);
-    if (lines[row] == NULL ||
-        wcstombs(lines[row], wide, capacity - 1U) == (size_t)-1) {
-      captured = false;
-      break;
-    }
-    size_t length = strlen(lines[row]);
-    while (length > 0U && lines[row][length - 1U] == ' ') {
-      lines[row][--length] = '\0';
     }
   }
-  free(wide);
-  free(cells);
+  free(curses_cells);
 
   MereaderTuiError error = {0};
   if (captured) {
@@ -2387,9 +2469,9 @@ static void save_screenshot(MereaderTuiTuiState *state) {
     const MereaderTuiColorScheme *theme = state->app->dark_mode
                                        ? &state->app->config.dark
                                        : &state->app->config.light;
-    if (mereader_tui_platform_save_svg(path, (const char *const *)lines,
-                               (size_t)state->rows, theme->background,
-                               theme->foreground, &error)) {
+    if (mereader_tui_platform_save_svg(
+            path, lines, (size_t)state->rows, (size_t)state->columns,
+            theme->background, theme->foreground, &error)) {
       char message[256] = {0};
       (void)snprintf(message, sizeof(message), "Saved screenshot: %s", path);
       open_alert(state, message);
@@ -2400,10 +2482,7 @@ static void save_screenshot(MereaderTuiTuiState *state) {
     open_alert(state, "Cannot capture terminal contents");
   }
 
-  for (int row = 0; row < state->rows; ++row) {
-    free(lines[row]);
-  }
-  free(lines);
+  free_screenshot_lines(lines, state->rows);
 }
 
 static bool follow_link(MereaderTuiTuiState *state, const char *link,
