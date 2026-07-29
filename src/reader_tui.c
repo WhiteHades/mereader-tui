@@ -2418,6 +2418,91 @@ static bool capture_screenshot_row(const MereaderTuiTuiState *state,
   return true;
 }
 
+typedef struct MereaderTuiScreenshotImageCapture {
+  MereaderTuiSvgLine *lines;
+  int rows;
+  int columns;
+} MereaderTuiScreenshotImageCapture;
+
+static bool capture_screenshot_image_cell(void *user_data, int row, int column,
+                                          uint32_t foreground,
+                                          uint32_t background) {
+  MereaderTuiScreenshotImageCapture *capture = user_data;
+  if (row < 0 || row >= capture->rows || column < 0 ||
+      column >= capture->columns) {
+    return false;
+  }
+  MereaderTuiSvgLine *line = &capture->lines[row];
+  for (size_t index = 0U; index < line->cell_count; ++index) {
+    MereaderTuiSvgCell *cell = &line->cells[index];
+    if (cell->column != (size_t)column) {
+      continue;
+    }
+    if (cell->columns != 1U) {
+      return false;
+    }
+    char *text = malloc(sizeof("\xe2\x96\x80"));
+    if (text == NULL) {
+      return false;
+    }
+    memcpy(text, "\xe2\x96\x80", sizeof("\xe2\x96\x80"));
+    free(cell->text);
+    cell->text = text;
+    cell->foreground = foreground;
+    cell->background = background;
+    cell->attributes = MEREADER_TUI_SVG_NORMAL;
+    return true;
+  }
+  return false;
+}
+
+static bool capture_screenshot_images(MereaderTuiTuiState *state,
+                                      MereaderTuiSvgLine *lines,
+                                      MereaderTuiError *error) {
+  const bool external_graphics =
+      state->image_mode == MEREADER_TUI_IMAGE_MODE_KITTY ||
+      (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI &&
+       state->raw_truecolor);
+  if (!external_graphics) {
+    return true;
+  }
+
+  MereaderTuiGraphicsRect occlusions[2] = {0};
+  const size_t occlusion_count =
+      terminal_graphics_occlusions(state, occlusions);
+  MereaderTuiScreenshotImageCapture capture = {
+      .lines = lines,
+      .rows = state->rows,
+      .columns = state->columns,
+  };
+  for (int row = 0; row < state->rows; ++row) {
+    const size_t line_index = state->app->scroll_line + (size_t)row;
+    if (line_index >= state->app->layout.line_count) {
+      break;
+    }
+    const MereaderTuiLayoutLine *line =
+        &state->app->layout.lines[line_index];
+    if (!image_has_visible_render(state, line) ||
+        !first_visible_image_line(state, row, line_index)) {
+      continue;
+    }
+
+    MereaderTuiGraphicsSurface surface = {0};
+    MereaderTuiGraphicsPlacement placement = {0};
+    if (!prepare_image_placement(state, line, row, occlusions, occlusion_count,
+                                 &surface, &placement, error)) {
+      return false;
+    }
+    const bool rendered = mereader_tui_graphics_render_cells(
+        &surface, &placement, capture_screenshot_image_cell, &capture, error);
+    mereader_tui_graphics_surface_release(&surface);
+    if (!rendered) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void free_screenshot_lines(MereaderTuiSvgLine *lines, int rows) {
   if (lines == NULL) {
     return;
@@ -2455,6 +2540,10 @@ static void save_screenshot(MereaderTuiTuiState *state) {
   free(curses_cells);
 
   MereaderTuiError error = {0};
+  if (captured &&
+      !capture_screenshot_images(state, lines, &error)) {
+    captured = false;
+  }
   if (captured) {
     struct timespec timestamp = {0};
     struct tm local_time = {0};
@@ -2479,7 +2568,9 @@ static void save_screenshot(MereaderTuiTuiState *state) {
       open_alert(state, error.message);
     }
   } else {
-    open_alert(state, "Cannot capture terminal contents");
+    open_alert(state, error.message[0] == '\0'
+                          ? "Cannot capture terminal contents"
+                          : error.message);
   }
 
   free_screenshot_lines(lines, state->rows);

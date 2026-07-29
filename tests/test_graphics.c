@@ -376,7 +376,8 @@ static bool graphics_screenshot_contains(const char *directory,
 }
 
 static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short columns,
-                                 const char *marker, MereaderTuiString *output) {
+                                 const char *marker, MereaderTuiString *output,
+                                 const char *screenshot_directory) {
   const char *config_relative = mode == MEREADER_TUI_IMAGE_MODE_KITTY
                                      ? "tui-pty/kitty/mereader-tui/config.ini"
                                      : "tui-pty/ansi/mereader-tui/config.ini";
@@ -395,8 +396,16 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
   char *config_root = mereader_tui_test_path(mode == MEREADER_TUI_IMAGE_MODE_KITTY
                                          ? "tui-pty/kitty"
                                          : "tui-pty/ansi");
-  if (config_root == NULL) {
+  MereaderTuiError path_error = {0};
+  char *binary_path = screenshot_directory == NULL
+                          ? NULL
+                          : mereader_tui_realpath("./build/mereader-tui",
+                                                  &path_error);
+  if (config_root == NULL ||
+      (screenshot_directory != NULL && binary_path == NULL)) {
     free(image_path);
+    free(binary_path);
+    free(config_root);
     return false;
   }
 
@@ -406,6 +415,7 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
   const pid_t child = forkpty(&master, NULL, NULL, &size);
   if (child < 0) {
     free(image_path);
+    free(binary_path);
     free(config_root);
     return false;
   }
@@ -422,10 +432,16 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
       (void)unsetenv("KITTY_WINDOW_ID");
     }
     (void)setenv("XDG_CONFIG_HOME", config_root, 1);
-    (void)execl("./build/mereader-tui", "mereader-tui", image_path, (char *)NULL);
+    if (screenshot_directory != NULL &&
+        chdir(screenshot_directory) != 0) {
+      _exit(126);
+    }
+    (void)execl(binary_path == NULL ? "./build/mereader-tui" : binary_path,
+                "mereader-tui", image_path, (char *)NULL);
     _exit(127);
   }
   free(image_path);
+  free(binary_path);
   free(config_root);
 
   if (fcntl(master, F_SETFL, O_NONBLOCK) != 0) {
@@ -434,6 +450,8 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
     (void)close(master);
     return false;
   }
+  bool sent_action = false;
+  bool saved_screenshot = screenshot_directory == NULL;
   bool sent_quit = false;
   bool completed = false;
   int status = 0;
@@ -446,12 +464,26 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
     if (!drain_pty(master, output)) {
       break;
     }
-    if (!sent_quit && output->data != NULL &&
+    if (!sent_action && output->data != NULL &&
         strstr(output->data, marker) != NULL) {
-      const char quit = 'q';
-      if (write(master, &quit, 1U) != 1) {
+      static const char screenshot[] = "\033[24~";
+      const char *action =
+          screenshot_directory == NULL ? "q" : screenshot;
+      const size_t action_length =
+          screenshot_directory == NULL ? 1U : sizeof(screenshot) - 1U;
+      if (write(master, action, action_length) != (ssize_t)action_length) {
         break;
       }
+      sent_action = true;
+      sent_quit = screenshot_directory == NULL;
+    }
+    if (screenshot_directory != NULL && sent_action && !saved_screenshot &&
+        output->data != NULL &&
+        strstr(output->data, "Saved screenshot:") != NULL) {
+      if (write(master, "qq", 2U) != 2) {
+        break;
+      }
+      saved_screenshot = true;
       sent_quit = true;
     }
     const pid_t waited = waitpid(child, &status, WNOHANG);
@@ -472,7 +504,7 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
   }
   (void)drain_pty(master, output);
   (void)close(master);
-  return completed && sent_quit && WIFEXITED(status) &&
+  return completed && saved_screenshot && sent_quit && WIFEXITED(status) &&
          WEXITSTATUS(status) == EXIT_SUCCESS;
 }
 
@@ -1306,33 +1338,52 @@ static MereaderTuiTestResult test_pty_ansi_and_kitty_capture(void) {
 }
 
 static MereaderTuiTestResult test_tui_pty_fallback_and_protocol_capture(void) {
+  TEST_ASSERT(mereader_tui_test_mkdir("tui-pty/kitty-screenshot"));
+  TEST_ASSERT(mereader_tui_test_mkdir("tui-pty/ansi-screenshot"));
+  char *kitty_screenshot =
+      mereader_tui_test_path("tui-pty/kitty-screenshot");
+  char *ansi_screenshot =
+      mereader_tui_test_path("tui-pty/ansi-screenshot");
+  TEST_ASSERT(kitty_screenshot != NULL && ansi_screenshot != NULL);
+
   MereaderTuiString kitty = {0};
   TEST_ASSERT_MSG(
-      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 40U, "a=t,f=100", &kitty),
+      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 40U, "a=t,f=100",
+                          &kitty, kitty_screenshot),
       "Kitty PTY capture failed after %zu bytes: %s", kitty.length,
       kitty.data == NULL ? "(empty)" : kitty.data);
   TEST_ASSERT(strstr(kitty.data, "IMAGE") != NULL);
   TEST_ASSERT(strstr(kitty.data, "a=t,f=100") != NULL);
   TEST_ASSERT(strstr(kitty.data, "a=p,") != NULL);
   TEST_ASSERT(strstr(kitty.data, "d=I,i=") != NULL);
+  TEST_ASSERT(
+      graphics_screenshot_contains(kitty_screenshot, "\xe2\x96\x80"));
+  TEST_ASSERT(!graphics_screenshot_contains(kitty_screenshot, "IMAGE"));
   mereader_tui_string_free(&kitty);
 
   MereaderTuiString ansi = {0};
-  TEST_ASSERT(run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_ANSI, 40U, "\033[38;2;", &ansi));
+  TEST_ASSERT(run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_ANSI, 40U,
+                                  "\033[38;2;", &ansi, ansi_screenshot));
   TEST_ASSERT(strstr(ansi.data, "\033[38;2;") != NULL);
   TEST_ASSERT(strstr(ansi.data, "\xe2\x96\x80") != NULL);
   TEST_ASSERT(strstr(ansi.data, "\033_G") == NULL);
+  TEST_ASSERT(
+      graphics_screenshot_contains(ansi_screenshot, "\xe2\x96\x80"));
+  TEST_ASSERT(!graphics_screenshot_contains(ansi_screenshot, "IMAGE"));
   mereader_tui_string_free(&ansi);
 
   MereaderTuiString wide = {0};
   TEST_ASSERT_MSG(
-      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 1200U, "a=p,", &wide),
+      run_tui_pty_capture(MEREADER_TUI_IMAGE_MODE_KITTY, 1200U, "a=p,", &wide,
+                          NULL),
       "wide Kitty PTY capture failed after %zu bytes: %s", wide.length,
       wide.data == NULL ? "(empty)" : wide.data);
   TEST_ASSERT(strstr(wide.data, "\0337\033[1;89H") != NULL);
   TEST_ASSERT(strstr(wide.data,
                      "q=2,x=0,y=0,w=1024,h=24,c=1024,r=12,C=1") != NULL);
   mereader_tui_string_free(&wide);
+  free(ansi_screenshot);
+  free(kitty_screenshot);
   return MEREADER_TUI_TEST_PASS;
 }
 
