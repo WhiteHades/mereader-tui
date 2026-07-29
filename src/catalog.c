@@ -129,8 +129,22 @@ static void catalog_map_free(CatalogMap *map) {
 static const char *catalog_supported_extension(const char *path) {
     static const char *extensions[] = {
         ".epub", ".epub3", ".pdf", ".mobi", ".prc", ".azw", ".azw3", ".azw4",
-        ".fb2",  ".txt",   ".md",  ".cbz",  ".cbr", ".cb7",
+        ".fb2",  ".txt",   ".md",  ".cbz",  ".cbr", ".cb7", ".png", ".jpg",
+        ".jpeg", ".gif",   ".webp", ".bmp", ".svg",
     };
+    static const char *cover_names[] = {
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "cover.webp",
+    };
+    const char *basename = strrchr(path, '/');
+    basename = basename == NULL ? path : basename + 1;
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(cover_names); ++index) {
+        if (mereader_tui_casecmp(basename, cover_names[index]) == 0) {
+            return NULL;
+        }
+    }
     const char *extension = mereader_tui_path_extension(path);
     for (size_t index = 0U; extension != NULL && index < MEREADER_TUI_ARRAY_LEN(extensions); ++index) {
         if (mereader_tui_casecmp(extension, extensions[index]) == 0) {

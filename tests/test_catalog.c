@@ -123,6 +123,39 @@ static MereaderTuiTestResult test_nested_hidden_folder_and_format_preference(voi
     return MEREADER_TUI_TEST_PASS;
 }
 
+static MereaderTuiTestResult test_image_formats_and_cover_files(void) {
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/cover.jpg", "cover"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/cover.png", "cover"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/page.png", "png"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/page.jpeg", "jpeg"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/animation.gif", "gif"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/panel.webp", "webp"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/scan.bmp", "bmp"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-images/vector.svg", "svg"));
+    char *root = mereader_tui_test_path("catalog-images");
+    TEST_ASSERT(root != NULL);
+
+    MereaderTuiCatalog catalog = {0};
+    MereaderTuiError error = {0};
+    TEST_ASSERT_MSG(mereader_tui_catalog_open(&catalog, root, NULL, false, &error), "%s", error.message);
+    TEST_ASSERT_SIZE(catalog.length, 5U);
+    TEST_ASSERT(catalog_find_book(&catalog, "cover") == NULL);
+
+    const MereaderTuiCatalogBook *page = catalog_find_book(&catalog, "page");
+    TEST_ASSERT(page != NULL);
+    TEST_ASSERT_SIZE(page->format_count, 2U);
+    TEST_ASSERT_STR(page->formats[0].name, "JPEG");
+    TEST_ASSERT_STR(page->formats[1].name, "PNG");
+    TEST_ASSERT(catalog_find_book(&catalog, "animation") != NULL);
+    TEST_ASSERT(catalog_find_book(&catalog, "panel") != NULL);
+    TEST_ASSERT(catalog_find_book(&catalog, "scan") != NULL);
+    TEST_ASSERT(catalog_find_book(&catalog, "vector") != NULL);
+
+    mereader_tui_catalog_close(&catalog);
+    free(root);
+    return MEREADER_TUI_TEST_PASS;
+}
+
 static MereaderTuiTestResult test_symlink_escape_and_exact_duplicate_format_preference(void) {
     TEST_ASSERT(mereader_tui_test_write_text("catalog-symlink/root/inside.epub", "inside"));
     TEST_ASSERT(mereader_tui_test_write_text("catalog-symlink/outside/outside.epub", "outside"));
@@ -167,6 +200,7 @@ const MereaderTuiTestCase *mereader_tui_catalog_test_cases(size_t *count) {
         {.name = "flat_folder_groups_same_stem_only", .function = test_flat_folder_groups_same_stem_only},
         {.name = "nested_hidden_folder_and_format_preference",
          .function = test_nested_hidden_folder_and_format_preference},
+        {.name = "image_formats_and_cover_files", .function = test_image_formats_and_cover_files},
         {.name = "symlink_escape_and_exact_duplicate_format_preference",
          .function = test_symlink_escape_and_exact_duplicate_format_preference},
     };
