@@ -68,6 +68,7 @@ static MereaderTuiTestResult test_flat_folder_groups_same_stem_only(void) {
     TEST_ASSERT(mereader_tui_test_write_text("catalog-flat/alpha.epub", "epub"));
     TEST_ASSERT(mereader_tui_test_write_text("catalog-flat/alpha.pdf", "pdf"));
     TEST_ASSERT(mereader_tui_test_write_text("catalog-flat/beta.epub", "epub"));
+    TEST_ASSERT(mereader_tui_test_write_text("catalog-flat/notes.markdown", "markdown"));
     TEST_ASSERT(mereader_tui_test_write_text("catalog-flat/cover.jpg", "cover"));
     char *root = mereader_tui_test_path("catalog-flat");
     TEST_ASSERT(root != NULL);
@@ -75,12 +76,15 @@ static MereaderTuiTestResult test_flat_folder_groups_same_stem_only(void) {
     MereaderTuiError error = {0};
     TEST_ASSERT_MSG(mereader_tui_catalog_open(&catalog, root, NULL, false, &error), "%s", error.message);
     TEST_ASSERT(!catalog.calibre);
-    TEST_ASSERT_SIZE(catalog.length, 2U);
+    TEST_ASSERT_SIZE(catalog.length, 3U);
     const MereaderTuiCatalogBook *alpha = catalog_find_book(&catalog, "alpha");
     TEST_ASSERT(alpha != NULL);
     TEST_ASSERT_STR(alpha->author, "");
     TEST_ASSERT_SIZE(alpha->format_count, 2U);
     TEST_ASSERT_STR(mereader_tui_catalog_preferred_format(alpha)->name, "EPUB");
+    const MereaderTuiCatalogBook *notes = catalog_find_book(&catalog, "notes");
+    TEST_ASSERT(notes != NULL);
+    TEST_ASSERT_STR(mereader_tui_catalog_preferred_format(notes)->name, "MARKDOWN");
     mereader_tui_catalog_close(&catalog);
     free(root);
     return MEREADER_TUI_TEST_PASS;

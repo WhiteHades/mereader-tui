@@ -252,6 +252,15 @@ static MereaderTuiTestResult test_utf8_markdown_and_empty_documents(void) {
     mereader_tui_document_close(&document);
     free(path);
 
+    TEST_ASSERT(mereader_tui_test_write_text("text/readme.markdown", "# Long extension\n"));
+    path = mereader_tui_test_path("text/readme.markdown");
+    TEST_ASSERT(path != NULL);
+    TEST_ASSERT_MSG(mereader_tui_document_open(&document, path, &error), "%s", error.message);
+    TEST_ASSERT_STR(document.metadata.format, "Markdown");
+    TEST_ASSERT_STR(document.blocks[0].value.text.text, "# Long extension\n");
+    mereader_tui_document_close(&document);
+    free(path);
+
     TEST_ASSERT(mereader_tui_test_write("text/empty.txt", NULL, 0U));
     path = mereader_tui_test_path("text/empty.txt");
     TEST_ASSERT(path != NULL);

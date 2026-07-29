@@ -1140,7 +1140,8 @@ static MereaderTuiDocumentFormat extension_format(const char *extension) {
         extension_is(extension, ".svg")) {
         return MEREADER_TUI_FORMAT_IMAGE;
     }
-    if (extension_is(extension, ".txt") || extension_is(extension, ".md")) {
+    if (extension_is(extension, ".txt") || extension_is(extension, ".md") ||
+        extension_is(extension, ".markdown")) {
         return MEREADER_TUI_FORMAT_TEXT;
     }
     if (extension_is(extension, ".fb2")) {

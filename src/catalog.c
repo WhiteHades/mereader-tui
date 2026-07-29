@@ -129,8 +129,8 @@ static void catalog_map_free(CatalogMap *map) {
 static const char *catalog_supported_extension(const char *path) {
     static const char *extensions[] = {
         ".epub", ".epub3", ".pdf", ".mobi", ".prc", ".azw", ".azw3", ".azw4",
-        ".fb2",  ".txt",   ".md",  ".cbz",  ".cbr", ".cb7", ".png", ".jpg",
-        ".jpeg", ".gif",   ".webp", ".bmp", ".svg",
+        ".fb2",  ".txt",   ".md",  ".markdown", ".cbz", ".cbr", ".cb7",
+        ".png",  ".jpg",   ".jpeg", ".gif",      ".webp", ".bmp", ".svg",
     };
     static const char *cover_names[] = {
         "cover.jpg",

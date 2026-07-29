@@ -112,8 +112,11 @@ bool mereader_tui_text_open(MereaderTuiDocument *document, const char *path, con
     document->format = MEREADER_TUI_FORMAT_TEXT;
     document->metadata.title = mereader_tui_path_basename(path, error);
     const char *extension = mereader_tui_path_extension(path);
+    const bool markdown =
+        extension != NULL && (mereader_tui_casecmp(extension, ".md") == 0 ||
+                              mereader_tui_casecmp(extension, ".markdown") == 0);
     document->metadata.format =
-        mereader_tui_strdup(extension != NULL && mereader_tui_casecmp(extension, ".md") == 0 ? "Markdown" : "Plain Text", error);
+        mereader_tui_strdup(markdown ? "Markdown" : "Plain Text", error);
     if (document->metadata.title == NULL || document->metadata.format == NULL ||
         !mereader_tui_document_account_metadata(document, error)) {
         free(text);

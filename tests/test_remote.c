@@ -43,6 +43,11 @@ static void remote_server_respond(int client, const char *request) {
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\nConnection: close\r\n\r\n";
         (void)remote_write_all(client, header, sizeof(header) - 1U);
         (void)remote_write_all(client, body, sizeof(body) - 1U);
+    } else if (strstr(request, "GET /guide.markdown ") != NULL) {
+        static const char header[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 12\r\nConnection: close\r\n\r\n";
+        (void)remote_write_all(client, header, sizeof(header) - 1U);
+        (void)remote_write_all(client, body, sizeof(body) - 1U);
     } else if (strstr(request, "GET /redirect ") != NULL) {
         static const char response[] =
             "HTTP/1.1 302 Found\r\nLocation: /plain\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -231,10 +236,12 @@ static MereaderTuiTestResult test_fetch_redirect_limits_and_offline_cache(void) 
     TEST_ASSERT(server > 0);
 
     char plain_url[256] = {0};
+    char markdown_url[256] = {0};
     char redirect_url[256] = {0};
     char large_url[256] = {0};
     char missing_url[256] = {0};
     TEST_ASSERT(remote_url(plain_url, port, "/plain#chapter"));
+    TEST_ASSERT(remote_url(markdown_url, port, "/guide.markdown"));
     TEST_ASSERT(remote_url(redirect_url, port, "/redirect"));
     TEST_ASSERT(remote_url(large_url, port, "/large"));
     TEST_ASSERT(remote_url(missing_url, port, "/missing"));
@@ -254,6 +261,10 @@ static MereaderTuiTestResult test_fetch_redirect_limits_and_offline_cache(void) 
     TEST_ASSERT((status.st_mode & 0777U) == 0600U);
     char *cached_path = mereader_tui_strdup(file.path, &error);
     TEST_ASSERT_MSG(cached_path != NULL, "%s", error.message);
+    mereader_tui_remote_file_free(&file);
+
+    TEST_ASSERT_MSG(mereader_tui_remote_fetch(markdown_url, &file, &error), "%s", error.message);
+    TEST_ASSERT_STR(mereader_tui_path_extension(file.path), ".markdown");
     mereader_tui_remote_file_free(&file);
 
     TEST_ASSERT_MSG(mereader_tui_remote_fetch(redirect_url, &file, &error), "%s", error.message);

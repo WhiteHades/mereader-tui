@@ -22,7 +22,7 @@ a fast, local-first terminal ebook reader and calibre library manager for linux.
 
 ## features
 
-- reads epub, epub3, pdf, fb2, txt, markdown, cbz, cbr, cb7, png, jpeg, gif, webp, bmp, and svg
+- reads epub, epub3, pdf, fb2, txt, md, markdown, cbz, cbr, cb7, png, jpeg, gif, webp, bmp, and svg
 - reads extractable, drm-free mobi, prc, azw, and azw3 files through `mobitool`
 - indexes calibre libraries and ordinary book folders with the bundled fff search engine
 - opens on an all-books dashboard with list and card views

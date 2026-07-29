@@ -32,7 +32,7 @@ static CURLcode mereader_tui_remote_curl_status = CURLE_FAILED_INIT;
 static const char *const MEREADER_TUI_REMOTE_EXTENSIONS[] = {
     ".epub", ".epub3", ".mobi", ".prc", ".azw",  ".azw3", ".azw4", ".pdf",
     ".cbz",  ".cbr",   ".cb7",  ".png", ".jpg",  ".jpeg", ".gif",  ".webp",
-    ".bmp",  ".svg",   ".txt",  ".md",  ".fb2",  ".download",
+    ".bmp",  ".svg",   ".txt",  ".md",  ".markdown", ".fb2", ".download",
 };
 
 bool mereader_tui_remote_is_url(const char *value) {
