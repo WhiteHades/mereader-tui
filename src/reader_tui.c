@@ -2227,26 +2227,137 @@ static void handle_prompt_key(MereaderTuiTuiState *state,
   state->dirty = true;
 }
 
+static wchar_t screenshot_acs_character(wchar_t character) {
+  switch (character) {
+  case L'l':
+    return L'\u250c';
+  case L'm':
+    return L'\u2514';
+  case L'k':
+    return L'\u2510';
+  case L'j':
+    return L'\u2518';
+  case L't':
+    return L'\u251c';
+  case L'u':
+    return L'\u2524';
+  case L'v':
+    return L'\u2534';
+  case L'w':
+    return L'\u252c';
+  case L'q':
+    return L'\u2500';
+  case L'x':
+    return L'\u2502';
+  case L'n':
+    return L'\u253c';
+  case L'o':
+    return L'\u23ba';
+  case L'p':
+    return L'\u23bb';
+  case L'r':
+    return L'\u23bc';
+  case L's':
+    return L'\u23bd';
+  case L'`':
+    return L'\u25c6';
+  case L'a':
+  case L'h':
+    return L'\u2592';
+  case L'f':
+    return L'\u00b0';
+  case L'g':
+    return L'\u00b1';
+  case L'~':
+    return L'\u00b7';
+  case L',':
+    return L'\u2190';
+  case L'+':
+    return L'\u2192';
+  case L'.':
+    return L'\u2193';
+  case L'-':
+    return L'\u2191';
+  case L'i':
+    return L'\u2603';
+  case L'0':
+    return L'\u2588';
+  case L'y':
+    return L'\u2264';
+  case L'z':
+    return L'\u2265';
+  case L'{':
+    return L'\u03c0';
+  case L'|':
+    return L'\u2260';
+  case L'}':
+    return L'\u00a3';
+  default:
+    return character;
+  }
+}
+
+static bool capture_screenshot_row(WINDOW *capture, int row, int columns,
+                                   cchar_t *cells, wchar_t *wide,
+                                   size_t wide_capacity) {
+  memset(cells, 0, ((size_t)columns + 1U) * sizeof(*cells));
+  if (mvwin_wchnstr(capture, row, 0, cells, columns) == ERR) {
+    return false;
+  }
+
+  size_t output = 0U;
+  for (int index = 0; index < columns; ++index) {
+    wchar_t characters[CCHARW_MAX + 1] = {0};
+    attr_t attributes = 0;
+    short color_pair = 0;
+    if (getcchar(&cells[index], characters, &attributes, &color_pair, NULL) ==
+        ERR) {
+      return false;
+    }
+    if (characters[0] == L'\0') {
+      break;
+    }
+    if ((attributes & A_ALTCHARSET) != 0U) {
+      characters[0] = screenshot_acs_character(characters[0]);
+    }
+    for (size_t character = 0U;
+         character < CCHARW_MAX && characters[character] != L'\0';
+         ++character) {
+      if (output + 1U >= wide_capacity) {
+        return false;
+      }
+      wide[output++] = characters[character];
+    }
+  }
+  wide[output] = L'\0';
+  return true;
+}
+
 static void save_screenshot(MereaderTuiTuiState *state) {
   char **lines = calloc((size_t)state->rows, sizeof(*lines));
-  wchar_t *wide = calloc((size_t)state->columns + 1U, sizeof(*wide));
-  if (lines == NULL || wide == NULL) {
+  const size_t wide_capacity =
+      (size_t)state->columns * (size_t)CCHARW_MAX + 1U;
+  wchar_t *wide = calloc(wide_capacity, sizeof(*wide));
+  cchar_t *cells =
+      calloc((size_t)state->columns + 1U, sizeof(*cells));
+  if (lines == NULL || wide == NULL || cells == NULL) {
     free(lines);
     free(wide);
+    free(cells);
     open_alert(state, "Cannot allocate screenshot buffer");
     return;
   }
 
   bool captured = true;
   for (int row = 0; row < state->rows; ++row) {
-    memset(wide, 0, ((size_t)state->columns + 1U) * sizeof(*wide));
+    memset(wide, 0, wide_capacity * sizeof(*wide));
     WINDOW *capture = curscr != NULL ? curscr : stdscr;
-    if (mvwinnwstr(capture, row, 0, wide, state->columns) == ERR) {
+    if (!capture_screenshot_row(capture, row, state->columns, cells, wide,
+                                wide_capacity)) {
       captured = false;
       break;
     }
-    const size_t capacity =
-        ((size_t)state->columns + 1U) * (size_t)MB_CUR_MAX + 1U;
+    const size_t capacity = wide_capacity * (size_t)MB_CUR_MAX + 1U;
     lines[row] = calloc(capacity, 1U);
     if (lines[row] == NULL ||
         wcstombs(lines[row], wide, capacity - 1U) == (size_t)-1) {
@@ -2259,6 +2370,7 @@ static void save_screenshot(MereaderTuiTuiState *state) {
     }
   }
   free(wide);
+  free(cells);
 
   MereaderTuiError error = {0};
   if (captured) {

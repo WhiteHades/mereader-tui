@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <locale.h>
 #include <poll.h>
 #include <pty.h>
 #include <signal.h>
@@ -136,7 +137,8 @@ int mereader_tui_image_pty_child(void) {
   const char *descriptor_value = getenv("MEREADER_TUI_IMAGE_PTY_OPEN_FD");
   if (path == NULL || held_path == NULL || screenshot_directory == NULL ||
       descriptor_value == NULL ||
-      sizeof(graphics_tall_svg) != sizeof(graphics_wide_svg)) {
+      sizeof(graphics_tall_svg) != sizeof(graphics_wide_svg) ||
+      setlocale(LC_ALL, "") == NULL) {
     return 131;
   }
   char *end = NULL;
@@ -1396,9 +1398,14 @@ static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_cli
 
   FdWriter master_writer = {.fd = master};
   size_t start = output.length;
-  ok = ok && fd_write_all(&master_writer, "s", 1U) &&
+  ok = ok && fd_write_all(&master_writer, "?", 1U) &&
+       graphics_wait_for(master, &output, start, "Help") &&
+       graphics_drain_until_idle(master, &output) &&
+       fd_write_all(&master_writer, "s", 1U) &&
        graphics_wait_for(master, &output, start, "Saved screenshot:") &&
-       graphics_screenshot_contains(screenshot_directory, "IMAGE");
+       graphics_screenshot_contains(screenshot_directory, "IMAGE") &&
+       graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x8c") &&
+       graphics_screenshot_contains(screenshot_directory, "\xe2\x94\x90");
   if (ok) {
     stage = 2U;
   }
