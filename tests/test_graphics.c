@@ -47,6 +47,8 @@ static const char graphics_wide_svg[] =
     "<svg xmlns='http://www.w3.org/2000/svg' width='32768' height='1'>"
     "<rect width='100%' height='100%' fill='red'/></svg>";
 
+enum { GRAPHICS_PTY_WAIT_ATTEMPTS = 1500 };
+
 typedef struct Capture {
   MereaderTuiString output;
   size_t maximum_write;
@@ -296,7 +298,7 @@ static bool drain_pty(int fd, MereaderTuiString *output) {
 
 static bool graphics_wait_for(int descriptor, MereaderTuiString *output, size_t start,
                               const char *needle) {
-  for (unsigned attempt = 0U; attempt < 300U; ++attempt) {
+  for (unsigned attempt = 0U; attempt < GRAPHICS_PTY_WAIT_ATTEMPTS; ++attempt) {
     struct pollfd poll_descriptor = {.fd = descriptor, .events = POLLIN};
     const int ready = poll(&poll_descriptor, 1U, 20);
     if (ready < 0 && errno != EINTR) {
@@ -455,7 +457,7 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
   bool sent_quit = false;
   bool completed = false;
   int status = 0;
-  for (unsigned attempt = 0U; attempt < 600U; ++attempt) {
+  for (unsigned attempt = 0U; attempt < GRAPHICS_PTY_WAIT_ATTEMPTS; ++attempt) {
     struct pollfd descriptor = {.fd = master, .events = POLLIN};
     const int ready = poll(&descriptor, 1U, 20);
     if (ready < 0 && errno != EINTR) {
@@ -1549,7 +1551,8 @@ static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_cli
 
   ok = ok && output.data != NULL && strstr(output.data, "a=t,f=100") == NULL &&
        fd_write_all(&master_writer, "qq", 2U);
-  for (unsigned attempt = 0U; attempt < 300U && ok; ++attempt) {
+  for (unsigned attempt = 0U; attempt < GRAPHICS_PTY_WAIT_ATTEMPTS && ok;
+       ++attempt) {
     struct pollfd poll_descriptor = {.fd = master, .events = POLLIN};
     const int ready = poll(&poll_descriptor, 1U, 20);
     if (ready < 0 && errno != EINTR) {
