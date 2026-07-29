@@ -1124,10 +1124,14 @@ static bool run_pty_open_return(void) {
 static bool run_pty_typed_path(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    char *book = library_create_epub("library-pty/typed/book.epub", "Typed Book", "Reader", "TYPED PATH BODY");
+    const bool fixture =
+        mereader_tui_test_write_text("library-pty/typed/book.markdown",
+                                     "# TYPED PATH BODY\n");
+    char *book = mereader_tui_test_path("library-pty/typed/book.markdown");
     MereaderTuiString input = {0};
     MereaderTuiError error = {0};
-    bool success = book != NULL && library_pty_environment_init("typed", &environment) &&
+    bool success = fixture && book != NULL &&
+                    library_pty_environment_init("typed", &environment) &&
                     mereader_tui_string_append_char(&input, 27, &error) && mereader_tui_string_append_char(&input, 'o', &error) &&
                     mereader_tui_string_append(&input, book, &error) &&
                     mereader_tui_string_append_char(&input, '\n', &error) &&
@@ -1136,7 +1140,8 @@ static bool run_pty_typed_path(void) {
                    library_pty_send_text(&process, input.data) && library_pty_wait_for(&process, "TYPED PATH BODY");
     if (success) {
         library_pty_clear_output(&process);
-        success = library_pty_send_text(&process, "q") && library_pty_wait_for(&process, "Typed Book") &&
+        success = library_pty_send_text(&process, "q") &&
+                  library_pty_wait_for(&process, "book.markdown") &&
                   library_pty_send_text(&process, "q") && library_pty_wait_exit(&process) &&
                   WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
     }
