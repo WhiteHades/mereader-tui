@@ -88,6 +88,13 @@ save the current terminal view as an svg file in the working directory.
 .TP
 .BR q , " " esc
 cancel the current action or quit.
+.PP
+reader controls are read from the
+.B [Keymaps]
+section of the config file. named keys, control chords, and two-key sequences
+are accepted. invalid or conflicting bindings stop startup with an error that
+names both options. bindings beginning with a digit are rejected because digits
+are reserved for numeric prefixes.
 .SH library keys
 .TP
 .BR j , " " k , " arrows"

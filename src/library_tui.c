@@ -1643,6 +1643,9 @@ static void library_handle_picker_key(MereaderTuiLibraryTuiState *state, bool ke
     }
     return;
   }
+  if (state->sequence_pending) {
+    return;
+  }
   if (key_code && code == KEY_DOWN) {
     library_move_picker_selection(state, 1);
     return;
@@ -1704,6 +1707,9 @@ static void library_handle_input_key(MereaderTuiLibraryTuiState *state, bool key
     } else {
       library_finish_input(state);
     }
+    return;
+  }
+  if (state->sequence_pending) {
     return;
   }
 

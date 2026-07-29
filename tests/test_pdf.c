@@ -850,7 +850,7 @@ static bool run_pdf_pty(PdfPtyResult *result) {
     if (path == NULL ||
         !mereader_tui_test_write_text("pdf/pty/config/mereader-tui/config.ini",
                               "[General]\nImageMode=kitty\nMaxTextWidth=80\nPageScrollDuration=0\n"
-                              "[Keymaps]\nTogglePdfView=ctrl+x\nOpenHelp=z\n")) {
+                              "[Keymaps]\nTogglePdfView=ctrl+x\nOpenHelp=zz\n")) {
         free(path);
         return false;
     }
@@ -910,6 +910,9 @@ static bool run_pdf_pty(PdfPtyResult *result) {
     result->fixed_rendered = pdf_wait_for(master, &result->output, 0U, "a=t,f=100");
     size_t start = result->output.length;
     ok = result->fixed_rendered && pdf_write_all(master, "z", 1U) &&
+          pdf_drain_until_idle(master, &result->output) &&
+          strstr(result->output.data + start, "Help") == NULL &&
+          pdf_write_all(master, "z", 1U) &&
           pdf_wait_for(master, &result->output, start, "Help");
     result->help_opened = ok;
     start = result->output.length;

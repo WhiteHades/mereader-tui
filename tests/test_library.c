@@ -1169,7 +1169,7 @@ static bool run_pty_custom_library_keymaps(void) {
         "First = zz\n"
         "ToggleView = t\n"
         "Help = HH\n"
-        "Confirm = ee\n"
+        "Confirm = zz\n"
         "Close = CC\n"
         "Quit = Q\n";
     bool success = first != NULL && second != NULL && library_pty_environment_init("custom-keys", &environment) &&
@@ -1226,7 +1226,7 @@ static bool run_pty_custom_library_keymaps(void) {
         stage = "custom modal keys";
         library_pty_clear_output(&process);
         success = library_pty_send_text(&process, "  ") && library_pty_wait_for(&process, "find a book") &&
-                  library_pty_send_text(&process, "ee") && library_pty_wait_for(&process, "FIRST KEY BODY") &&
+                  library_pty_send_text(&process, "zz") && library_pty_wait_for(&process, "FIRST KEY BODY") &&
                   library_pty_send_text(&process, "q") && library_pty_wait_for(&process, "First Key") &&
                   library_pty_send_text(&process, "q") && library_pty_settle(&process) && !process.exited &&
                   library_pty_send_text(&process, "HH") && library_pty_wait_for(&process, "navigation") &&

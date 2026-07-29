@@ -60,6 +60,8 @@ static const char MEREADER_TUI_DEFAULT_CONFIG[] =
     "Foreground = #4c4f69\n"
     "Accent = #8839ef\n"
     "\n"
+    "# named keys, control chords, and two-key sequences are accepted\n"
+    "# reader bindings cannot begin with a digit because digits are count prefixes\n"
     "[Keymaps]\n"
     "ToggleLightDark = c\n"
     "TogglePdfView = v\n"
@@ -551,14 +553,61 @@ static bool mereader_tui_config_parse_key_list(const char *value, MereaderTuiKey
     return true;
 }
 
-static bool mereader_tui_config_validate_key_list(const char *name, const MereaderTuiKeyList *list,
-                                                  MereaderTuiError *error) {
+static bool mereader_tui_config_validate_key_list(const char *section, const char *name,
+                                                  const MereaderTuiKeyList *list, MereaderTuiError *error) {
     for (size_t index = 0U; index < list->length; ++index) {
         if (!mereader_tui_key_binding_valid(list->items[index])) {
-            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
-                                   "invalid Library Keymaps.%s binding '%s'", name, list->items[index]);
+            mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "invalid %s.%s binding '%s'", section, name,
+                                   list->items[index]);
             return false;
         }
+    }
+    return true;
+}
+
+static bool mereader_tui_config_validate_reader_keymaps(const MereaderTuiKeymaps *maps, MereaderTuiError *error) {
+    static const char *const names[] = {
+        "ToggleLightDark", "TogglePdfView", "ScrollDown", "ScrollUp", "PageDown", "PageUp", "Home",
+        "End",             "OpenToc",       "AddBookmark", "OpenBookmarks", "OpenMetadata", "OpenHelp",
+        "SearchForward",   "SearchBackward", "NextMatch",  "PreviousMatch", "CloseOrQuit",  "Screenshot",
+        "Confirm",
+    };
+    const MereaderTuiKeyList *const lists[] = {
+        &maps->toggle_dark,     &maps->toggle_pdf_view, &maps->scroll_down,     &maps->scroll_up,
+        &maps->page_down,       &maps->page_up,         &maps->home,            &maps->end,
+        &maps->open_toc,        &maps->add_bookmark,    &maps->open_bookmarks,  &maps->open_metadata,
+        &maps->open_help,       &maps->search_forward,  &maps->search_backward, &maps->next_match,
+        &maps->previous_match,  &maps->close,           &maps->screenshot,      &maps->confirm,
+    };
+    for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(lists); ++index) {
+        if (!mereader_tui_config_validate_key_list("Keymaps", names[index], lists[index], error)) {
+            return false;
+        }
+        for (wchar_t digit = L'0'; digit <= L'9'; ++digit) {
+            const MereaderTuiKey key = {.character = digit};
+            if (mereader_tui_key_list_matches(lists[index], &key) ||
+                mereader_tui_key_list_starts_sequence(lists[index], &key)) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
+                                       "Keymaps.%s conflicts with reader numeric prefixes", names[index]);
+                return false;
+            }
+        }
+    }
+
+    const size_t base_count = MEREADER_TUI_ARRAY_LEN(lists) - 1U;
+    for (size_t left = 0U; left < base_count; ++left) {
+        for (size_t right = left + 1U; right < base_count; ++right) {
+            if (mereader_tui_key_lists_conflict(lists[left], lists[right])) {
+                mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT, "Keymaps.%s conflicts with Keymaps.%s",
+                                       names[left], names[right]);
+                return false;
+            }
+        }
+    }
+    if (mereader_tui_key_lists_conflict(&maps->close, &maps->confirm)) {
+        mereader_tui_error_set(error, MEREADER_TUI_ERROR_CORRUPT,
+                               "Keymaps.CloseOrQuit conflicts with Keymaps.Confirm");
+        return false;
     }
     return true;
 }
@@ -575,7 +624,7 @@ static bool mereader_tui_config_validate_library_keymaps(const MereaderTuiLibrar
         &maps->open_path, &maps->filter, &maps->find, &maps->help, &maps->close, &maps->quit, &maps->confirm,
     };
     for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(lists); ++index) {
-        if (!mereader_tui_config_validate_key_list(names[index], lists[index], error)) {
+        if (!mereader_tui_config_validate_key_list("Library Keymaps", names[index], lists[index], error)) {
             return false;
         }
     }
@@ -733,7 +782,8 @@ static bool mereader_tui_config_build(const MereaderTuiIni *ini, MereaderTuiConf
         return false;
     }
 
-    if (!mereader_tui_config_validate_library_keymaps(&result.library_keymaps, error)) {
+    if (!mereader_tui_config_validate_reader_keymaps(&result.keymaps, error) ||
+        !mereader_tui_config_validate_library_keymaps(&result.library_keymaps, error)) {
         mereader_tui_config_free(&result);
         return false;
     }

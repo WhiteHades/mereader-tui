@@ -1,6 +1,7 @@
 #include "mereader-tui/app.h"
 #include "mereader-tui/document_backend.h"
 #include "mereader-tui/graphics.h"
+#include "mereader-tui/keymap.h"
 #include "mereader-tui/platform.h"
 #include "mereader-tui/remote.h"
 #include "terminal_runtime.h"
@@ -69,7 +70,8 @@ typedef struct MereaderTuiPromptState {
 typedef struct MereaderTuiReaderCommandState {
   size_t count;
   bool count_active;
-  bool g_pending;
+  bool sequence_pending;
+  MereaderTuiKey sequence_key;
 } MereaderTuiReaderCommandState;
 
 typedef struct MereaderTuiJumpHistory {
@@ -325,162 +327,112 @@ static void change_style(MereaderTuiTuiState *state, int row, int x, int width,
                  NULL);
 }
 
-static bool named_key_matches(const MereaderTuiNormalizedKey *key, const char *name) {
-  if (name == NULL || name[0] == '\0') {
-    return false;
-  }
-  if (name[1] == '\0') {
-    return !key->key_code && key->character == (wchar_t)(unsigned char)name[0];
-  }
+typedef struct MereaderTuiReaderKeyEntry {
+  MereaderTuiCommand command;
+  const MereaderTuiKeyList *keys;
+} MereaderTuiReaderKeyEntry;
 
-  if (strncmp(name, "ctrl+", 5U) == 0 && name[5] != '\0' && name[6] == '\0') {
-    const unsigned char letter = (unsigned char)tolower((unsigned char)name[5]);
-    return !key->key_code && letter >= (unsigned char)'a' &&
-           letter <= (unsigned char)'z' &&
-           key->character == (wchar_t)(letter - (unsigned char)'a' + 1U);
-  }
-  if ((name[0] == 'f' || name[0] == 'F') &&
-      isdigit((unsigned char)name[1]) != 0) {
-    char *end = NULL;
-    const long number = strtol(name + 1, &end, 10);
-    return key->key_code && end != name + 1 && *end == '\0' && number >= 1L &&
-           number <= 63L && key->code == KEY_F((int)number);
-  }
-
-  if (mereader_tui_casecmp(name, "down") == 0) {
-    return key->key_code && key->code == KEY_DOWN;
-  }
-  if (mereader_tui_casecmp(name, "up") == 0) {
-    return key->key_code && key->code == KEY_UP;
-  }
-  if (mereader_tui_casecmp(name, "left") == 0) {
-    return key->key_code && key->code == KEY_LEFT;
-  }
-  if (mereader_tui_casecmp(name, "right") == 0) {
-    return key->key_code && key->code == KEY_RIGHT;
-  }
-  if (mereader_tui_casecmp(name, "home") == 0) {
-    return key->key_code && key->code == KEY_HOME;
-  }
-  if (mereader_tui_casecmp(name, "end") == 0) {
-    return key->key_code && key->code == KEY_END;
-  }
-  if (mereader_tui_casecmp(name, "pageup") == 0 || mereader_tui_casecmp(name, "page_up") == 0) {
-    return key->key_code && key->code == KEY_PPAGE;
-  }
-  if (mereader_tui_casecmp(name, "pagedown") == 0 ||
-      mereader_tui_casecmp(name, "page_down") == 0) {
-    return key->key_code && key->code == KEY_NPAGE;
-  }
-  if (mereader_tui_casecmp(name, "enter") == 0) {
-    return (key->key_code && key->code == KEY_ENTER) ||
-           (!key->key_code &&
-            (key->character == L'\n' || key->character == L'\r'));
-  }
-  if (mereader_tui_casecmp(name, "escape") == 0 || mereader_tui_casecmp(name, "esc") == 0) {
-    return !key->key_code && key->character == 27;
-  }
-  if (mereader_tui_casecmp(name, "tab") == 0) {
-    return !key->key_code && key->character == L'\t';
-  }
-  if (mereader_tui_casecmp(name, "space") == 0) {
-    return !key->key_code && key->character == L' ';
-  }
-  if (mereader_tui_casecmp(name, "slash") == 0) {
-    return !key->key_code && key->character == L'/';
-  }
-  if (mereader_tui_casecmp(name, "question_mark") == 0 ||
-      mereader_tui_casecmp(name, "question") == 0) {
-    return !key->key_code && key->character == L'?';
-  }
-  if (mereader_tui_casecmp(name, "backspace") == 0) {
-    return (key->key_code && key->code == KEY_BACKSPACE) ||
-           (!key->key_code && (key->character == 8 || key->character == 127));
-  }
-  if (mereader_tui_casecmp(name, "delete") == 0) {
-    return key->key_code && key->code == KEY_DC;
-  }
-  return false;
+static MereaderTuiKey reader_key(const MereaderTuiNormalizedKey *key) {
+  return (MereaderTuiKey){
+      .key_code = key->key_code,
+      .code = key->code,
+      .character = key->character,
+  };
 }
 
-static bool key_list_matches(const MereaderTuiKeyList *list,
-                             const MereaderTuiNormalizedKey *key) {
-  for (size_t index = 0U; index < list->length; ++index) {
-    if (named_key_matches(key, list->items[index])) {
-      return true;
+static MereaderTuiCommand
+reader_match_key_entries(MereaderTuiTuiState *state,
+                         const MereaderTuiReaderKeyEntry *entries, size_t count,
+                         const MereaderTuiNormalizedKey *normalized) {
+  const MereaderTuiKey key = reader_key(normalized);
+  if (state->reader_command.sequence_pending) {
+    state->reader_command.sequence_pending = false;
+    for (size_t index = 0U; index < count; ++index) {
+      if (mereader_tui_key_list_matches_sequence(
+              entries[index].keys, &state->reader_command.sequence_key, &key)) {
+        return entries[index].command;
+      }
     }
   }
-  return false;
-}
-
-static MereaderTuiCommand normalize_command(const MereaderTuiConfig *config,
-                                     const MereaderTuiNormalizedKey *key) {
-  const MereaderTuiKeymaps *maps = &config->keymaps;
-  if (key_list_matches(&maps->close, key)) {
-    return MEREADER_TUI_COMMAND_QUIT;
+  for (size_t index = 0U; index < count; ++index) {
+    if (mereader_tui_key_list_matches(entries[index].keys, &key)) {
+      return entries[index].command;
+    }
   }
-  if (key_list_matches(&maps->scroll_down, key)) {
-    return MEREADER_TUI_COMMAND_SCROLL_DOWN;
-  }
-  if (key_list_matches(&maps->scroll_up, key)) {
-    return MEREADER_TUI_COMMAND_SCROLL_UP;
-  }
-  if (key_list_matches(&maps->page_down, key)) {
-    return MEREADER_TUI_COMMAND_PAGE_DOWN;
-  }
-  if (key_list_matches(&maps->page_up, key)) {
-    return MEREADER_TUI_COMMAND_PAGE_UP;
-  }
-  if (key_list_matches(&maps->home, key)) {
-    return MEREADER_TUI_COMMAND_HOME;
-  }
-  if (key_list_matches(&maps->end, key)) {
-    return MEREADER_TUI_COMMAND_END;
-  }
-  if (key_list_matches(&maps->open_toc, key)) {
-    return MEREADER_TUI_COMMAND_TOC;
-  }
-  if (key_list_matches(&maps->add_bookmark, key)) {
-    return MEREADER_TUI_COMMAND_ADD_BOOKMARK;
-  }
-  if (key_list_matches(&maps->open_bookmarks, key)) {
-    return MEREADER_TUI_COMMAND_BOOKMARKS;
-  }
-  if (key_list_matches(&maps->open_metadata, key)) {
-    return MEREADER_TUI_COMMAND_METADATA;
-  }
-  if (key_list_matches(&maps->open_help, key)) {
-    return MEREADER_TUI_COMMAND_HELP;
-  }
-  if (key_list_matches(&maps->toggle_dark, key)) {
-    return MEREADER_TUI_COMMAND_TOGGLE_THEME;
-  }
-  if (key_list_matches(&maps->search_forward, key)) {
-    return MEREADER_TUI_COMMAND_SEARCH_FORWARD;
-  }
-  if (key_list_matches(&maps->search_backward, key)) {
-    return MEREADER_TUI_COMMAND_SEARCH_BACKWARD;
-  }
-  if (key_list_matches(&maps->next_match, key)) {
-    return MEREADER_TUI_COMMAND_NEXT_MATCH;
-  }
-  if (key_list_matches(&maps->previous_match, key)) {
-    return MEREADER_TUI_COMMAND_PREVIOUS_MATCH;
-  }
-  if (key_list_matches(&maps->confirm, key)) {
-    return MEREADER_TUI_COMMAND_CONFIRM;
-  }
-  if (key_list_matches(&maps->screenshot, key)) {
-    return MEREADER_TUI_COMMAND_SCREENSHOT;
-  }
-  if (key_list_matches(&maps->toggle_pdf_view, key)) {
-    return MEREADER_TUI_COMMAND_TOGGLE_PDF_VIEW;
+  for (size_t index = 0U; index < count; ++index) {
+    if (mereader_tui_key_list_starts_sequence(entries[index].keys, &key)) {
+      state->reader_command.sequence_key = key;
+      state->reader_command.sequence_pending = true;
+      break;
+    }
   }
   return MEREADER_TUI_COMMAND_NONE;
 }
 
-static MereaderTuiNormalizedKey read_normalized_key(const MereaderTuiConfig *config,
-                                             int status, wint_t input) {
+static MereaderTuiCommand
+reader_base_command(MereaderTuiTuiState *state,
+                    const MereaderTuiNormalizedKey *key) {
+  const MereaderTuiKeymaps *maps = &state->app->config.keymaps;
+  const MereaderTuiReaderKeyEntry entries[] = {
+      {MEREADER_TUI_COMMAND_QUIT, &maps->close},
+      {MEREADER_TUI_COMMAND_SCROLL_DOWN, &maps->scroll_down},
+      {MEREADER_TUI_COMMAND_SCROLL_UP, &maps->scroll_up},
+      {MEREADER_TUI_COMMAND_PAGE_DOWN, &maps->page_down},
+      {MEREADER_TUI_COMMAND_PAGE_UP, &maps->page_up},
+      {MEREADER_TUI_COMMAND_HOME, &maps->home},
+      {MEREADER_TUI_COMMAND_END, &maps->end},
+      {MEREADER_TUI_COMMAND_TOC, &maps->open_toc},
+      {MEREADER_TUI_COMMAND_ADD_BOOKMARK, &maps->add_bookmark},
+      {MEREADER_TUI_COMMAND_BOOKMARKS, &maps->open_bookmarks},
+      {MEREADER_TUI_COMMAND_METADATA, &maps->open_metadata},
+      {MEREADER_TUI_COMMAND_HELP, &maps->open_help},
+      {MEREADER_TUI_COMMAND_TOGGLE_THEME, &maps->toggle_dark},
+      {MEREADER_TUI_COMMAND_SEARCH_FORWARD, &maps->search_forward},
+      {MEREADER_TUI_COMMAND_SEARCH_BACKWARD, &maps->search_backward},
+      {MEREADER_TUI_COMMAND_NEXT_MATCH, &maps->next_match},
+      {MEREADER_TUI_COMMAND_PREVIOUS_MATCH, &maps->previous_match},
+      {MEREADER_TUI_COMMAND_SCREENSHOT, &maps->screenshot},
+      {MEREADER_TUI_COMMAND_TOGGLE_PDF_VIEW, &maps->toggle_pdf_view},
+      {MEREADER_TUI_COMMAND_CONFIRM, &maps->confirm},
+  };
+  return reader_match_key_entries(state, entries,
+                                  MEREADER_TUI_ARRAY_LEN(entries), key);
+}
+
+static MereaderTuiCommand
+reader_prompt_command(MereaderTuiTuiState *state,
+                      const MereaderTuiNormalizedKey *key) {
+  const MereaderTuiKeymaps *maps = &state->app->config.keymaps;
+  const MereaderTuiReaderKeyEntry entries[] = {
+      {MEREADER_TUI_COMMAND_CONFIRM, &maps->confirm},
+      {MEREADER_TUI_COMMAND_QUIT, &maps->close},
+  };
+  return reader_match_key_entries(state, entries,
+                                  MEREADER_TUI_ARRAY_LEN(entries), key);
+}
+
+static MereaderTuiCommand
+reader_overlay_command(MereaderTuiTuiState *state,
+                       const MereaderTuiNormalizedKey *key) {
+  const MereaderTuiKeymaps *maps = &state->app->config.keymaps;
+  const MereaderTuiReaderKeyEntry entries[] = {
+      {MEREADER_TUI_COMMAND_CONFIRM, &maps->confirm},
+      {MEREADER_TUI_COMMAND_QUIT, &maps->close},
+      {MEREADER_TUI_COMMAND_TOC, &maps->open_toc},
+      {MEREADER_TUI_COMMAND_BOOKMARKS, &maps->open_bookmarks},
+      {MEREADER_TUI_COMMAND_SCROLL_DOWN, &maps->scroll_down},
+      {MEREADER_TUI_COMMAND_SCROLL_UP, &maps->scroll_up},
+      {MEREADER_TUI_COMMAND_PAGE_DOWN, &maps->page_down},
+      {MEREADER_TUI_COMMAND_PAGE_UP, &maps->page_up},
+      {MEREADER_TUI_COMMAND_HOME, &maps->home},
+      {MEREADER_TUI_COMMAND_END, &maps->end},
+      {MEREADER_TUI_COMMAND_SCREENSHOT, &maps->screenshot},
+  };
+  return reader_match_key_entries(state, entries,
+                                  MEREADER_TUI_ARRAY_LEN(entries), key);
+}
+
+static MereaderTuiNormalizedKey read_normalized_key(int status, wint_t input) {
   MereaderTuiNormalizedKey key = {0};
   if (status == ERR) {
     return key;
@@ -492,7 +444,6 @@ static MereaderTuiNormalizedKey read_normalized_key(const MereaderTuiConfig *con
   } else {
     key.character = (wchar_t)input;
   }
-  key.command = normalize_command(config, &key);
   return key;
 }
 
@@ -975,8 +926,10 @@ static bool build_layout_in_background(MereaderTuiTuiState *state, MereaderTuiLa
       wtimeout(stdscr, 80);
       wint_t input = 0;
       const int status = wget_wch(stdscr, &input);
-      const MereaderTuiNormalizedKey key =
-          read_normalized_key(&state->app->config, status, input);
+      MereaderTuiNormalizedKey key = read_normalized_key(status, input);
+      if (key.valid) {
+        key.command = reader_base_command(state, &key);
+      }
       if (mereader_tui_terminal_runtime_interrupted()) {
         state->quit = true;
         atomic_store_explicit(&job.cancel, true, memory_order_relaxed);
@@ -2882,26 +2835,12 @@ static void scroll_reader_lines(MereaderTuiTuiState *state, bool down, size_t co
 static void handle_reader_key(MereaderTuiTuiState *state,
                               const MereaderTuiNormalizedKey *key) {
   if (key->command == MEREADER_TUI_COMMAND_QUIT &&
-      (state->reader_command.count_active || state->reader_command.g_pending)) {
+      state->reader_command.count_active) {
     reset_reader_command(state);
     return;
   }
   if (collect_reader_count(state, key)) {
     return;
-  }
-  if (!key->key_code && key->character == L'g') {
-    if (!state->reader_command.g_pending) {
-      state->reader_command.g_pending = true;
-      return;
-    }
-    bool explicit_count = false;
-    const size_t count = take_reader_count(state, &explicit_count);
-    state->reader_command.g_pending = false;
-    (void)jump_to_line(state, explicit_count ? count - 1U : 0U);
-    return;
-  }
-  if (state->reader_command.g_pending) {
-    reset_reader_command(state);
   }
   const bool plain_tab = !key->key_code && key->character == L'\t';
   const bool ctrl_i = key->key_code && key->code == MEREADER_TUI_KEY_CTRL_I;
@@ -2937,7 +2876,7 @@ static void handle_reader_key(MereaderTuiTuiState *state,
     page_scroll(state, false, count);
     break;
   case MEREADER_TUI_COMMAND_HOME:
-    (void)jump_to_line(state, 0U);
+    (void)jump_to_line(state, explicit_count ? count - 1U : 0U);
     break;
   case MEREADER_TUI_COMMAND_END:
     (void)jump_to_line(state,
@@ -3159,8 +3098,7 @@ int mereader_tui_tui_run(MereaderTuiApp *app, MereaderTuiError *error) {
       state.quit = true;
       continue;
     }
-    const MereaderTuiNormalizedKey key =
-        read_normalized_key(&app->config, status, input);
+    MereaderTuiNormalizedKey key = read_normalized_key(status, input);
     if (!key.valid) {
       continue;
     }
@@ -3179,12 +3117,22 @@ int mereader_tui_tui_run(MereaderTuiApp *app, MereaderTuiError *error) {
       continue;
     }
     if (state.prompt.active) {
-      reset_reader_command(&state);
+      key.command = reader_prompt_command(&state, &key);
+      if (state.reader_command.sequence_pending) {
+        continue;
+      }
       handle_prompt_key(&state, &key);
     } else if (state.overlay != MEREADER_TUI_OVERLAY_NONE) {
-      reset_reader_command(&state);
+      key.command = reader_overlay_command(&state, &key);
+      if (state.reader_command.sequence_pending) {
+        continue;
+      }
       handle_overlay_key(&state, &key);
     } else {
+      key.command = reader_base_command(&state, &key);
+      if (state.reader_command.sequence_pending) {
+        continue;
+      }
       handle_reader_key(&state, &key);
     }
   }

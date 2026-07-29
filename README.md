@@ -179,6 +179,11 @@ library controls are configured separately under `[Library Keymaps]`, so changin
 
 numeric prefixes repeat movement commands, such as `12j`, `3n`, or `120G`.
 
+reader controls are configured under `[Keymaps]`. bindings accept named keys,
+control chords, and two-key sequences just like library bindings. invalid or
+conflicting bindings stop startup with the two option names; bindings beginning
+with a digit are rejected because digits are reserved for numeric prefixes.
+
 ## config
 
 mereader-tui creates `~/.config/mereader-tui/config.ini` on first use. these are the main defaults:

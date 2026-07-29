@@ -260,6 +260,61 @@ static MereaderTuiTestResult test_library_key_sequences_and_conflicts(void) {
     return MEREADER_TUI_TEST_PASS;
 }
 
+static MereaderTuiTestResult test_reader_key_sequences_and_conflicts(void) {
+    MereaderTuiConfig config = {0};
+    MereaderTuiTestResult result =
+        load_config_text("reader-key-sequences",
+                         "[Keymaps]\nHome = zz\nOpenHelp = ctrl+x ctrl+y\nConfirm = v\nTogglePdfView = v\n",
+                         &config);
+    TEST_ASSERT(result == MEREADER_TUI_TEST_PASS);
+
+    const MereaderTuiKey z = {.character = L'z'};
+    const MereaderTuiKey ctrl_x = {.character = 24};
+    const MereaderTuiKey ctrl_y = {.character = 25};
+    TEST_ASSERT(mereader_tui_key_list_starts_sequence(&config.keymaps.home, &z));
+    TEST_ASSERT(mereader_tui_key_list_matches_sequence(&config.keymaps.home, &z, &z));
+    TEST_ASSERT(mereader_tui_key_list_starts_sequence(&config.keymaps.open_help, &ctrl_x));
+    TEST_ASSERT(mereader_tui_key_list_matches_sequence(&config.keymaps.open_help, &ctrl_x, &ctrl_y));
+    mereader_tui_config_free(&config);
+
+    char *path = mereader_tui_test_path("config/reader-key-conflict.ini");
+    TEST_ASSERT(path != NULL);
+    TEST_ASSERT(mereader_tui_test_write_text("config/reader-key-conflict.ini",
+                                             "[Keymaps]\nScrollDown = x\nScrollUp = x\n"));
+    MereaderTuiError error = {0};
+    TEST_ASSERT(!mereader_tui_config_load_path(&config, path, &error));
+    TEST_ASSERT(strstr(error.message, "Keymaps.ScrollDown conflicts with Keymaps.ScrollUp") != NULL);
+    free(path);
+
+    path = mereader_tui_test_path("config/reader-key-invalid.ini");
+    TEST_ASSERT(path != NULL);
+    TEST_ASSERT(mereader_tui_test_write_text("config/reader-key-invalid.ini",
+                                             "[Keymaps]\nOpenHelp = ctrl+invalid\n"));
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_config_load_path(&config, path, &error));
+    TEST_ASSERT(strstr(error.message, "invalid Keymaps.OpenHelp binding") != NULL);
+    free(path);
+
+    path = mereader_tui_test_path("config/reader-key-close-conflict.ini");
+    TEST_ASSERT(path != NULL);
+    TEST_ASSERT(mereader_tui_test_write_text("config/reader-key-close-conflict.ini",
+                                             "[Keymaps]\nCloseOrQuit = x\nScrollDown = x\n"));
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_config_load_path(&config, path, &error));
+    TEST_ASSERT(strstr(error.message, "Keymaps.ScrollDown conflicts with Keymaps.CloseOrQuit") != NULL);
+    free(path);
+
+    path = mereader_tui_test_path("config/reader-key-count-conflict.ini");
+    TEST_ASSERT(path != NULL);
+    TEST_ASSERT(mereader_tui_test_write_text("config/reader-key-count-conflict.ini",
+                                             "[Keymaps]\nOpenHelp = 12\n"));
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_config_load_path(&config, path, &error));
+    TEST_ASSERT(strstr(error.message, "Keymaps.OpenHelp conflicts with reader numeric prefixes") != NULL);
+    free(path);
+    return MEREADER_TUI_TEST_PASS;
+}
+
 static MereaderTuiTestResult test_image_modes_and_legacy_precedence(void) {
     static const struct {
         const char *value;
@@ -362,6 +417,7 @@ const MereaderTuiTestCase *mereader_tui_config_test_cases(size_t *count) {
         {.name = "colors_and_invalid_fallback", .function = test_colors_and_invalid_fallback},
         {.name = "key_lists", .function = test_key_lists},
         {.name = "library_key_sequences_and_conflicts", .function = test_library_key_sequences_and_conflicts},
+        {.name = "reader_key_sequences_and_conflicts", .function = test_reader_key_sequences_and_conflicts},
         {.name = "image_modes_and_legacy_precedence", .function = test_image_modes_and_legacy_precedence},
         {.name = "default_file_creation_is_isolated", .function = test_default_file_creation_is_isolated},
         {.name = "save_library_path_preserves_config", .function = test_save_library_path_preserves_config},
