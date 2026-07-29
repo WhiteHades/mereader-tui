@@ -15,7 +15,12 @@ LIBDIR ?= $(PREFIX)/lib/mereader-tui
 LICENSEDIR ?= $(DATADIR)/licenses/mereader-tui
 PKGS = ncursesw sqlite3 glib-2.0 libxml-2.0 libzip libarchive libpcre2-8 gdk-pixbuf-2.0 poppler-glib cairo libcurl
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -Iinclude -Ivendor/fff/crates/fff-c/include $(shell pkg-config --cflags $(PKGS))
-CFLAGS ?= -O2 -g
+ifeq ($(origin CFLAGS),default)
+CFLAGS = -O2 -g
+endif
+ifeq ($(origin CFLAGS),undefined)
+CFLAGS = -O2 -g
+endif
 CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
 	-Wstrict-prototypes -Wmissing-prototypes -Werror=implicit-function-declaration
 LDLIBS += -Lbuild -lfff_c $(shell pkg-config --libs $(PKGS)) -lm -pthread
