@@ -34,7 +34,7 @@ static bool remote_write_all(int descriptor, const char *data, size_t length) {
 
 static void remote_server_respond(int client, const char *request) {
     static const char body[] = "remote text\n";
-    if (strstr(request, "\r\nUser-Agent: mereader-tui/0.1.1\r\n") == NULL) {
+    if (strstr(request, "\r\nUser-Agent: mereader-tui/0.1.2\r\n") == NULL) {
         static const char response[] =
             "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         (void)remote_write_all(client, response, sizeof(response) - 1U);

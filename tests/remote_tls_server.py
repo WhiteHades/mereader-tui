@@ -25,7 +25,7 @@ class RemoteHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self):
-        if self.headers.get("User-Agent") != "mereader-tui/0.1.1":
+        if self.headers.get("User-Agent") != "mereader-tui/0.1.2":
             self.send_body(400)
         elif self.path == "/plain":
             self.send_body(200, b"secure remote text\n", Content_Type="text/plain")

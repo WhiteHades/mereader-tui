@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 #define MEREADER_TUI_NAME "mereader-tui"
-#define MEREADER_TUI_VERSION "0.1.1"
+#define MEREADER_TUI_VERSION "0.1.2"
 #define MEREADER_TUI_ARRAY_LEN(values) (sizeof(values) / sizeof((values)[0]))
 
 typedef enum MereaderTuiErrorCode : uint8_t {

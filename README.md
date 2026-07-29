@@ -36,7 +36,7 @@ a fast, local-first terminal ebook reader and calibre library manager for linux.
 
 ## install
 
-mereader-tui supports linux with a utf-8 locale. building needs gcc 14 or later, or clang 18 or later. it also needs rust 1.97, cargo, make, and `pkg-config`. the v0.1.1 build and test flow is verified on ubuntu 24.04 lts, debian 13, fedora 43, and arch linux rolling as of july 2026.
+mereader-tui supports linux with a utf-8 locale. building needs gcc 14 or later, or clang 18 or later. it also needs rust 1.97, cargo, make, and `pkg-config`. the v0.1.2 build and test flow is verified on ubuntu 24.04 lts, debian 13, fedora 43, and arch linux rolling as of july 2026.
 
 install the system dependencies for your distribution first.
 
@@ -76,7 +76,7 @@ install the pinned rust toolchain, then clone the release with its pinned fff su
 curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | \
   sh -s -- -y --profile minimal --default-toolchain 1.97.0
 . "$HOME/.cargo/env"
-git clone --branch v0.1.1 --recurse-submodules \
+git clone --branch v0.1.2 --recurse-submodules \
   https://github.com/whitehades/mereader-tui.git
 cd mereader-tui
 ```

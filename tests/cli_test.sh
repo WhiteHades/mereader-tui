@@ -46,7 +46,7 @@ esac
 pass help
 
 version_output=$("$binary" --version 2>&1) || fail version
-[ "$version_output" = "v0.1.1" ] || fail version
+[ "$version_output" = "v0.1.2" ] || fail version
 pass version
 
 if option_output=$("$binary" --definitely-invalid 2>&1); then
@@ -60,7 +60,7 @@ pass unknown_option
 
 doctor_output=$("$binary" --doctor 2>&1) || fail doctor
 case $doctor_output in
-    *"mereader-tui Doctor"*"Version: 0.1.1"*) ;;
+    *"mereader-tui Doctor"*"Version: 0.1.2"*) ;;
     *) fail doctor ;;
 esac
 case $doctor_output in
