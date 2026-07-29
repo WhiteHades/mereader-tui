@@ -424,6 +424,8 @@ static bool run_tui_pty_capture(MereaderTuiImageMode mode, unsigned short column
   if (child == 0) {
     (void)setenv("TERM", "xterm-256color", 1);
     (void)setenv("COLORTERM", "truecolor", 1);
+    (void)setenv("LC_ALL", "C", 1);
+    (void)setenv("LANG", "C", 1);
     (void)unsetenv("TMUX");
     (void)unsetenv("STY");
     if (mode == MEREADER_TUI_IMAGE_MODE_KITTY) {
@@ -1423,6 +1425,8 @@ static MereaderTuiTestResult test_tui_tall_standalone_placeholder_and_stable_cli
     (void)close(opener_pipe[0]);
     (void)setenv("TERM", "xterm-256color", 1);
     (void)setenv("COLORTERM", "truecolor", 1);
+    (void)setenv("LC_ALL", "C", 1);
+    (void)setenv("LANG", "C", 1);
     (void)setenv("TERM_PROGRAM", "kitty", 1);
     (void)setenv("KITTY_WINDOW_ID", "1", 1);
     (void)unsetenv("TMUX");

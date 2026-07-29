@@ -9,6 +9,7 @@
 
 #include <ctype.h>
 #include <curses.h>
+#include <glib.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -2351,6 +2352,31 @@ static MereaderTuiSvgAttributes screenshot_cell_attributes(
   return result;
 }
 
+static bool screenshot_characters_to_utf8(const wchar_t *characters,
+                                          char *text, size_t capacity) {
+  size_t length = 0U;
+  for (size_t index = 0U;
+       index < CCHARW_MAX && characters[index] != L'\0'; ++index) {
+    if (characters[index] < 0) {
+      return false;
+    }
+    const gunichar codepoint = (gunichar)characters[index];
+    if (!g_unichar_validate(codepoint)) {
+      return false;
+    }
+    char encoded[6] = {0};
+    const int encoded_length = g_unichar_to_utf8(codepoint, encoded);
+    if (encoded_length <= 0 ||
+        (size_t)encoded_length >= capacity - length) {
+      return false;
+    }
+    memcpy(text + length, encoded, (size_t)encoded_length);
+    length += (size_t)encoded_length;
+  }
+  text[length] = '\0';
+  return true;
+}
+
 static bool capture_screenshot_row(const MereaderTuiTuiState *state,
                                    WINDOW *capture, int row, int columns,
                                    cchar_t *curses_cells,
@@ -2397,7 +2423,7 @@ static bool capture_screenshot_row(const MereaderTuiTuiState *state,
     }
 
     char text[CCHARW_MAX * MB_LEN_MAX + 1U] = {0};
-    if (wcstombs(text, characters, sizeof(text) - 1U) == (size_t)-1) {
+    if (!screenshot_characters_to_utf8(characters, text, sizeof(text))) {
       return false;
     }
     MereaderTuiSvgCell *cell = &line->cells[line->cell_count];
