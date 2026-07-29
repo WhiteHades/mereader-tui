@@ -56,13 +56,19 @@ open a one-based row from reading history.
 open the best fuzzy match across history path, title, and author fields.
 .SH reader keys
 .TP
-.BR j , " " k , " arrows"
+.B c
+switch between the light and dark themes.
+.TP
+.BR j , " " k , " " up , " " down
 scroll down or up.
 .TP
-.BR ctrl-f , " " ctrl-b , " " pagedown , " " pageup
-move by pages.
+.BR ctrl-f , " " pagedown , " " l , " " space
+move down by pages.
 .TP
-.BR gg , " " G
+.BR ctrl-b , " " pageup , " " h
+move up by pages.
+.TP
+.BR home , " " gg , " " end , " " G
 jump to the beginning or end. a numeric prefix jumps to a layout line.
 .TP
 .BR / , " " f2
@@ -70,6 +76,9 @@ search forward or backward.
 .TP
 .BR n , " " N
 repeat the search forward or backward.
+.TP
+.B enter
+submit a prompt, open a selected popup item, or clear search highlights.
 .TP
 .BR b , " " B
 save a bookmark or open the bookmark list.
@@ -79,6 +88,9 @@ move backward or forward through jump history.
 .TP
 .BR tab , " " M
 open the table of contents or metadata.
+.TP
+.B v
+switch a pdf between fixed-page and reflowable text views.
 .TP
 .BR ? , " " f1
 show every configured key.
@@ -97,13 +109,16 @@ names both options. bindings beginning with a digit are rejected because digits
 are reserved for numeric prefixes.
 .SH library keys
 .TP
-.BR j , " " k , " arrows"
+.BR j , " " k , " " up , " " down
 move the selection.
 .TP
-.BR ctrl-f , " " ctrl-b , " " pagedown , " " pageup
-move by one screen.
+.BR ctrl-f , " " pagedown
+move down by one screen.
 .TP
-.BR gg , " " G
+.BR ctrl-b , " " pageup
+move up by one screen.
+.TP
+.BR home , " " gg , " " end , " " G
 select the first or last item.
 .TP
 .BR enter , " " l
@@ -136,7 +151,13 @@ rescan the library and remove missing local files. url entries remain.
 .B o
 open a local path or http or https url.
 .TP
-.B ?
+.B enter
+submit a filter, path, format, or book-picker prompt.
+.TP
+.B esc
+close a prompt or help.
+.TP
+.BR ? , " " f1
 open or close library help.
 .TP
 .B q

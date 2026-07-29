@@ -139,9 +139,10 @@ a folder containing `metadata.db` is treated as a calibre library. the first she
 
 | key | action |
 | --- | --- |
-| `j`, `k`, arrows | move the selection |
-| `ctrl-f`, `ctrl-b`, page keys | move by one screen |
-| `gg`, `G` | select the first or last item |
+| `j`, `k`, `up`, `down` | move the selection |
+| `ctrl-f`, `pagedown` | move down by one screen |
+| `ctrl-b`, `pageup` | move up by one screen |
+| `home`, `gg`, `end`, `G` | select the first or last item |
 | `enter`, `l` | open the selected item |
 | `/` | filter the current shelf through fff |
 | `space space` | find any book with a cover and details preview |
@@ -152,7 +153,9 @@ a folder containing `metadata.db` is treated as a calibre library. the first she
 | `s` | cycle recent, title, and author sorting |
 | `r` | rescan the library |
 | `o` | open a path or url |
-| `?` | show library help |
+| `enter` | submit a filter, path, format, or book-picker prompt |
+| `esc` | close a prompt or help |
+| `?`, `f1` | show library help |
 | `q` | quit |
 
 epub is preferred over pdf, mobi or azw, and other supported formats. press `f` to choose a different format. that choice is saved for the book.
@@ -163,11 +166,14 @@ library controls are configured separately under `[Library Keymaps]`, so changin
 
 | key | action |
 | --- | --- |
-| `j`, `k`, arrows | scroll |
-| `ctrl-f`, `ctrl-b`, page keys | move by pages |
-| `gg`, `G` | jump to the beginning or end |
+| `c` | switch between light and dark themes |
+| `j`, `k`, `up`, `down` | scroll |
+| `ctrl-f`, `pagedown`, `l`, `space` | move down by pages |
+| `ctrl-b`, `pageup`, `h` | move up by pages |
+| `home`, `gg`, `end`, `G` | jump to the beginning or end |
 | `/`, `f2` | search forward or backward |
 | `n`, `N` | repeat the search |
+| `enter` | submit a prompt or clear search highlights |
 | `ctrl-o`, `ctrl-i` | move through jump history |
 | `tab` | open the table of contents |
 | `b`, `B` | save or list bookmarks |
