@@ -19,5 +19,6 @@ typedef struct MereaderTuiLibraryAction {
 } MereaderTuiLibraryAction;
 
 [[nodiscard]] int mereader_tui_library_tui_run(const MereaderTuiConfig *config, const MereaderTuiHistory *history, MereaderTuiCatalog *catalog,
-                                        bool setup_required, MereaderTuiLibrarySort sort, const char *selected_filepath,
-                                        const char *context, MereaderTuiLibraryAction *action, MereaderTuiError *error);
+                                        const char *library_root, bool setup_required, MereaderTuiLibrarySort sort,
+                                        const char *selected_filepath, const char *context,
+                                        MereaderTuiLibraryAction *action, MereaderTuiError *error);

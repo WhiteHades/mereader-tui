@@ -148,6 +148,9 @@ cycle recent, title, and author sorting.
 .B r
 rescan the library and remove missing local files. url entries remain.
 .TP
+.B p
+browse directories and select the calibre library or ordinary book folder.
+.TP
 .B o
 open a local path or http or https url.
 .TP
@@ -179,6 +182,11 @@ checks
 .I ~/Calibre Library
 and
 .IR ~/Documents/Calibre Library .
+.IP
+dark terminal cells inherit the terminal's native background to avoid color
+seams. the configured dark background, which defaults to
+.BR #1e1e2e ,
+is used for image compositing and svg output.
 .TP
 .I ~/.cache/mereader-tui/mereader-tui.db
 sqlite reading history, bookmark, and library preference database.

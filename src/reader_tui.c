@@ -296,7 +296,8 @@ static void apply_theme(MereaderTuiTuiState *state) {
   const MereaderTuiColorScheme *theme = state->app->dark_mode
                                      ? &state->app->config.dark
                                      : &state->app->config.light;
-  const short background = terminal_color(theme->background);
+  const short background =
+      state->app->dark_mode ? -1 : terminal_color(theme->background);
   const short foreground = terminal_color(theme->foreground);
   const short accent = terminal_color(theme->accent);
   if (init_pair(MEREADER_TUI_PAIR_BASE, foreground, background) == ERR ||
@@ -873,9 +874,9 @@ static void draw_loader(MereaderTuiTuiState *state, unsigned phase) {
   char text[16] = {0};
   (void)snprintf(text, sizeof(text), "Loading %c",
                  frames[phase % MEREADER_TUI_ARRAY_LEN(frames)]);
-  (void)werase(stdscr);
   (void)wbkgd(stdscr,
               state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+  (void)werase(stdscr);
   const int y = state->rows / 2;
   int x = (state->columns - (int)strlen(text)) / 2;
   if (x < 0) {
@@ -1989,9 +1990,9 @@ static void draw_frame(MereaderTuiTuiState *state) {
   if (state->image_mode == MEREADER_TUI_IMAGE_MODE_ANSI && state->raw_truecolor) {
     (void)clearok(stdscr, true);
   }
-  (void)werase(stdscr);
   (void)wbkgd(stdscr,
               state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+  (void)werase(stdscr);
   for (int row = 0; row < state->rows; ++row) {
     draw_document_line(state, row, state->app->scroll_line + (size_t)row);
   }

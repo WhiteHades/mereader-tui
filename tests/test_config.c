@@ -47,7 +47,7 @@ static MereaderTuiTestResult test_defaults(void) {
     TEST_ASSERT_INT(config.image_mode, MEREADER_TUI_IMAGE_MODE_AUTO);
     TEST_ASSERT(!config.image_mode_explicit);
     TEST_ASSERT(config.show_image_as_ansi);
-    TEST_ASSERT_INT((int)config.dark.background, 0x1d1c2b);
+    TEST_ASSERT_INT((int)config.dark.background, 0x1e1e2e);
     TEST_ASSERT_INT((int)config.dark.foreground, 0xcdd6f4);
     TEST_ASSERT_INT((int)config.dark.accent, 0xcba6f7);
     TEST_ASSERT_INT((int)config.light.foreground, 0x4c4f69);
@@ -71,6 +71,8 @@ static MereaderTuiTestResult test_defaults(void) {
     TEST_ASSERT_STR(config.library_keymaps.first.items[1], "gg");
     TEST_ASSERT_SIZE(config.library_keymaps.find.length, 1U);
     TEST_ASSERT_STR(config.library_keymaps.find.items[0], "space space");
+    TEST_ASSERT_SIZE(config.library_keymaps.pick_library.length, 1U);
+    TEST_ASSERT_STR(config.library_keymaps.pick_library.items[0], "p");
     TEST_ASSERT_SIZE(config.library_keymaps.quit.length, 1U);
     TEST_ASSERT_STR(config.library_keymaps.quit.items[0], "q");
     TEST_ASSERT_INT(mereader_tui_config_content_width(&config, 120), 80);
@@ -185,6 +187,7 @@ static MereaderTuiTestResult test_key_lists(void) {
         "[Library Keymaps]\n"
         "MoveDown = n, down\n"
         "Find = zz\n"
+        "PickLibrary = P\n"
         "Quit = x\n";
     MereaderTuiConfig config = {0};
     MereaderTuiTestResult result = load_config_text("keys", text, &config);
@@ -202,6 +205,7 @@ static MereaderTuiTestResult test_key_lists(void) {
     TEST_ASSERT_SIZE(config.library_keymaps.move_down.length, 2U);
     TEST_ASSERT_STR(config.library_keymaps.move_down.items[0], "n");
     TEST_ASSERT_STR(config.library_keymaps.find.items[0], "zz");
+    TEST_ASSERT_STR(config.library_keymaps.pick_library.items[0], "P");
     TEST_ASSERT_STR(config.library_keymaps.quit.items[0], "x");
     mereader_tui_config_free(&config);
     return MEREADER_TUI_TEST_PASS;
@@ -366,6 +370,7 @@ static MereaderTuiTestResult test_default_file_creation_is_isolated(void) {
     TEST_ASSERT(strstr(mereader_tui_config_default_text(), "OpenBookmarks = B") != NULL);
     TEST_ASSERT(strstr(mereader_tui_config_default_text(), "OpenHelp = question_mark,f1") != NULL);
     TEST_ASSERT(strstr(mereader_tui_config_default_text(), "[Library Keymaps]") != NULL);
+    TEST_ASSERT(strstr(mereader_tui_config_default_text(), "PickLibrary = p") != NULL);
     TEST_ASSERT(strstr(mereader_tui_config_default_text(), "Find = space space") != NULL);
     MereaderTuiBuffer shipped = {0};
     TEST_ASSERT(mereader_tui_read_file("resources/config.ini", &shipped, &error));

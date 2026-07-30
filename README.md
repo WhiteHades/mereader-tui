@@ -138,7 +138,7 @@ run `man mereader-tui` for the complete command reference.
 
 ## library
 
-set `LibraryPath` in `~/.config/mereader-tui/config.ini` to a calibre library or an ordinary folder of books. `LibraryPath = auto` checks `~/Calibre Library` and `~/Documents/Calibre Library`. `MEREADER_TUI_LIBRARY_PATH` overrides the config for one process.
+press `p` in the library to browse directories and choose a calibre library or ordinary folder of books. the choice is saved to `LibraryPath` in `~/.config/mereader-tui/config.ini`. `LibraryPath = auto` checks `~/Calibre Library` and `~/Documents/Calibre Library`. `MEREADER_TUI_LIBRARY_PATH` overrides the config for one process.
 
 a folder containing `metadata.db` is treated as a calibre library. the first shelf shows all logical books. the author shelf groups those books by author. ordinary folders use their directory structure as metadata when possible. files with the same stem are grouped as formats of one book.
 
@@ -157,6 +157,7 @@ a folder containing `metadata.db` is treated as a calibre library. the first she
 | `backspace`, `esc`, `h` | go back or clear the filter |
 | `s` | cycle recent, title, and author sorting |
 | `r` | rescan the library |
+| `p` | browse for and select the library folder |
 | `o` | open a path or url |
 | `enter` | submit a filter, path, format, or book-picker prompt |
 | `esc` | close a prompt or help |
@@ -210,7 +211,7 @@ PageScrollDuration = 0.2
 ImageMode = auto
 
 [Color Dark]
-Background = #1d1c2b
+Background = #1e1e2e
 Foreground = #cdd6f4
 Accent = #cba6f7
 
@@ -220,7 +221,7 @@ Foreground = #4c4f69
 Accent = #8839ef
 ```
 
-the shipped palette is based on catppuccin mocha and latte. see `resources/config.ini` for every reader and library key mapping.
+the shipped palette is based on catppuccin mocha and latte. dark terminal cells inherit the terminal's native background to avoid color seams; `#1e1e2e` remains the default background for image compositing and svg output. see `resources/config.ini` for every reader and library key mapping.
 
 ## native fff integration
 

@@ -84,10 +84,21 @@ pass history
 library_output=$(printf '\033q' |
     TERM=xterm-256color timeout 10s "$binary" 2>&1) || fail library_default
 case $library_output in
-    *"mereader-tui"*"Paste the path to your book directory"*) ;;
+    *"mereader-tui"*"choose library folder"*) ;;
     *) fail library_default ;;
 esac
 pass library_default
+
+config="$XDG_CONFIG_HOME/mereader-tui/config.ini"
+sed -i "s|LibraryPath = auto|LibraryPath = $root/missing-library|" "$config"
+library_stale_output=$(printf '\033q' |
+    TERM=xterm-256color timeout 10s "$binary" 2>&1) || fail library_stale_path
+case $library_stale_output in
+    *"choose library folder"*) ;;
+    *) fail library_stale_path ;;
+esac
+sed -i "s|LibraryPath = $root/missing-library|LibraryPath = auto|" "$config"
+pass library_stale_path
 
 mkdir -p "$root/library"
 library_override_output=$(printf q |

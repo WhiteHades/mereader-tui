@@ -6,6 +6,8 @@
 #include "text_input.h"
 
 #include <curses.h>
+#include <dirent.h>
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -28,7 +30,6 @@ typedef enum MereaderTuiLibraryInputKind {
   MEREADER_TUI_LIBRARY_INPUT_NONE = 0,
   MEREADER_TUI_LIBRARY_INPUT_FILTER,
   MEREADER_TUI_LIBRARY_INPUT_PATH,
-  MEREADER_TUI_LIBRARY_INPUT_ROOT,
 } MereaderTuiLibraryInputKind;
 
 typedef enum MereaderTuiLibraryKeyAction {
@@ -46,6 +47,7 @@ typedef enum MereaderTuiLibraryKeyAction {
   MEREADER_TUI_LIBRARY_KEY_CHOOSE_FORMAT,
   MEREADER_TUI_LIBRARY_KEY_SORT,
   MEREADER_TUI_LIBRARY_KEY_REFRESH,
+  MEREADER_TUI_LIBRARY_KEY_PICK_LIBRARY,
   MEREADER_TUI_LIBRARY_KEY_OPEN_PATH,
   MEREADER_TUI_LIBRARY_KEY_FILTER,
   MEREADER_TUI_LIBRARY_KEY_FIND,
@@ -55,9 +57,19 @@ typedef enum MereaderTuiLibraryKeyAction {
   MEREADER_TUI_LIBRARY_KEY_QUIT,
 } MereaderTuiLibraryKeyAction;
 
+typedef struct MereaderTuiLibraryDirectoryPicker {
+  char *path;
+  char **names;
+  size_t length;
+  size_t capacity;
+  size_t selected;
+  size_t top;
+} MereaderTuiLibraryDirectoryPicker;
+
 typedef struct MereaderTuiLibraryTuiState {
   const MereaderTuiConfig *config;
   const MereaderTuiHistory *history;
+  const char *library_root;
   MereaderTuiCatalog *catalog;
   MereaderTuiGraphicsContext *graphics;
   MereaderTuiDocument cover_document;
@@ -72,6 +84,7 @@ typedef struct MereaderTuiLibraryTuiState {
   MereaderTuiLibraryAction action;
   MereaderTuiTextInput input;
   MereaderTuiTextInput picker_input;
+  MereaderTuiLibraryDirectoryPicker directory_picker;
   MereaderTuiLibraryInputKind input_kind;
   MereaderTuiLibrarySort sort;
   size_t selected;
@@ -101,6 +114,7 @@ typedef struct MereaderTuiLibraryTuiState {
   bool detail_view;
   bool help_open;
   bool picker_open;
+  bool directory_picker_open;
   bool setup_required;
   bool sequence_pending;
   MereaderTuiKey sequence_key;
@@ -110,6 +124,8 @@ typedef struct MereaderTuiLibraryTuiState {
 
 static void library_draw_box(int y, int x, int height, int width);
 static void library_ensure_picker_selection_visible(MereaderTuiLibraryTuiState *state);
+static void
+library_ensure_directory_selection_visible(MereaderTuiLibraryTuiState *state);
 
 static int size_to_int(size_t value) {
   return value > (size_t)INT_MAX ? INT_MAX : (int)value;
@@ -174,6 +190,7 @@ library_key_action(MereaderTuiLibraryTuiState *state,
       {MEREADER_TUI_LIBRARY_KEY_CHOOSE_FORMAT, &maps->choose_format},
       {MEREADER_TUI_LIBRARY_KEY_SORT, &maps->sort},
       {MEREADER_TUI_LIBRARY_KEY_REFRESH, &maps->refresh},
+      {MEREADER_TUI_LIBRARY_KEY_PICK_LIBRARY, &maps->pick_library},
       {MEREADER_TUI_LIBRARY_KEY_OPEN_PATH, &maps->open_path},
       {MEREADER_TUI_LIBRARY_KEY_FILTER, &maps->filter},
       {MEREADER_TUI_LIBRARY_KEY_FIND, &maps->find},
@@ -286,6 +303,7 @@ static void library_update_dimensions(MereaderTuiLibraryTuiState *state) {
   library_update_cell_pixels(state);
   library_ensure_selection_visible(state);
   library_ensure_picker_selection_visible(state);
+  library_ensure_directory_selection_visible(state);
   state->dirty = true;
 }
 
@@ -856,19 +874,31 @@ static void library_key_list_label(const MereaderTuiKeyList *keys, char *output,
 
 static void library_draw_help_hint(MereaderTuiLibraryTuiState *state, int row,
                                    int x, int width) {
-  const MereaderTuiKeyList *keys = &state->config->library_keymaps.help;
-  if (row < 0 || width < 7 || keys->length == 0U) {
+  const MereaderTuiLibraryKeymaps *maps = &state->config->library_keymaps;
+  if (row < 0 || width < 7 || maps->help.length == 0U) {
     return;
   }
-  char hint[64] = {0};
-  (void)snprintf(hint, sizeof(hint), "%s help",
-                 mereader_tui_key_display_name(keys->items[0]));
+  char help[64] = {0};
+  char hint[128] = {0};
+  (void)snprintf(help, sizeof(help), "%s help",
+                 mereader_tui_key_display_name(maps->help.items[0]));
+  if (maps->pick_library.length > 0U) {
+    (void)snprintf(hint, sizeof(hint), "%s library  %s",
+                   mereader_tui_key_display_name(maps->pick_library.items[0]),
+                   help);
+  }
   const int hint_width = size_to_int(strlen(hint));
-  if (hint_width > width) {
-    return;
+  if (hint[0] == '\0' || hint_width > width - 8) {
+    (void)snprintf(hint, sizeof(hint), "%s", help);
   }
-  (void)mvwhline(stdscr, row, x + width - hint_width, ' ', hint_width);
-  library_add_clipped(stdscr, row, x + width - hint_width, hint, hint_width);
+  const int visible_width = size_to_int(strlen(hint));
+  const int hint_x = x + width - visible_width;
+  if (hint_x > x) {
+    (void)mvwhline(stdscr, row, hint_x - 1, ' ', visible_width + 1);
+  } else {
+    (void)mvwhline(stdscr, row, hint_x, ' ', visible_width);
+  }
+  library_add_clipped(stdscr, row, hint_x, hint, visible_width);
 }
 
 static void library_draw_context(MereaderTuiLibraryTuiState *state, int row) {
@@ -879,10 +909,8 @@ static void library_draw_context(MereaderTuiLibraryTuiState *state, int row) {
   const int width = state->columns > 2 ? state->columns - 2 : state->columns;
   (void)wattron(stdscr, A_DIM);
   if (state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE) {
-    const char *prefix = state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER ? "/ "
-                         : state->input_kind == MEREADER_TUI_LIBRARY_INPUT_ROOT
-                             ? "library "
-                             : "open ";
+    const char *prefix =
+        state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER ? "/ " : "open ";
     const int full_prefix_width = size_to_int(strlen(prefix));
     const int prefix_width = full_prefix_width < width ? full_prefix_width
                              : width > 1               ? width - 1
@@ -1144,6 +1172,356 @@ static void library_draw_picker(MereaderTuiLibraryTuiState *state) {
   (void)wattroff(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
 }
 
+static void library_directory_picker_free(
+    MereaderTuiLibraryDirectoryPicker *picker) {
+  if (picker == NULL) {
+    return;
+  }
+  for (size_t index = 0U; index < picker->length; ++index) {
+    free(picker->names[index]);
+  }
+  free(picker->names);
+  free(picker->path);
+  *picker = (MereaderTuiLibraryDirectoryPicker){0};
+}
+
+static int library_compare_directory_names(const void *left,
+                                           const void *right) {
+  const char *left_name = *(char *const *)left;
+  const char *right_name = *(char *const *)right;
+  const int folded = mereader_tui_casecmp(left_name, right_name);
+  return folded == 0 ? strcmp(left_name, right_name) : folded;
+}
+
+static bool library_directory_picker_load(
+    MereaderTuiLibraryTuiState *state, const char *path,
+    MereaderTuiError *error) {
+  DIR *directory = opendir(path);
+  if (directory == NULL) {
+    const int saved_errno = errno;
+    mereader_tui_error_set(
+        error,
+        saved_errno == ENOENT || saved_errno == ENOTDIR
+            ? MEREADER_TUI_ERROR_NOT_FOUND
+            : MEREADER_TUI_ERROR_IO,
+        "cannot browse '%s': %s", path, strerror(saved_errno));
+    return false;
+  }
+
+  MereaderTuiLibraryDirectoryPicker replacement = {0};
+  replacement.path = mereader_tui_strdup(path, error);
+  bool loaded = replacement.path != NULL;
+  int read_error = 0;
+  while (loaded) {
+    errno = 0;
+    struct dirent *entry = readdir(directory);
+    if (entry == NULL) {
+      read_error = errno;
+      break;
+    }
+    if (strcmp(entry->d_name, ".") == 0 ||
+        strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    struct stat status = {0};
+    if (fstatat(dirfd(directory), entry->d_name, &status, 0) != 0 ||
+        !S_ISDIR(status.st_mode)) {
+      continue;
+    }
+    char **names = mereader_tui_array_reserve(
+        replacement.names, &replacement.capacity, sizeof(*replacement.names),
+        replacement.length + 1U, error);
+    if (names == NULL) {
+      loaded = false;
+      break;
+    }
+    replacement.names = names;
+    replacement.names[replacement.length] =
+        mereader_tui_strdup(entry->d_name, error);
+    if (replacement.names[replacement.length] == NULL) {
+      loaded = false;
+      break;
+    }
+    ++replacement.length;
+  }
+  const int close_status = closedir(directory);
+  if (loaded && read_error != 0) {
+    mereader_tui_error_set(
+        error,
+        read_error == ENOENT || read_error == ENOTDIR
+            ? MEREADER_TUI_ERROR_NOT_FOUND
+            : MEREADER_TUI_ERROR_IO,
+        "cannot read '%s': %s", path, strerror(read_error));
+    loaded = false;
+  } else if (loaded && close_status != 0) {
+    const int saved_errno = errno;
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO,
+                           "cannot close '%s': %s", path,
+                           strerror(saved_errno));
+    loaded = false;
+  }
+  if (!loaded) {
+    library_directory_picker_free(&replacement);
+    return false;
+  }
+  if (replacement.length > 1U) {
+    qsort(replacement.names, replacement.length, sizeof(*replacement.names),
+          library_compare_directory_names);
+  }
+  library_directory_picker_free(&state->directory_picker);
+  state->directory_picker = replacement;
+  return true;
+}
+
+static bool library_directory_picker_set_path(
+    MereaderTuiLibraryTuiState *state, const char *path,
+    MereaderTuiError *error) {
+  char *resolved = mereader_tui_realpath(path, error);
+  if (resolved == NULL) {
+    return false;
+  }
+  if (!mereader_tui_directory_exists(resolved)) {
+    mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND,
+                           "library path is not a directory: %s", path);
+    free(resolved);
+    return false;
+  }
+  const bool loaded = library_directory_picker_load(state, resolved, error);
+  free(resolved);
+  return loaded;
+}
+
+static bool library_directory_picker_has_parent(
+    const MereaderTuiLibraryDirectoryPicker *picker) {
+  return picker->path != NULL && strcmp(picker->path, "/") != 0;
+}
+
+static size_t library_directory_picker_entry_count(
+    const MereaderTuiLibraryDirectoryPicker *picker) {
+  return 1U + (library_directory_picker_has_parent(picker) ? 1U : 0U) +
+         picker->length;
+}
+
+static size_t library_directory_visible_rows(
+    const MereaderTuiLibraryTuiState *state) {
+  return state->rows > 8 ? (size_t)(state->rows - 8) : 1U;
+}
+
+static void
+library_ensure_directory_selection_visible(MereaderTuiLibraryTuiState *state) {
+  const size_t count =
+      library_directory_picker_entry_count(&state->directory_picker);
+  if (state->directory_picker.selected >= count) {
+    state->directory_picker.selected = count - 1U;
+  }
+  const size_t visible = library_directory_visible_rows(state);
+  if (state->directory_picker.selected < state->directory_picker.top) {
+    state->directory_picker.top = state->directory_picker.selected;
+  } else if (state->directory_picker.selected >=
+             state->directory_picker.top + visible) {
+    state->directory_picker.top =
+        state->directory_picker.selected - visible + 1U;
+  }
+  const size_t maximum_top = count > visible ? count - visible : 0U;
+  if (state->directory_picker.top > maximum_top) {
+    state->directory_picker.top = maximum_top;
+  }
+}
+
+static void library_draw_directory_row(MereaderTuiLibraryTuiState *state,
+                                       int y, int x, int width,
+                                       size_t entry_index) {
+  const MereaderTuiLibraryDirectoryPicker *picker =
+      &state->directory_picker;
+  const bool parent = library_directory_picker_has_parent(picker);
+  const size_t child_offset = 1U + (parent ? 1U : 0U);
+  char label[512] = {0};
+  if (entry_index == 0U) {
+    (void)snprintf(label, sizeof(label), "[use this folder]");
+  } else if (parent && entry_index == 1U) {
+    (void)snprintf(label, sizeof(label), "../");
+  } else {
+    const size_t child = entry_index - child_offset;
+    if (child >= picker->length) {
+      return;
+    }
+    (void)snprintf(label, sizeof(label), "%s/", picker->names[child]);
+  }
+  const bool selected = entry_index == picker->selected;
+  const attr_t attributes =
+      selected ? (state->colors ? A_NORMAL : A_REVERSE) : A_NORMAL;
+  const short pair =
+      selected && state->colors ? MEREADER_TUI_PAIR_SEARCH
+                                : MEREADER_TUI_PAIR_BASE;
+  (void)wattron(stdscr,
+                attributes | (state->colors ? COLOR_PAIR(pair) : 0));
+  (void)mvwhline(stdscr, y, x, ' ', width);
+  library_add_clipped(stdscr, y, x, label, width);
+  (void)wattroff(stdscr,
+                 attributes | (state->colors ? COLOR_PAIR(pair) : 0));
+}
+
+static void
+library_draw_directory_picker(MereaderTuiLibraryTuiState *state) {
+  if (state->rows <= 0 || state->columns <= 0) {
+    return;
+  }
+  if (state->rows < 7) {
+    (void)wattron(
+        stdscr,
+        state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+    for (int row = 0; row < state->rows; ++row) {
+      (void)mvwhline(stdscr, row, 0, ' ', state->columns);
+    }
+    if (state->rows == 1) {
+      library_draw_directory_row(
+          state, 0, 0, state->columns, state->directory_picker.selected);
+    } else {
+      (void)wattron(
+          stdscr,
+          A_BOLD |
+              (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
+      library_add_clipped(stdscr, 0, 0, "choose library folder",
+                          state->columns);
+      (void)wattroff(
+          stdscr,
+          A_BOLD |
+              (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
+      const int selection_y = state->rows >= 4 ? 2 : 1;
+      if (state->rows >= 4) {
+        (void)wattron(stdscr, A_DIM);
+        library_add_clipped(stdscr, 1, 0, state->directory_picker.path,
+                            state->columns);
+        (void)wattroff(stdscr, A_DIM);
+      }
+      const int content_end =
+          state->rows >= 3 ? state->rows - 1 : state->rows;
+      const size_t count =
+          library_directory_picker_entry_count(&state->directory_picker);
+      for (int row = selection_y; row < content_end; ++row) {
+        const size_t index =
+            state->directory_picker.top + (size_t)(row - selection_y);
+        if (index >= count) {
+          break;
+        }
+        library_draw_directory_row(state, row, 0, state->columns, index);
+      }
+      if (state->rows >= 3) {
+        const char *open =
+            state->config->library_keymaps.open.length == 0U
+                ? "enter"
+                : mereader_tui_key_display_name(
+                      state->config->library_keymaps.open.items[0]);
+        const char *close =
+            state->config->library_keymaps.close.length == 0U
+                ? "esc"
+                : mereader_tui_key_display_name(
+                      state->config->library_keymaps.close.items[0]);
+        char footer[128] = {0};
+        (void)snprintf(footer, sizeof(footer), "%s open/use  %s cancel",
+                       open, close);
+        (void)wattron(stdscr, A_DIM);
+        library_add_clipped(stdscr, state->rows - 1, 0, footer,
+                            state->columns);
+        (void)wattroff(stdscr, A_DIM);
+      }
+    }
+    (void)wattroff(
+        stdscr,
+        state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+    return;
+  }
+  const int margin_y = state->rows >= 8 ? 1 : 0;
+  const int margin_x = state->columns >= 40 ? 2 : 0;
+  const int height = state->rows - margin_y * 2;
+  const int width = state->columns - margin_x * 2;
+  if (height <= 0 || width <= 0) {
+    return;
+  }
+  (void)wattron(
+      stdscr,
+      state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+  for (int row = margin_y; row < margin_y + height; ++row) {
+    (void)mvwhline(stdscr, row, margin_x, ' ', width);
+  }
+  if (height >= 2 && width >= 2) {
+    library_draw_box(margin_y, margin_x, height, width);
+  }
+  const int inner_x = width >= 4 ? margin_x + 2 : margin_x;
+  const int inner_width = width >= 4 ? width - 4 : width;
+  if (inner_width <= 0) {
+    return;
+  }
+  const int title_y = margin_y + (height >= 2 ? 1 : 0);
+  if (title_y < margin_y + height) {
+    (void)wattron(
+        stdscr,
+        A_BOLD |
+            (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
+    library_add_clipped(stdscr, title_y, inner_x,
+                        "choose library folder", inner_width);
+    (void)wattroff(
+        stdscr,
+        A_BOLD |
+            (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
+  }
+  const int path_y = title_y + 1;
+  if (path_y < margin_y + height) {
+    (void)wattron(stdscr, A_DIM);
+    library_add_clipped(stdscr, path_y, inner_x,
+                        state->directory_picker.path, inner_width);
+    (void)wattroff(stdscr, A_DIM);
+  }
+  const int content_y = path_y + 2;
+  const int footer_y = margin_y + height - 2;
+  const int content_height = footer_y - content_y;
+  const size_t count =
+      library_directory_picker_entry_count(&state->directory_picker);
+  for (int offset = 0; offset < content_height; ++offset) {
+    const size_t index =
+        state->directory_picker.top + (size_t)offset;
+    if (index >= count) {
+      break;
+    }
+    library_draw_directory_row(state, content_y + offset, inner_x,
+                               inner_width, index);
+  }
+  if (footer_y >= margin_y && footer_y < margin_y + height) {
+    const MereaderTuiLibraryKeymaps *maps =
+        &state->config->library_keymaps;
+    const char *down =
+        maps->move_down.length == 0U
+            ? "down"
+            : mereader_tui_key_display_name(maps->move_down.items[0]);
+    const char *up =
+        maps->move_up.length == 0U
+            ? "up"
+            : mereader_tui_key_display_name(maps->move_up.items[0]);
+    const char *open =
+        maps->open.length == 0U
+            ? "enter"
+            : mereader_tui_key_display_name(maps->open.items[0]);
+    const char *back =
+        maps->back.length == 0U
+            ? "backspace"
+            : mereader_tui_key_display_name(maps->back.items[0]);
+    const char *close =
+        maps->close.length == 0U
+            ? "esc"
+            : mereader_tui_key_display_name(maps->close.items[0]);
+    char footer[192] = {0};
+    (void)snprintf(footer, sizeof(footer),
+                   "%s/%s  %s open  %s parent  %s cancel", up, down,
+                   open, back, close);
+    (void)wattron(stdscr, A_DIM);
+    library_add_clipped(stdscr, footer_y, inner_x, footer, inner_width);
+    (void)wattroff(stdscr, A_DIM);
+  }
+  (void)wattroff(
+      stdscr,
+      state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+}
+
 typedef struct MereaderTuiLibraryHelpLine {
   const MereaderTuiKeyList *keys;
   const char *description;
@@ -1170,6 +1548,8 @@ static void library_draw_help(MereaderTuiLibraryTuiState *state) {
        .description = "choose a format for the selected book"},
       {.keys = &maps->sort, .description = "change the sort order"},
       {.keys = &maps->refresh, .description = "rescan the library"},
+      {.keys = &maps->pick_library,
+       .description = "choose the library folder"},
       {.keys = &maps->open_path, .description = "open a typed path or URL"},
       {.keys = NULL, .description = "search"},
       {.keys = &maps->find, .description = "find any book with preview"},
@@ -1301,9 +1681,9 @@ static void library_draw_terminal_cover(MereaderTuiLibraryTuiState *state) {
 
 static void library_draw_frame(MereaderTuiLibraryTuiState *state) {
   library_begin_cover_frame(state);
-  (void)werase(stdscr);
   (void)wbkgd(stdscr,
               state->colors ? (chtype)COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
+  (void)werase(stdscr);
   const bool compact_input =
       state->rows == 2 && state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE;
   const bool input_active = state->input_kind != MEREADER_TUI_LIBRARY_INPUT_NONE;
@@ -1350,17 +1730,26 @@ static void library_draw_frame(MereaderTuiLibraryTuiState *state) {
     (void)wattroff(stdscr, A_DIM);
   }
   if (state->view.length == 0U && content_row < content_end) {
+    char setup_message[128] = "Use the library picker to choose a folder";
+    if (state->config->library_keymaps.pick_library.length > 0U) {
+      (void)snprintf(
+          setup_message, sizeof(setup_message),
+          "Press %s to choose your library folder",
+          mereader_tui_key_display_name(
+              state->config->library_keymaps.pick_library.items[0]));
+    }
     const char *message =
         state->setup_required
             ? state->status != NULL && state->status[0] != '\0'
                   ? state->status
-                  : "Paste the path to your book directory"
+                  : setup_message
         : state->filter[0] == '\0' ? "No books yet"
                                    : "No matching books";
     library_add_clipped(
         stdscr, content_row, state->columns > 2 ? 1 : 0, message,
         state->columns > 2 ? state->columns - 2 : state->columns);
-  } else if (state->detail_view && !state->picker_open && !state->help_open &&
+  } else if (state->detail_view && !state->picker_open &&
+             !state->directory_picker_open && !state->help_open &&
              content_row < content_end) {
     const int card_x = state->columns >= 8 ? 2 : 0;
     const int card_width =
@@ -1391,6 +1780,9 @@ static void library_draw_frame(MereaderTuiLibraryTuiState *state) {
   library_draw_context(state, footer_row);
   if (state->picker_open) {
     library_draw_picker(state);
+  }
+  if (state->directory_picker_open) {
+    library_draw_directory_picker(state);
   }
   if (state->help_open) {
     library_draw_help(state);
@@ -1425,9 +1817,9 @@ static bool library_initialize_curses(MereaderTuiLibraryTuiState *state,
     const MereaderTuiColorScheme *theme = &state->config->dark;
     (void)use_default_colors();
     if (init_pair(MEREADER_TUI_PAIR_BASE, terminal_color(theme->foreground),
-                  terminal_color(theme->background)) != ERR &&
+                  -1) != ERR &&
         init_pair(MEREADER_TUI_PAIR_ACCENT, terminal_color(theme->accent),
-                  terminal_color(theme->background)) != ERR &&
+                  -1) != ERR &&
         init_pair(MEREADER_TUI_PAIR_SEARCH, terminal_color(theme->background),
                   terminal_color(theme->accent)) != ERR) {
       state->colors = true;
@@ -1520,13 +1912,6 @@ static void library_begin_path(MereaderTuiLibraryTuiState *state) {
   state->dirty = true;
 }
 
-static void library_begin_root(MereaderTuiLibraryTuiState *state) {
-  memset(&state->input, 0, sizeof(state->input));
-  state->input_kind = MEREADER_TUI_LIBRARY_INPUT_ROOT;
-  library_clear_status(state);
-  state->dirty = true;
-}
-
 static void library_finish_input(MereaderTuiLibraryTuiState *state) {
   state->input_kind = MEREADER_TUI_LIBRARY_INPUT_NONE;
   memset(&state->input, 0, sizeof(state->input));
@@ -1604,6 +1989,214 @@ static void library_open_picker(MereaderTuiLibraryTuiState *state) {
   state->picker_open = true;
   library_clear_status(state);
   state->dirty = true;
+}
+
+static void
+library_close_directory_picker(MereaderTuiLibraryTuiState *state) {
+  state->directory_picker_open = false;
+  library_directory_picker_free(&state->directory_picker);
+  if (state->setup_required) {
+    char message[128] = "use the library picker to choose a folder";
+    if (state->config->library_keymaps.pick_library.length > 0U) {
+      (void)snprintf(
+          message, sizeof(message), "press %s to choose your library folder",
+          mereader_tui_key_display_name(
+              state->config->library_keymaps.pick_library.items[0]));
+    }
+    library_copy_status(state, message);
+  }
+  state->dirty = true;
+}
+
+static void
+library_open_directory_picker(MereaderTuiLibraryTuiState *state) {
+  const char *path = state->library_root;
+  if (path == NULL || path[0] == '\0') {
+    path = getenv("HOME");
+  }
+  if (path == NULL || path[0] == '\0') {
+    path = "/";
+  }
+  MereaderTuiError error = {0};
+  if (!library_directory_picker_set_path(state, path, &error)) {
+    library_runtime_error(state, &error, "cannot browse library folders");
+    return;
+  }
+  state->directory_picker.selected = 0U;
+  state->directory_picker.top = 0U;
+  state->directory_picker_open = true;
+  library_clear_status(state);
+  library_ensure_directory_selection_visible(state);
+  state->dirty = true;
+}
+
+static void library_move_directory_selection(
+    MereaderTuiLibraryTuiState *state, int amount) {
+  const size_t count =
+      library_directory_picker_entry_count(&state->directory_picker);
+  if (amount < 0) {
+    const size_t distance = (size_t)(-(long)amount);
+    state->directory_picker.selected =
+        distance > state->directory_picker.selected
+            ? 0U
+            : state->directory_picker.selected - distance;
+  } else {
+    const size_t maximum = count - 1U;
+    const size_t distance = (size_t)amount;
+    state->directory_picker.selected =
+        distance > maximum - state->directory_picker.selected
+            ? maximum
+            : state->directory_picker.selected + distance;
+  }
+  library_clear_status(state);
+  library_ensure_directory_selection_visible(state);
+  state->dirty = true;
+}
+
+static void
+library_directory_picker_parent(MereaderTuiLibraryTuiState *state) {
+  MereaderTuiError error = {0};
+  char *child =
+      mereader_tui_path_basename(state->directory_picker.path, &error);
+  char *parent =
+      child == NULL
+          ? NULL
+          : mereader_tui_path_dirname(state->directory_picker.path, &error);
+  if (parent == NULL ||
+      !library_directory_picker_set_path(state, parent, &error)) {
+    library_runtime_error(state, &error, "cannot browse parent folder");
+    free(parent);
+    free(child);
+    return;
+  }
+  state->directory_picker.selected = 0U;
+  if (child != NULL) {
+    const size_t offset =
+        1U + (library_directory_picker_has_parent(&state->directory_picker)
+                  ? 1U
+                  : 0U);
+    for (size_t index = 0U; index < state->directory_picker.length; ++index) {
+      if (strcmp(state->directory_picker.names[index], child) == 0) {
+        state->directory_picker.selected = offset + index;
+        break;
+      }
+    }
+  }
+  state->directory_picker.top = 0U;
+  library_clear_status(state);
+  library_ensure_directory_selection_visible(state);
+  state->dirty = true;
+  free(parent);
+  free(child);
+}
+
+static void
+library_activate_directory_selection(MereaderTuiLibraryTuiState *state) {
+  const MereaderTuiLibraryDirectoryPicker *picker =
+      &state->directory_picker;
+  if (picker->selected == 0U) {
+    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_SET_ROOT, picker->path);
+    return;
+  }
+  const bool parent = library_directory_picker_has_parent(picker);
+  if (parent && picker->selected == 1U) {
+    library_directory_picker_parent(state);
+    return;
+  }
+  const size_t offset = 1U + (parent ? 1U : 0U);
+  const size_t child_index = picker->selected - offset;
+  if (child_index >= picker->length) {
+    return;
+  }
+  MereaderTuiError error = {0};
+  char *path =
+      mereader_tui_path_join(picker->path, picker->names[child_index], &error);
+  if (path == NULL ||
+      !library_directory_picker_set_path(state, path, &error)) {
+    library_runtime_error(state, &error, "cannot browse folder");
+    free(path);
+    return;
+  }
+  state->directory_picker.selected = 0U;
+  state->directory_picker.top = 0U;
+  library_clear_status(state);
+  library_ensure_directory_selection_visible(state);
+  state->dirty = true;
+  free(path);
+}
+
+static void library_handle_directory_picker_key(
+    MereaderTuiLibraryTuiState *state, bool key_code, int code,
+    wchar_t character) {
+  const MereaderTuiLibraryKeymaps *maps = &state->config->library_keymaps;
+  const MereaderTuiLibraryKeyEntry entries[] = {
+      {MEREADER_TUI_LIBRARY_KEY_MOVE_DOWN, &maps->move_down},
+      {MEREADER_TUI_LIBRARY_KEY_MOVE_UP, &maps->move_up},
+      {MEREADER_TUI_LIBRARY_KEY_PAGE_DOWN, &maps->page_down},
+      {MEREADER_TUI_LIBRARY_KEY_PAGE_UP, &maps->page_up},
+      {MEREADER_TUI_LIBRARY_KEY_FIRST, &maps->first},
+      {MEREADER_TUI_LIBRARY_KEY_LAST, &maps->last},
+      {MEREADER_TUI_LIBRARY_KEY_OPEN, &maps->open},
+      {MEREADER_TUI_LIBRARY_KEY_CONFIRM, &maps->confirm},
+      {MEREADER_TUI_LIBRARY_KEY_BACK, &maps->back},
+      {MEREADER_TUI_LIBRARY_KEY_CLOSE, &maps->close},
+      {MEREADER_TUI_LIBRARY_KEY_CLOSE, &maps->quit},
+  };
+  const MereaderTuiKey key = library_key(key_code, code, character);
+  const MereaderTuiLibraryKeyAction action = library_match_key_entries(
+      state, entries, MEREADER_TUI_ARRAY_LEN(entries), &key);
+  switch (action) {
+  case MEREADER_TUI_LIBRARY_KEY_MOVE_DOWN:
+    library_move_directory_selection(state, 1);
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_MOVE_UP:
+    library_move_directory_selection(state, -1);
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_PAGE_DOWN:
+    library_move_directory_selection(
+        state, size_to_int(library_directory_visible_rows(state)));
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_PAGE_UP:
+    library_move_directory_selection(
+        state, -size_to_int(library_directory_visible_rows(state)));
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_FIRST:
+    state->directory_picker.selected = 0U;
+    library_ensure_directory_selection_visible(state);
+    state->dirty = true;
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_LAST:
+    state->directory_picker.selected =
+        library_directory_picker_entry_count(&state->directory_picker) - 1U;
+    library_ensure_directory_selection_visible(state);
+    state->dirty = true;
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_OPEN:
+  case MEREADER_TUI_LIBRARY_KEY_CONFIRM:
+    library_activate_directory_selection(state);
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_BACK:
+    if (library_directory_picker_has_parent(&state->directory_picker)) {
+      library_directory_picker_parent(state);
+    }
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_CLOSE:
+    library_close_directory_picker(state);
+    break;
+  case MEREADER_TUI_LIBRARY_KEY_NONE:
+  case MEREADER_TUI_LIBRARY_KEY_TOGGLE_VIEW:
+  case MEREADER_TUI_LIBRARY_KEY_TOGGLE_SHELF:
+  case MEREADER_TUI_LIBRARY_KEY_CHOOSE_FORMAT:
+  case MEREADER_TUI_LIBRARY_KEY_SORT:
+  case MEREADER_TUI_LIBRARY_KEY_REFRESH:
+  case MEREADER_TUI_LIBRARY_KEY_PICK_LIBRARY:
+  case MEREADER_TUI_LIBRARY_KEY_OPEN_PATH:
+  case MEREADER_TUI_LIBRARY_KEY_FILTER:
+  case MEREADER_TUI_LIBRARY_KEY_FIND:
+  case MEREADER_TUI_LIBRARY_KEY_HELP:
+  case MEREADER_TUI_LIBRARY_KEY_QUIT:
+    break;
+  }
 }
 
 static void library_move_picker_selection(MereaderTuiLibraryTuiState *state,
@@ -1690,14 +2283,7 @@ static void library_handle_input_key(MereaderTuiLibraryTuiState *state, bool key
     return;
   }
   if (action == MEREADER_TUI_LIBRARY_KEY_CONFIRM) {
-    if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_ROOT) {
-      if (state->input.length == 0U) {
-        library_copy_status(state, "enter a book directory");
-        state->dirty = true;
-      } else {
-        library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_SET_ROOT, state->input.value);
-      }
-    } else if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_PATH &&
+    if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_PATH &&
                state->input.length > 0U) {
       library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_OPEN, state->input.value);
     } else if (state->input_kind == MEREADER_TUI_LIBRARY_INPUT_FILTER &&
@@ -1863,6 +2449,10 @@ static void library_handle_key(MereaderTuiLibraryTuiState *state, bool key_code,
     }
     return;
   }
+  if (state->directory_picker_open) {
+    library_handle_directory_picker_key(state, key_code, code, character);
+    return;
+  }
   if (state->picker_open) {
     library_handle_picker_key(state, key_code, code, character);
     return;
@@ -1921,6 +2511,9 @@ static void library_handle_key(MereaderTuiLibraryTuiState *state, bool key_code,
     library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_REFRESH,
                  library_selected_filepath(state));
     break;
+  case MEREADER_TUI_LIBRARY_KEY_PICK_LIBRARY:
+    library_open_directory_picker(state);
+    break;
   case MEREADER_TUI_LIBRARY_KEY_OPEN_PATH:
     library_begin_path(state);
     break;
@@ -1955,7 +2548,8 @@ static void library_handle_key(MereaderTuiLibraryTuiState *state, bool key_code,
 }
 
 int mereader_tui_library_tui_run(const MereaderTuiConfig *config, const MereaderTuiHistory *history,
-                         MereaderTuiCatalog *catalog, bool setup_required,
+                         MereaderTuiCatalog *catalog, const char *library_root,
+                         bool setup_required,
                          MereaderTuiLibrarySort sort, const char *selected_filepath,
                          const char *context, MereaderTuiLibraryAction *action,
                          MereaderTuiError *error) {
@@ -1973,6 +2567,7 @@ int mereader_tui_library_tui_run(const MereaderTuiConfig *config, const Mereader
   MereaderTuiLibraryTuiState state = {
       .config = config,
       .history = history,
+      .library_root = library_root,
       .catalog = catalog,
       .mode = MEREADER_TUI_LIBRARY_SHELF_ALL,
       .format_parent = MEREADER_TUI_LIBRARY_SHELF_ALL,
@@ -1987,10 +2582,10 @@ int mereader_tui_library_tui_run(const MereaderTuiConfig *config, const Mereader
     mereader_tui_library_shelf_free(&state.shelf);
     return EXIT_FAILURE;
   }
-  if (state.setup_required) {
-    library_begin_root(&state);
-  }
   library_copy_status(&state, context);
+  if (state.setup_required) {
+    library_open_directory_picker(&state);
+  }
 
   if (!mereader_tui_terminal_runtime_begin(error)) {
     library_clear_status(&state);
@@ -2052,6 +2647,7 @@ cleanup:
   }
   (void)endwin();
   free(state.input_selection);
+  library_directory_picker_free(&state.directory_picker);
   mereader_tui_library_view_free(&state.picker_view);
   mereader_tui_library_shelf_free(&state.picker_shelf);
   library_clear_status(&state);

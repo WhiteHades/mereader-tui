@@ -537,11 +537,20 @@ static int run_library(void) {
     return report_error(&error);
   }
 
+  char context[512] = {0};
+  const char *library_override = getenv("MEREADER_TUI_LIBRARY_PATH");
+  bool library_root_needs_setup = false;
   char *library_root = resolve_library_root(&config, &error);
   if (library_root == NULL && mereader_tui_error_is_set(&error)) {
-    mereader_tui_database_close(&database);
-    mereader_tui_config_free(&config);
-    return report_error(&error);
+    if (library_override != NULL && library_override[0] != '\0') {
+      mereader_tui_database_close(&database);
+      mereader_tui_config_free(&config);
+      return report_error(&error);
+    }
+    (void)snprintf(context, sizeof(context),
+                   "configured library unavailable: %.478s", error.message);
+    mereader_tui_error_clear(&error);
+    library_root_needs_setup = true;
   }
   MereaderTuiCatalog catalog = {0};
 
@@ -549,7 +558,6 @@ static int run_library(void) {
   char *selected_filepath = NULL;
   size_t selected_index = 0U;
   bool preserve_index = false;
-  char context[512] = {0};
   bool remove_missing = false;
   int result = EXIT_SUCCESS;
   for (;;) {
@@ -590,7 +598,10 @@ static int run_library(void) {
     MereaderTuiLibraryAction action = {0};
     result = mereader_tui_library_tui_run(&config, &history,
                                   mereader_tui_catalog_is_open(&catalog) ? &catalog : NULL,
-                                  library_root == NULL && history.length == 0U,
+                                  library_root,
+                                  library_root == NULL &&
+                                      (history.length == 0U ||
+                                       library_root_needs_setup),
                                   sort,
                                   tui_selected_filepath, context, &action,
                                   &error);
@@ -660,8 +671,10 @@ static int run_library(void) {
         free(action.path);
         continue;
       }
+      mereader_tui_catalog_close(&catalog);
       free(library_root);
       library_root = resolved_root;
+      library_root_needs_setup = false;
       free(selected_filepath);
       selected_filepath = NULL;
       preserve_index = false;

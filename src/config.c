@@ -51,7 +51,7 @@ static const char MEREADER_TUI_DEFAULT_CONFIG[] =
     "\n"
     "# colors accept #rgb, #rrggbb, or common names\n"
     "[Color Dark]\n"
-    "Background = #1d1c2b\n"
+    "Background = #1e1e2e\n"
     "Foreground = #cdd6f4\n"
     "Accent = #cba6f7\n"
     "\n"
@@ -98,6 +98,7 @@ static const char MEREADER_TUI_DEFAULT_CONFIG[] =
     "ChooseFormat = f\n"
     "Sort = s\n"
     "Refresh = r\n"
+    "PickLibrary = p\n"
     "OpenPath = o\n"
     "Filter = slash\n"
     "Find = space space\n"
@@ -616,12 +617,14 @@ static bool mereader_tui_config_validate_library_keymaps(const MereaderTuiLibrar
                                                          MereaderTuiError *error) {
     static const char *const names[] = {
         "MoveDown", "MoveUp", "PageDown", "PageUp", "First", "Last", "Open", "Back", "ToggleView", "ToggleShelf",
-        "ChooseFormat", "Sort", "Refresh", "OpenPath", "Filter", "Find", "Help", "Close", "Quit", "Confirm",
+        "ChooseFormat", "Sort", "Refresh", "PickLibrary", "OpenPath", "Filter", "Find", "Help", "Close", "Quit",
+        "Confirm",
     };
     const MereaderTuiKeyList *const lists[] = {
         &maps->move_down, &maps->move_up, &maps->page_down, &maps->page_up, &maps->first, &maps->last, &maps->open,
         &maps->back, &maps->toggle_view, &maps->toggle_shelf, &maps->choose_format, &maps->sort, &maps->refresh,
-        &maps->open_path, &maps->filter, &maps->find, &maps->help, &maps->close, &maps->quit, &maps->confirm,
+        &maps->pick_library, &maps->open_path, &maps->filter, &maps->find, &maps->help, &maps->close, &maps->quit,
+        &maps->confirm,
     };
     for (size_t index = 0U; index < MEREADER_TUI_ARRAY_LEN(lists); ++index) {
         if (!mereader_tui_config_validate_key_list("Library Keymaps", names[index], lists[index], error)) {
@@ -653,12 +656,12 @@ static bool mereader_tui_config_build(const MereaderTuiIni *ini, MereaderTuiConf
     MereaderTuiConfig result = {
         .max_text_width = 80,
         .justification = MEREADER_TUI_JUSTIFY_LEFT,
-        .dark = {.background = 0x1d1c2bU, .foreground = 0xcdd6f4U, .accent = 0xcba6f7U},
+        .dark = {.background = 0x1e1e2eU, .foreground = 0xcdd6f4U, .accent = 0xcba6f7U},
         .light = {.background = 0xeff1f5U, .foreground = 0x4c4f69U, .accent = 0x8839efU},
     };
     (void)mereader_tui_config_parse_positive_width(mereader_tui_ini_get(ini, "General", "MaxTextWidth", "80"),
                                            &result.max_text_width, &result.max_text_width_percent);
-    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Background", "#1d1c2b"),
+    (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Background", "#1e1e2e"),
                                   &result.dark.background);
     (void)mereader_tui_config_parse_color(mereader_tui_ini_get(ini, "Color Dark", "Foreground", "#cdd6f4"),
                                   &result.dark.foreground);
@@ -764,6 +767,8 @@ static bool mereader_tui_config_build(const MereaderTuiIni *ini, MereaderTuiConf
                                     &result.library_keymaps.sort, error) ||
         !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Library Keymaps", "Refresh", "r"),
                                     &result.library_keymaps.refresh, error) ||
+        !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Library Keymaps", "PickLibrary", "p"),
+                                    &result.library_keymaps.pick_library, error) ||
         !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Library Keymaps", "OpenPath", "o"),
                                     &result.library_keymaps.open_path, error) ||
         !mereader_tui_config_parse_key_list(mereader_tui_ini_get(ini, "Library Keymaps", "Filter", "slash"),
@@ -820,6 +825,7 @@ static bool mereader_tui_config_output_empty(const MereaderTuiConfig *config) {
         &config->library_keymaps.toggle_shelf,
         &config->library_keymaps.choose_format,
         &config->library_keymaps.sort,      &config->library_keymaps.refresh,
+        &config->library_keymaps.pick_library,
         &config->library_keymaps.open_path, &config->library_keymaps.filter,
         &config->library_keymaps.find,      &config->library_keymaps.help,
         &config->library_keymaps.confirm,   &config->library_keymaps.close,
@@ -1127,6 +1133,7 @@ void mereader_tui_config_free(MereaderTuiConfig *config) {
         &config->library_keymaps.toggle_shelf,
         &config->library_keymaps.choose_format,
         &config->library_keymaps.sort,      &config->library_keymaps.refresh,
+        &config->library_keymaps.pick_library,
         &config->library_keymaps.open_path, &config->library_keymaps.filter,
         &config->library_keymaps.find,      &config->library_keymaps.help,
         &config->library_keymaps.confirm,   &config->library_keymaps.close,

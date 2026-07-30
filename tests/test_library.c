@@ -1053,23 +1053,23 @@ static MereaderTuiTestResult test_deleted_middle_selection_preservation(void) {
 static bool run_pty_empty_library(void) {
     LibraryPtyEnvironment environment = {0};
     LibraryPtyProcess process = {.master = -1};
-    char *book = library_create_epub("library-pty/setup/root/book.epub", "Setup Book", "Reader",
-                                     "SETUP BOOK BODY");
-    char *root = mereader_tui_test_path("library-pty/setup/root");
-    MereaderTuiString input = {0};
     MereaderTuiError error = {0};
-    bool success = book != NULL && root != NULL && mereader_tui_string_append(&input, root, &error) &&
-                   mereader_tui_string_append_char(&input, '\n', &error) &&
-                   library_pty_environment_init("empty", &environment) &&
-                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
-                    library_pty_wait_for(&process, "Paste the path to your book directory") &&
-                    library_pty_send_text(&process, "/definitely/missing/library\n") &&
-                    library_pty_wait_for(&process, "cannot use library") &&
-                    library_pty_send_text(&process, input.data) && library_pty_wait_for(&process, "library added") &&
-                    library_pty_settle(&process) &&
-                    library_pty_screen_line_matches(&process, 12U, 60U, "book", NULL) &&
-                    library_pty_send_text(&process, "q") &&
-                    library_pty_wait_exit(&process) && WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
+    bool success = library_pty_environment_init("empty", &environment);
+    char *book = success ? library_create_epub("library-pty/empty/home/Books/book.epub", "Setup Book", "Reader",
+                                               "SETUP BOOK BODY")
+                         : NULL;
+    char *root = success ? mereader_tui_test_path("library-pty/empty/home/Books") : NULL;
+    static const char choose_books[] = "\033OB\033OB\n\n";
+    success = success && book != NULL && root != NULL &&
+              library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
+              library_pty_wait_for(&process, "choose library folder") &&
+              library_pty_wait_for(&process, "Books/") &&
+              library_pty_send(&process, choose_books, sizeof(choose_books) - 1U) &&
+              library_pty_wait_for(&process, "library added") &&
+              library_pty_settle(&process) &&
+              library_pty_screen_line_matches(&process, 12U, 60U, "book", NULL) &&
+              library_pty_send_text(&process, "q") &&
+              library_pty_wait_exit(&process) && WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
     if (success) {
         char *config = mereader_tui_path_join(environment.config, "mereader-tui/config.ini", &error);
         MereaderTuiBuffer contents = {0};
@@ -1082,7 +1082,6 @@ static bool run_pty_empty_library(void) {
         fprintf(stderr, "setup PTY capture: %s\n",
                 process.output.data == NULL ? "(empty)" : process.output.data);
     }
-    mereader_tui_string_free(&input);
     library_pty_process_free(&process);
     library_pty_environment_free(&environment);
     free(book);
@@ -1092,6 +1091,72 @@ static bool run_pty_empty_library(void) {
 
 static MereaderTuiTestResult test_pty_empty_library(void) {
     TEST_ASSERT(run_pty_empty_library());
+    return MEREADER_TUI_TEST_PASS;
+}
+
+static bool run_pty_change_library_folder(void) {
+    LibraryPtyEnvironment environment = {0};
+    LibraryPtyProcess process = {.master = -1};
+    MereaderTuiError error = {0};
+    bool success = library_pty_environment_init("change-folder", &environment);
+    char *old_book =
+        success ? library_create_epub("library-pty/change-folder/home/Old Library/old.epub",
+                                      "Old Library Book", "Reader", "OLD LIBRARY BODY")
+                : NULL;
+    char *new_book =
+        success ? library_create_epub("library-pty/change-folder/home/New Library/new.epub",
+                                      "New Library Book", "Reader", "NEW LIBRARY BODY")
+                : NULL;
+    char *old_root =
+        success ? mereader_tui_test_path("library-pty/change-folder/home/Old Library") : NULL;
+    char *new_root =
+        success ? mereader_tui_test_path("library-pty/change-folder/home/New Library") : NULL;
+    success = success && old_book != NULL && new_book != NULL && old_root != NULL && new_root != NULL &&
+              library_configure_root(&environment, old_root) &&
+              library_pty_spawn(&environment, "xterm-256color", 14U, 72U, NULL, &process) &&
+              library_pty_wait_for(&process, "old") &&
+              library_pty_wait_for(&process, "p library");
+    if (success) {
+        static const char cancel[] = {'p', 27};
+        success = library_pty_send(&process, cancel, sizeof(cancel)) &&
+                  library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 72U, "old", NULL);
+    }
+    if (success) {
+        static const char choose_new[] = {'p', 'h', 27, 'O', 'A', '\n', '\n'};
+        success = library_pty_send(&process, choose_new, sizeof(choose_new)) &&
+                  library_pty_wait_for(&process, "library added") &&
+                  library_pty_settle(&process) &&
+                  library_pty_screen_line_matches(&process, 14U, 72U, "new", NULL);
+    }
+    if (success) {
+        char *config = mereader_tui_path_join(environment.config, "mereader-tui/config.ini", &error);
+        MereaderTuiBuffer contents = {0};
+        success = config != NULL && mereader_tui_read_file(config, &contents, &error) &&
+                  strstr((const char *)contents.data, new_root) != NULL &&
+                  strstr((const char *)contents.data, old_root) == NULL;
+        mereader_tui_buffer_free(&contents);
+        free(config);
+    }
+    if (success) {
+        success = library_pty_send_text(&process, "q") && library_pty_wait_exit(&process) &&
+                  WIFEXITED(process.status) && WEXITSTATUS(process.status) == 0;
+    }
+    if (!success) {
+        fprintf(stderr, "change folder PTY capture: %s\n",
+                process.output.data == NULL ? "(empty)" : process.output.data);
+    }
+    library_pty_process_free(&process);
+    library_pty_environment_free(&environment);
+    free(old_book);
+    free(new_book);
+    free(old_root);
+    free(new_root);
+    return success;
+}
+
+static MereaderTuiTestResult test_pty_change_library_folder(void) {
+    TEST_ASSERT(run_pty_change_library_folder());
     return MEREADER_TUI_TEST_PASS;
 }
 
@@ -1136,7 +1201,7 @@ static bool run_pty_typed_path(void) {
                     mereader_tui_string_append(&input, book, &error) &&
                     mereader_tui_string_append_char(&input, '\n', &error) &&
                     library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
-                    library_pty_wait_for(&process, "Paste the path to your book directory") &&
+                    library_pty_wait_for(&process, "choose library folder") &&
                    library_pty_send_text(&process, input.data) && library_pty_wait_for(&process, "TYPED PATH BODY");
     if (success) {
         library_pty_clear_output(&process);
@@ -1173,6 +1238,7 @@ static bool run_pty_custom_library_keymaps(void) {
         "MoveDown = x\n"
         "First = zz\n"
         "ToggleView = t\n"
+        "PickLibrary = P\n"
         "Help = HH\n"
         "Confirm = zz\n"
         "Close = CC\n"
@@ -1183,6 +1249,18 @@ static bool run_pty_custom_library_keymaps(void) {
                    library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
                    library_pty_wait_for(&process, "HH help") && library_pty_settle(&process) &&
                    library_pty_screen_line_matches(&process, 12U, 60U, "1/2 - recent", NULL);
+    if (success) {
+        stage = "custom library picker key";
+        library_pty_clear_output(&process);
+        success = library_pty_send_text(&process, "p") &&
+                  library_pty_settle(&process) &&
+                  !library_pty_screen_line_matches(
+                      &process, 12U, 60U, "choose library folder", NULL) &&
+                  library_pty_send_text(&process, "P") &&
+                  library_pty_wait_for(&process, "choose library folder") &&
+                  library_pty_send_text(&process, "CC") &&
+                  library_pty_settle(&process);
+    }
     if (success) {
         stage = "navigation";
         library_pty_clear_output(&process);
@@ -1701,7 +1779,7 @@ static bool run_pty_signal_restore(void) {
     LibraryPtyProcess process = {.master = -1};
     bool success = library_pty_environment_init("signal", &environment) &&
                     library_pty_spawn(&environment, "xterm-256color", 12U, 60U, NULL, &process) &&
-                    library_pty_wait_for(&process, "Paste the path to your book directory") &&
+                    library_pty_wait_for(&process, "choose library folder") &&
                     kill(process.pid, SIGTERM) == 0 &&
                    library_pty_wait_exit(&process) && WIFEXITED(process.status) &&
                    WEXITSTATUS(process.status) == 128 + SIGTERM && process.output.data != NULL &&
@@ -1937,6 +2015,7 @@ const MereaderTuiTestCase *mereader_tui_library_test_cases(size_t *count) {
         {.name = "selection_preservation", .function = test_selection_preservation},
         {.name = "deleted_middle_selection_preservation", .function = test_deleted_middle_selection_preservation},
         {.name = "pty_empty_library", .function = test_pty_empty_library},
+        {.name = "pty_change_library_folder", .function = test_pty_change_library_folder},
         {.name = "pty_open_return_and_typed_path", .function = test_pty_open_return_and_typed_path},
         {.name = "pty_custom_library_keymaps", .function = test_pty_custom_library_keymaps},
         {.name = "pty_live_resize", .function = test_pty_live_resize},

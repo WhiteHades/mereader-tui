@@ -50,6 +50,7 @@ typedef struct MereaderTuiLibraryKeymaps {
     MereaderTuiKeyList choose_format;
     MereaderTuiKeyList sort;
     MereaderTuiKeyList refresh;
+    MereaderTuiKeyList pick_library;
     MereaderTuiKeyList open_path;
     MereaderTuiKeyList filter;
     MereaderTuiKeyList find;
