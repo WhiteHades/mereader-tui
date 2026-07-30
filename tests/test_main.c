@@ -29,6 +29,7 @@ int main(void) {
     size_t fb2_count = 0U;
     size_t graphics_count = 0U;
     size_t library_count = 0U;
+    size_t library_directory_picker_count = 0U;
     size_t library_shelf_count = 0U;
     size_t layout_count = 0U;
     size_t pdf_count = 0U;
@@ -44,6 +45,8 @@ int main(void) {
     const MereaderTuiTestCase *fb2_cases = mereader_tui_fb2_test_cases(&fb2_count);
     const MereaderTuiTestCase *graphics_cases = mereader_tui_graphics_test_cases(&graphics_count);
     const MereaderTuiTestCase *library_cases = mereader_tui_library_test_cases(&library_count);
+    const MereaderTuiTestCase *library_directory_picker_cases =
+        mereader_tui_library_directory_picker_test_cases(&library_directory_picker_count);
     const MereaderTuiTestCase *library_shelf_cases = mereader_tui_library_shelf_test_cases(&library_shelf_count);
     const MereaderTuiTestCase *layout_cases = mereader_tui_layout_test_cases(&layout_count);
     const MereaderTuiTestCase *pdf_cases = mereader_tui_pdf_test_cases(&pdf_count);
@@ -60,6 +63,9 @@ int main(void) {
         {.name = "fb2", .cases = fb2_cases, .count = fb2_count},
         {.name = "graphics", .cases = graphics_cases, .count = graphics_count},
         {.name = "library", .cases = library_cases, .count = library_count},
+        {.name = "library_directory_picker",
+         .cases = library_directory_picker_cases,
+         .count = library_directory_picker_count},
         {.name = "library_shelf", .cases = library_shelf_cases, .count = library_shelf_count},
         {.name = "layout", .cases = layout_cases, .count = layout_count},
         {.name = "pdf", .cases = pdf_cases, .count = pdf_count},

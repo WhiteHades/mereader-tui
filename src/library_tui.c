@@ -2,12 +2,11 @@
 #include "mereader-tui/graphics.h"
 #include "mereader-tui/keymap.h"
 #include "mereader-tui/library_shelf.h"
+#include "library_directory_picker.h"
 #include "terminal_runtime.h"
 #include "text_input.h"
 
 #include <curses.h>
-#include <dirent.h>
-#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -56,19 +55,6 @@ typedef enum MereaderTuiLibraryKeyAction {
   MEREADER_TUI_LIBRARY_KEY_CLOSE,
   MEREADER_TUI_LIBRARY_KEY_QUIT,
 } MereaderTuiLibraryKeyAction;
-
-typedef struct MereaderTuiLibraryDirectoryPicker {
-  char *path;
-  char **names;
-  size_t length;
-  size_t capacity;
-  MereaderTuiTextInput query;
-  MereaderTuiSearchIndex search;
-  MereaderTuiSearchDirectories matches;
-  size_t selected;
-  size_t top;
-  bool scanning;
-} MereaderTuiLibraryDirectoryPicker;
 
 typedef struct MereaderTuiLibraryTuiState {
   const MereaderTuiConfig *config;
@@ -1176,236 +1162,6 @@ static void library_draw_picker(MereaderTuiLibraryTuiState *state) {
   (void)wattroff(stdscr, state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_BASE) : A_NORMAL);
 }
 
-static void library_directory_picker_free(
-    MereaderTuiLibraryDirectoryPicker *picker) {
-  if (picker == NULL) {
-    return;
-  }
-  for (size_t index = 0U; index < picker->length; ++index) {
-    free(picker->names[index]);
-  }
-  free(picker->names);
-  free(picker->path);
-  mereader_tui_search_index_close(&picker->search);
-  mereader_tui_search_directories_free(&picker->matches);
-  *picker = (MereaderTuiLibraryDirectoryPicker){0};
-}
-
-static int library_compare_directory_names(const void *left,
-                                           const void *right) {
-  const char *left_name = *(char *const *)left;
-  const char *right_name = *(char *const *)right;
-  const int folded = mereader_tui_casecmp(left_name, right_name);
-  return folded == 0 ? strcmp(left_name, right_name) : folded;
-}
-
-static bool library_directory_picker_load(
-    MereaderTuiLibraryTuiState *state, const char *path,
-    MereaderTuiError *error) {
-  DIR *directory = opendir(path);
-  if (directory == NULL) {
-    const int saved_errno = errno;
-    mereader_tui_error_set(
-        error,
-        saved_errno == ENOENT || saved_errno == ENOTDIR
-            ? MEREADER_TUI_ERROR_NOT_FOUND
-            : MEREADER_TUI_ERROR_IO,
-        "cannot browse '%s': %s", path, strerror(saved_errno));
-    return false;
-  }
-
-  MereaderTuiLibraryDirectoryPicker replacement = {0};
-  replacement.path = mereader_tui_strdup(path, error);
-  bool loaded = replacement.path != NULL;
-  int read_error = 0;
-  while (loaded) {
-    errno = 0;
-    struct dirent *entry = readdir(directory);
-    if (entry == NULL) {
-      read_error = errno;
-      break;
-    }
-    if (strcmp(entry->d_name, ".") == 0 ||
-        strcmp(entry->d_name, "..") == 0) {
-      continue;
-    }
-    struct stat status = {0};
-    if (fstatat(dirfd(directory), entry->d_name, &status, 0) != 0 ||
-        !S_ISDIR(status.st_mode)) {
-      continue;
-    }
-    char **names = mereader_tui_array_reserve(
-        replacement.names, &replacement.capacity, sizeof(*replacement.names),
-        replacement.length + 1U, error);
-    if (names == NULL) {
-      loaded = false;
-      break;
-    }
-    replacement.names = names;
-    replacement.names[replacement.length] =
-        mereader_tui_strdup(entry->d_name, error);
-    if (replacement.names[replacement.length] == NULL) {
-      loaded = false;
-      break;
-    }
-    ++replacement.length;
-  }
-  const int close_status = closedir(directory);
-  if (loaded && read_error != 0) {
-    mereader_tui_error_set(
-        error,
-        read_error == ENOENT || read_error == ENOTDIR
-            ? MEREADER_TUI_ERROR_NOT_FOUND
-            : MEREADER_TUI_ERROR_IO,
-        "cannot read '%s': %s", path, strerror(read_error));
-    loaded = false;
-  } else if (loaded && close_status != 0) {
-    const int saved_errno = errno;
-    mereader_tui_error_set(error, MEREADER_TUI_ERROR_IO,
-                           "cannot close '%s': %s", path,
-                           strerror(saved_errno));
-    loaded = false;
-  }
-  if (!loaded) {
-    library_directory_picker_free(&replacement);
-    return false;
-  }
-  if (replacement.length > 1U) {
-    qsort(replacement.names, replacement.length, sizeof(*replacement.names),
-          library_compare_directory_names);
-  }
-  library_directory_picker_free(&state->directory_picker);
-  state->directory_picker = replacement;
-  return true;
-}
-
-static bool library_directory_picker_set_path(
-    MereaderTuiLibraryTuiState *state, const char *path,
-    MereaderTuiError *error) {
-  char *resolved = mereader_tui_realpath(path, error);
-  if (resolved == NULL) {
-    return false;
-  }
-  if (!mereader_tui_directory_exists(resolved)) {
-    mereader_tui_error_set(error, MEREADER_TUI_ERROR_NOT_FOUND,
-                           "library path is not a directory: %s", path);
-    free(resolved);
-    return false;
-  }
-  const bool loaded = library_directory_picker_load(state, resolved, error);
-  free(resolved);
-  return loaded;
-}
-
-static bool library_directory_picker_searching(
-    const MereaderTuiLibraryDirectoryPicker *picker) {
-  return picker->query.length > 0U;
-}
-
-static MereaderTuiSearchIndex *library_directory_picker_search_index(
-    MereaderTuiLibraryTuiState *state, MereaderTuiError *error) {
-  MereaderTuiLibraryDirectoryPicker *picker = &state->directory_picker;
-  if (state->catalog != NULL &&
-      strcmp(picker->path, state->catalog->search.root) == 0) {
-    return &state->catalog->search;
-  }
-  if (picker->search.handle == NULL &&
-      !mereader_tui_search_index_start(&picker->search, picker->path, error)) {
-    return NULL;
-  }
-  return &picker->search;
-}
-
-static bool library_directory_picker_update_search(
-    MereaderTuiLibraryTuiState *state, MereaderTuiError *error) {
-  MereaderTuiLibraryDirectoryPicker *picker = &state->directory_picker;
-  if (!library_directory_picker_searching(picker)) {
-    mereader_tui_search_directories_free(&picker->matches);
-    mereader_tui_search_index_close(&picker->search);
-    picker->scanning = false;
-    picker->selected = 0U;
-    picker->top = 0U;
-    return true;
-  }
-
-  MereaderTuiSearchIndex *index =
-      library_directory_picker_search_index(state, error);
-  if (index == NULL) {
-    return false;
-  }
-  MereaderTuiSearchDirectories matches = {0};
-  if (!mereader_tui_search_directories(index, picker->query.value, 0U, 512U,
-                               &matches, error)) {
-    return false;
-  }
-  size_t retained = 0U;
-  for (size_t result = 0U; result < matches.length; ++result) {
-    if (strcmp(matches.items[result].relative_path, "/") == 0 ||
-        strcmp(matches.items[result].relative_path, ".") == 0) {
-      free(matches.items[result].relative_path);
-      continue;
-    }
-    matches.items[retained++] = matches.items[result];
-  }
-  const size_t removed = matches.length - retained;
-  if (removed > matches.total) {
-    matches.total = 0U;
-  } else {
-    matches.total -= removed;
-  }
-  matches.length = retained;
-  bool scanning = false;
-  if (index == &picker->search &&
-      !mereader_tui_search_index_scanning(index, &scanning, error)) {
-    mereader_tui_search_directories_free(&matches);
-    return false;
-  }
-  mereader_tui_search_directories_free(&picker->matches);
-  picker->matches = matches;
-  picker->scanning = scanning;
-  picker->selected = 0U;
-  picker->top = 0U;
-  return true;
-}
-
-static void library_directory_picker_poll(
-    MereaderTuiLibraryTuiState *state) {
-  MereaderTuiLibraryDirectoryPicker *picker = &state->directory_picker;
-  if (!state->directory_picker_open || !picker->scanning ||
-      picker->search.handle == NULL) {
-    return;
-  }
-  MereaderTuiError error = {0};
-  bool scanning = true;
-  if (!mereader_tui_search_index_scanning(&picker->search, &scanning,
-                                  &error)) {
-    picker->scanning = false;
-    library_runtime_error(state, &error, "cannot inspect folder index");
-  } else if (!scanning) {
-    picker->scanning = false;
-    if (!library_directory_picker_update_search(state, &error)) {
-      library_runtime_error(state, &error, "cannot finish folder search");
-    } else {
-      library_ensure_directory_selection_visible(state);
-      state->dirty = true;
-    }
-  }
-}
-
-static bool library_directory_picker_has_parent(
-    const MereaderTuiLibraryDirectoryPicker *picker) {
-  return picker->path != NULL && strcmp(picker->path, "/") != 0;
-}
-
-static size_t library_directory_picker_entry_count(
-    const MereaderTuiLibraryDirectoryPicker *picker) {
-  if (library_directory_picker_searching(picker)) {
-    return picker->matches.length;
-  }
-  return 1U + (library_directory_picker_has_parent(picker) ? 1U : 0U) +
-         picker->length;
-}
-
 static size_t library_directory_visible_rows(
     const MereaderTuiLibraryTuiState *state) {
   return state->rows > 8 ? (size_t)(state->rows - 8) : 1U;
@@ -1413,27 +1169,32 @@ static size_t library_directory_visible_rows(
 
 static void
 library_ensure_directory_selection_visible(MereaderTuiLibraryTuiState *state) {
-  const size_t count =
-      library_directory_picker_entry_count(&state->directory_picker);
-  if (count == 0U) {
-    state->directory_picker.selected = 0U;
-    state->directory_picker.top = 0U;
+  mereader_tui_library_directory_picker_ensure_selection_visible(
+      &state->directory_picker, library_directory_visible_rows(state));
+}
+
+static MereaderTuiSearchIndex *
+library_directory_picker_active_index(MereaderTuiLibraryTuiState *state) {
+  return state->catalog == NULL ? NULL : &state->catalog->search;
+}
+
+static void library_directory_picker_poll(
+    MereaderTuiLibraryTuiState *state) {
+  if (!state->directory_picker_open) {
     return;
   }
-  if (state->directory_picker.selected >= count) {
-    state->directory_picker.selected = count - 1U;
-  }
-  const size_t visible = library_directory_visible_rows(state);
-  if (state->directory_picker.selected < state->directory_picker.top) {
-    state->directory_picker.top = state->directory_picker.selected;
-  } else if (state->directory_picker.selected >=
-             state->directory_picker.top + visible) {
-    state->directory_picker.top =
-        state->directory_picker.selected - visible + 1U;
-  }
-  const size_t maximum_top = count > visible ? count - visible : 0U;
-  if (state->directory_picker.top > maximum_top) {
-    state->directory_picker.top = maximum_top;
+  MereaderTuiError error = {0};
+  bool completed = false;
+  if (!mereader_tui_library_directory_picker_poll(
+          &state->directory_picker,
+          library_directory_picker_active_index(state), &completed, &error)) {
+    library_runtime_error(
+        state, &error,
+        completed ? "cannot finish folder search"
+                  : "cannot inspect folder index");
+  } else if (completed) {
+    library_ensure_directory_selection_visible(state);
+    state->dirty = true;
   }
 }
 
@@ -1442,25 +1203,16 @@ static void library_draw_directory_row(MereaderTuiLibraryTuiState *state,
                                        size_t entry_index) {
   const MereaderTuiLibraryDirectoryPicker *picker =
       &state->directory_picker;
-  const bool parent = library_directory_picker_has_parent(picker);
-  const size_t child_offset = 1U + (parent ? 1U : 0U);
+  MereaderTuiLibraryDirectoryPickerEntry entry = {0};
+  if (!mereader_tui_library_directory_picker_entry(picker, entry_index,
+                                                   &entry)) {
+    return;
+  }
   char label[512] = {0};
-  if (library_directory_picker_searching(picker)) {
-    if (entry_index >= picker->matches.length) {
-      return;
-    }
-    (void)snprintf(label, sizeof(label), "%s/",
-                   picker->matches.items[entry_index].relative_path);
-  } else if (entry_index == 0U) {
-    (void)snprintf(label, sizeof(label), "[use this folder]");
-  } else if (parent && entry_index == 1U) {
-    (void)snprintf(label, sizeof(label), "../");
+  if (entry.kind == MEREADER_TUI_LIBRARY_DIRECTORY_PICKER_ENTRY_USE) {
+    (void)snprintf(label, sizeof(label), "%s", entry.name);
   } else {
-    const size_t child = entry_index - child_offset;
-    if (child >= picker->length) {
-      return;
-    }
-    (void)snprintf(label, sizeof(label), "%s/", picker->names[child]);
+    (void)snprintf(label, sizeof(label), "%s/", entry.name);
   }
   const bool selected = entry_index == picker->selected;
   const attr_t attributes =
@@ -1542,7 +1294,8 @@ library_draw_directory_picker(MereaderTuiLibraryTuiState *state) {
           A_BOLD |
               (state->colors ? COLOR_PAIR(MEREADER_TUI_PAIR_ACCENT) : 0));
       const bool searching =
-          library_directory_picker_searching(&state->directory_picker);
+          mereader_tui_library_directory_picker_searching(
+              &state->directory_picker);
       const int selection_y = searching && state->rows >= 5
                                   ? 3
                                   : state->rows >= 4 ? 2 : 1;
@@ -1558,7 +1311,8 @@ library_draw_directory_picker(MereaderTuiLibraryTuiState *state) {
       const int content_end =
           state->rows >= 3 ? state->rows - 1 : state->rows;
       const size_t count =
-          library_directory_picker_entry_count(&state->directory_picker);
+          mereader_tui_library_directory_picker_entry_count(
+              &state->directory_picker);
       for (int row = selection_y; row < content_end; ++row) {
         const size_t index =
             state->directory_picker.top + (size_t)(row - selection_y);
@@ -1643,9 +1397,11 @@ library_draw_directory_picker(MereaderTuiLibraryTuiState *state) {
   const int footer_y = margin_y + height - 2;
   const int content_height = footer_y - content_y;
   const size_t count =
-      library_directory_picker_entry_count(&state->directory_picker);
+      mereader_tui_library_directory_picker_entry_count(
+          &state->directory_picker);
   if (content_height > 0 && count == 0U &&
-      library_directory_picker_searching(&state->directory_picker)) {
+      mereader_tui_library_directory_picker_searching(
+          &state->directory_picker)) {
     (void)wattron(stdscr, A_DIM);
     library_add_clipped(stdscr, content_y, inner_x,
                         state->directory_picker.scanning
@@ -1679,7 +1435,8 @@ library_draw_directory_picker(MereaderTuiLibraryTuiState *state) {
             ? "esc"
             : mereader_tui_key_display_name(maps->close.items[0]);
     char footer[192] = {0};
-    if (library_directory_picker_searching(&state->directory_picker)) {
+    if (mereader_tui_library_directory_picker_searching(
+            &state->directory_picker)) {
       (void)snprintf(footer, sizeof(footer),
                      "search  arrows select  %s open  backspace edit  %s cancel",
                      open, close);
@@ -2170,7 +1927,7 @@ static void library_open_picker(MereaderTuiLibraryTuiState *state) {
 static void
 library_close_directory_picker(MereaderTuiLibraryTuiState *state) {
   state->directory_picker_open = false;
-  library_directory_picker_free(&state->directory_picker);
+  mereader_tui_library_directory_picker_free(&state->directory_picker);
   if (state->setup_required) {
     char message[128] = "use the library picker to choose a folder";
     if (state->config->library_keymaps.pick_library.length > 0U) {
@@ -2194,12 +1951,11 @@ library_open_directory_picker(MereaderTuiLibraryTuiState *state) {
     path = "/";
   }
   MereaderTuiError error = {0};
-  if (!library_directory_picker_set_path(state, path, &error)) {
+  if (!mereader_tui_library_directory_picker_open(
+          &state->directory_picker, path, &error)) {
     library_runtime_error(state, &error, "cannot browse library folders");
     return;
   }
-  state->directory_picker.selected = 0U;
-  state->directory_picker.top = 0U;
   state->directory_picker_open = true;
   library_clear_status(state);
   library_ensure_directory_selection_visible(state);
@@ -2208,129 +1964,65 @@ library_open_directory_picker(MereaderTuiLibraryTuiState *state) {
 
 static void library_move_directory_selection(
     MereaderTuiLibraryTuiState *state, int amount) {
-  const size_t count =
-      library_directory_picker_entry_count(&state->directory_picker);
-  if (count == 0U) {
+  if (mereader_tui_library_directory_picker_entry_count(
+          &state->directory_picker) == 0U) {
     return;
   }
-  if (amount < 0) {
-    const size_t distance = (size_t)(-(long)amount);
-    state->directory_picker.selected =
-        distance > state->directory_picker.selected
-            ? 0U
-            : state->directory_picker.selected - distance;
-  } else {
-    const size_t maximum = count - 1U;
-    const size_t distance = (size_t)amount;
-    state->directory_picker.selected =
-        distance > maximum - state->directory_picker.selected
-            ? maximum
-            : state->directory_picker.selected + distance;
-  }
+  mereader_tui_library_directory_picker_move_selection(
+      &state->directory_picker, amount, library_directory_visible_rows(state));
   library_clear_status(state);
-  library_ensure_directory_selection_visible(state);
   state->dirty = true;
 }
 
 static void
 library_directory_picker_parent(MereaderTuiLibraryTuiState *state) {
   MereaderTuiError error = {0};
-  char *child =
-      mereader_tui_path_basename(state->directory_picker.path, &error);
-  char *parent =
-      child == NULL
-          ? NULL
-          : mereader_tui_path_dirname(state->directory_picker.path, &error);
-  if (parent == NULL ||
-      !library_directory_picker_set_path(state, parent, &error)) {
+  if (!mereader_tui_library_directory_picker_parent(
+          &state->directory_picker, &error)) {
     library_runtime_error(state, &error, "cannot browse parent folder");
-    free(parent);
-    free(child);
     return;
   }
-  state->directory_picker.selected = 0U;
-  if (child != NULL) {
-    const size_t offset =
-        1U + (library_directory_picker_has_parent(&state->directory_picker)
-                  ? 1U
-                  : 0U);
-    for (size_t index = 0U; index < state->directory_picker.length; ++index) {
-      if (strcmp(state->directory_picker.names[index], child) == 0) {
-        state->directory_picker.selected = offset + index;
-        break;
-      }
-    }
-  }
-  state->directory_picker.top = 0U;
   library_clear_status(state);
   library_ensure_directory_selection_visible(state);
   state->dirty = true;
-  free(parent);
-  free(child);
 }
 
 static void
 library_activate_directory_selection(MereaderTuiLibraryTuiState *state) {
-  const MereaderTuiLibraryDirectoryPicker *picker =
-      &state->directory_picker;
-  if (library_directory_picker_searching(picker)) {
-    if (picker->selected >= picker->matches.length) {
-      return;
-    }
-    const char *base = picker->search.root;
-    if (base == NULL && state->catalog != NULL) {
-      base = state->catalog->search.root;
-    }
-    MereaderTuiError error = {0};
-    char *path =
-        base == NULL
-            ? NULL
-            : mereader_tui_path_join(
-                  base, picker->matches.items[picker->selected].relative_path,
-                  &error);
-    if (path == NULL ||
-        !library_directory_picker_set_path(state, path, &error)) {
-      library_runtime_error(state, &error, "cannot open matching folder");
-      free(path);
-      return;
-    }
-    state->directory_picker.selected = 0U;
-    state->directory_picker.top = 0U;
-    library_clear_status(state);
-    library_ensure_directory_selection_visible(state);
-    state->dirty = true;
-    free(path);
-    return;
-  }
-  if (picker->selected == 0U) {
-    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_SET_ROOT, picker->path);
-    return;
-  }
-  const bool parent = library_directory_picker_has_parent(picker);
-  if (parent && picker->selected == 1U) {
-    library_directory_picker_parent(state);
-    return;
-  }
-  const size_t offset = 1U + (parent ? 1U : 0U);
-  const size_t child_index = picker->selected - offset;
-  if (child_index >= picker->length) {
-    return;
-  }
+  const bool searching =
+      mereader_tui_library_directory_picker_searching(
+          &state->directory_picker);
+  const bool selecting_parent =
+      !searching &&
+      mereader_tui_library_directory_picker_has_parent(
+          &state->directory_picker) &&
+      state->directory_picker.selected == 1U;
   MereaderTuiError error = {0};
-  char *path =
-      mereader_tui_path_join(picker->path, picker->names[child_index], &error);
-  if (path == NULL ||
-      !library_directory_picker_set_path(state, path, &error)) {
-    library_runtime_error(state, &error, "cannot browse folder");
-    free(path);
+  MereaderTuiLibraryDirectoryPickerActivation activation = {0};
+  if (!mereader_tui_library_directory_picker_activate(
+          &state->directory_picker,
+          library_directory_picker_active_index(state), &activation,
+          &error)) {
+    library_runtime_error(
+        state, &error,
+        searching ? "cannot open matching folder"
+                  : selecting_parent ? "cannot browse parent folder"
+                                     : "cannot browse folder");
     return;
   }
-  state->directory_picker.selected = 0U;
-  state->directory_picker.top = 0U;
+  if (activation.kind ==
+      MEREADER_TUI_LIBRARY_DIRECTORY_PICKER_ACTIVATION_USE) {
+    library_emit(state, MEREADER_TUI_LIBRARY_COMMAND_SET_ROOT,
+                 activation.path);
+    return;
+  }
+  if (activation.kind !=
+      MEREADER_TUI_LIBRARY_DIRECTORY_PICKER_ACTIVATION_BROWSED) {
+    return;
+  }
   library_clear_status(state);
   library_ensure_directory_selection_visible(state);
   state->dirty = true;
-  free(path);
 }
 
 static void library_handle_directory_picker_key(
@@ -2378,7 +2070,9 @@ static void library_handle_directory_picker_key(
       &state->directory_picker.query, key_code, code, character);
   if (changed) {
     MereaderTuiError error = {0};
-    if (!library_directory_picker_update_search(state, &error)) {
+    if (!mereader_tui_library_directory_picker_refresh_search(
+            &state->directory_picker,
+            library_directory_picker_active_index(state), &error)) {
       library_runtime_error(state, &error, "cannot search library folders");
       return;
     }
@@ -2387,7 +2081,8 @@ static void library_handle_directory_picker_key(
   } else if (state->directory_picker.query.length == 0U &&
              ((key_code && code == KEY_BACKSPACE) ||
               (!key_code && (character == 8 || character == 127))) &&
-             library_directory_picker_has_parent(&state->directory_picker)) {
+             mereader_tui_library_directory_picker_has_parent(
+                 &state->directory_picker)) {
     library_directory_picker_parent(state);
   }
   state->dirty = true;
@@ -2842,7 +2537,7 @@ cleanup:
   }
   (void)endwin();
   free(state.input_selection);
-  library_directory_picker_free(&state.directory_picker);
+  mereader_tui_library_directory_picker_free(&state.directory_picker);
   mereader_tui_library_view_free(&state.picker_view);
   mereader_tui_library_shelf_free(&state.picker_shelf);
   library_clear_status(&state);

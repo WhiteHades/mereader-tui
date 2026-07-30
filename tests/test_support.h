@@ -46,6 +46,7 @@ void mereader_tui_test_support_cleanup(void);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_fb2_test_cases(size_t *count);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_graphics_test_cases(size_t *count);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_library_test_cases(size_t *count);
+[[nodiscard]] const MereaderTuiTestCase *mereader_tui_library_directory_picker_test_cases(size_t *count);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_library_shelf_test_cases(size_t *count);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_layout_test_cases(size_t *count);
 [[nodiscard]] const MereaderTuiTestCase *mereader_tui_pdf_test_cases(size_t *count);
