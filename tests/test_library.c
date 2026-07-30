@@ -1123,8 +1123,14 @@ static bool run_pty_change_library_folder(void) {
                   library_pty_screen_line_matches(&process, 14U, 72U, "old", NULL);
     }
     if (success) {
-        static const char choose_new[] = {'p', 'h', 27, 'O', 'A', '\n', '\n'};
-        success = library_pty_send(&process, choose_new, sizeof(choose_new)) &&
+        static const char open_parent[] = {'p', 127};
+        success = library_pty_send(&process, open_parent, sizeof(open_parent)) &&
+                  library_pty_wait_for(&process, "New Library/");
+        library_pty_clear_output(&process);
+        success = success && library_pty_send_text(&process, "new") &&
+                  library_pty_wait_for(&process, "> new") &&
+                  library_pty_wait_for(&process, "New Library/") &&
+                  library_pty_send_text(&process, "\n\n") &&
                   library_pty_wait_for(&process, "library added") &&
                   library_pty_settle(&process) &&
                   library_pty_screen_line_matches(&process, 14U, 72U, "new", NULL);
@@ -1157,6 +1163,73 @@ static bool run_pty_change_library_folder(void) {
 
 static MereaderTuiTestResult test_pty_change_library_folder(void) {
     TEST_ASSERT(run_pty_change_library_folder());
+    return MEREADER_TUI_TEST_PASS;
+}
+
+static bool run_pty_fuzzy_library_folder_search(void) {
+    LibraryPtyEnvironment environment = {0};
+    LibraryPtyProcess process = {.master = -1};
+    char *current_book =
+        library_create_epub("library-pty/folder-search/home/Current Library/current.epub",
+                            "Current Book", "Reader", "CURRENT BOOK BODY");
+    char *target_book =
+        library_create_epub(
+            "library-pty/folder-search/home/Current Library/Classics Collection/classic.epub",
+            "Classic Search Book", "Reader", "CLASSIC SEARCH BODY");
+    char *other_book =
+        library_create_epub(
+            "library-pty/folder-search/home/Current Library/Comics Collection/comic.epub",
+            "Comic Search Book", "Reader", "COMIC SEARCH BODY");
+    char *root = mereader_tui_test_path(
+        "library-pty/folder-search/home/Current Library");
+    bool success =
+        current_book != NULL && target_book != NULL && other_book != NULL &&
+        root != NULL &&
+        library_pty_environment_init("folder-search", &environment) &&
+        library_configure_root(&environment, root) &&
+        library_pty_spawn(&environment, "xterm-256color", 14U, 72U, NULL,
+                          &process) &&
+        library_pty_wait_for(&process, "current") &&
+        library_pty_send_text(&process, "p") &&
+        library_pty_wait_for(&process, "choose library folder") &&
+        library_pty_send_text(&process, "clasic") &&
+        library_pty_wait_for(&process, "> clasic") &&
+        library_pty_wait_for(&process, "Classics Collection/");
+    if (success) {
+        success =
+            library_pty_settle(&process) &&
+            !library_pty_screen_line_matches(
+                &process, 14U, 72U, "Comics Collection/", NULL) &&
+            library_pty_send_text(&process, "\n\n") &&
+            library_pty_wait_for(&process, "library added") &&
+            library_pty_settle(&process) &&
+            library_pty_screen_line_matches(
+                &process, 14U, 72U, "classic", NULL) &&
+            !library_pty_screen_line_matches(
+                &process, 14U, 72U, "current", NULL);
+    }
+    if (success) {
+        success = library_pty_send_text(&process, "q") &&
+                  library_pty_wait_exit(&process) &&
+                  WIFEXITED(process.status) &&
+                  WEXITSTATUS(process.status) == 0;
+    }
+    if (!success) {
+        fprintf(stderr, "folder search PTY capture: %s\n",
+                process.output.data == NULL ? "(empty)"
+                                            : process.output.data);
+    }
+    library_pty_process_free(&process);
+    library_pty_environment_free(&environment);
+    free(current_book);
+    free(target_book);
+    free(other_book);
+    free(root);
+    return success;
+}
+
+static MereaderTuiTestResult test_pty_fuzzy_library_folder_search(void) {
+    TEST_ASSERT(run_pty_fuzzy_library_folder_search());
     return MEREADER_TUI_TEST_PASS;
 }
 
@@ -2016,6 +2089,8 @@ const MereaderTuiTestCase *mereader_tui_library_test_cases(size_t *count) {
         {.name = "deleted_middle_selection_preservation", .function = test_deleted_middle_selection_preservation},
         {.name = "pty_empty_library", .function = test_pty_empty_library},
         {.name = "pty_change_library_folder", .function = test_pty_change_library_folder},
+        {.name = "pty_fuzzy_library_folder_search",
+         .function = test_pty_fuzzy_library_folder_search},
         {.name = "pty_open_return_and_typed_path", .function = test_pty_open_return_and_typed_path},
         {.name = "pty_custom_library_keymaps", .function = test_pty_custom_library_keymaps},
         {.name = "pty_live_resize", .function = test_pty_live_resize},

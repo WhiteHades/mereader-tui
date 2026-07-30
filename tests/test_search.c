@@ -29,6 +29,15 @@ static MereaderTuiTestResult test_index_search_refresh_and_ownership(void) {
     TEST_ASSERT_STR(files.items[0].relative_path, "comparison-!=.epub");
     mereader_tui_search_files_free(&files);
 
+    MereaderTuiSearchDirectories directories = {0};
+    TEST_ASSERT_MSG(mereader_tui_search_directories(&index, "nstd", 0U, 32U,
+                                             &directories, &error),
+                    "%s", error.message);
+    TEST_ASSERT_SIZE(directories.length, 1U);
+    TEST_ASSERT_STR(directories.items[0].relative_path, "nested");
+    TEST_ASSERT(directories.items[0].score > 0);
+    mereader_tui_search_directories_free(&directories);
+
     TEST_ASSERT(mereader_tui_test_write_text("search/gamma-notes.txt", "gamma"));
     TEST_ASSERT_MSG(mereader_tui_search_index_refresh(&index, &error), "%s", error.message);
     TEST_ASSERT_MSG(mereader_tui_search_files(&index, "gamma", 0U, 32U, &files, &error), "%s", error.message);
@@ -46,14 +55,20 @@ static MereaderTuiTestResult test_index_search_refresh_and_ownership(void) {
 static MereaderTuiTestResult test_invalid_requests(void) {
     MereaderTuiSearchIndex index = {0};
     MereaderTuiSearchFiles files = {0};
+    MereaderTuiSearchDirectories directories = {0};
     MereaderTuiError error = {0};
     TEST_ASSERT(!mereader_tui_search_index_open(&index, "", false, &error));
     TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
     mereader_tui_error_clear(&error);
     TEST_ASSERT(!mereader_tui_search_files(&index, "query", 0U, 10U, &files, &error));
     TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
+    mereader_tui_error_clear(&error);
+    TEST_ASSERT(!mereader_tui_search_directories(&index, "query", 0U, 10U,
+                                         &directories, &error));
+    TEST_ASSERT_ERROR(error, MEREADER_TUI_ERROR_ARGUMENT);
     mereader_tui_search_index_close(&index);
     mereader_tui_search_files_free(&files);
+    mereader_tui_search_directories_free(&directories);
     return MEREADER_TUI_TEST_PASS;
 }
 

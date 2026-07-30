@@ -138,7 +138,7 @@ run `man mereader-tui` for the complete command reference.
 
 ## library
 
-press `p` in the library to browse directories and choose a calibre library or ordinary folder of books. the choice is saved to `LibraryPath` in `~/.config/mereader-tui/config.ini`. `LibraryPath = auto` checks `~/Calibre Library` and `~/Documents/Calibre Library`. `MEREADER_TUI_LIBRARY_PATH` overrides the config for one process.
+press `p` in the library to browse directories and choose a calibre library or ordinary folder of books. start typing to search nested folders with ranked fff fuzzy matching; use the arrow keys to select a result, `enter` to open it, backspace on an empty query to move to the parent, and `esc` to cancel. the search reuses the active library index when possible and builds other folder indexes asynchronously, so typing and cancellation stay responsive. the choice is saved to `LibraryPath` in `~/.config/mereader-tui/config.ini`. `LibraryPath = auto` checks `~/Calibre Library` and `~/Documents/Calibre Library`. `MEREADER_TUI_LIBRARY_PATH` overrides the config for one process.
 
 a folder containing `metadata.db` is treated as a calibre library. the first shelf shows all logical books. the author shelf groups those books by author. ordinary folders use their directory structure as metadata when possible. files with the same stem are grouped as formats of one book.
 
@@ -157,7 +157,7 @@ a folder containing `metadata.db` is treated as a calibre library. the first she
 | `backspace`, `esc`, `h` | go back or clear the filter |
 | `s` | cycle recent, title, and author sorting |
 | `r` | rescan the library |
-| `p` | browse for and select the library folder |
+| `p` | browse or fuzzy-search for the library folder |
 | `o` | open a path or url |
 | `enter` | submit a filter, path, format, or book-picker prompt |
 | `esc` | close a prompt or help |
@@ -227,7 +227,7 @@ the shipped palette is based on catppuccin mocha and latte. dark terminal cells 
 
 mereader-tui is written in c23. fff remains rust and is compiled from the pinned submodule into `libfff_c.so`. mereader-tui calls the fff c abi in the same process. it does not launch an fff command or need neovim.
 
-the c adapter owns copied paths and scores. rust owns the opaque index and temporary fff results, which are released through matching c destructors.
+the c adapter owns copied paths and scores. rust owns the opaque index and temporary fff file and directory results, which are released through matching c destructors. the library-folder picker starts broad indexes asynchronously and refreshes its ranked results when scanning finishes.
 
 ## development
 
